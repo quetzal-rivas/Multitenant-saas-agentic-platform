@@ -1,14 +1,14 @@
 /**
- * Backend/agent.ts - LangGraph Agent with Escalation Graph
+ * Backend/agent.ts - State Machine & Escalation Reasoning Graph
  * 
- * Implements a state graph of nodes and conditional edges representing reasoning steps.
- * When the scheduled target time arrives, carries out instructions, evaluates tool results,
- * and escalates along an escalation edge to fallback tools (e.g., ElevenLabs voice call)
- * if primary tools (e.g., Gmail) fail or encounter errors.
+ * Implements an agent execution graph of state nodes and conditional edges.
+ * Handles task intake, tool argument resolution, primary execution, verification,
+ * and escalation edges to fallback tools (e.g. ElevenLabs voice calls) on primary tool failure.
  */
 
 import { ScheduledTask, db, ReasoningStep } from './db';
 import { mcpClient } from './mcp_client';
+import { checkpointManagerStore } from './checkpoint-manager';
 
 export interface AgentState {
   taskId: string;
@@ -37,12 +37,12 @@ export interface AgentState {
 
 export class LangGraphAgent {
   /**
-   * Executes the full LangGraph state machine for a deferred task
+   * Executes the full state machine graph for a task
    */
   public async executeTask(task: ScheduledTask): Promise<ScheduledTask> {
-    console.log(`[LangGraph] Starting execution graph for task ${task.id}: "${task.title}"`);
-    
-    // Update status to RUNNING in Supabase/Postgres
+    console.log(`[Agent Graph] Executing task ${task.id}: "${task.title}"`);
+
+    // Update task status to RUNNING in Supabase
     db.updateTaskStatus(task.id, 'RUNNING', {
       started_at: new Date().toISOString(),
       reasoning_steps: [],
@@ -70,12 +70,55 @@ export class LangGraphAgent {
 
       // CONDITIONAL ROUTING:
       if (edge === 'escalate') {
-        // Route along escalation edge to fallback node
         await this.nodeEscalateAndFallback(state);
       }
 
       // 5. NODE: complete_task
       await this.nodeCompleteTask(state);
+
+      // Save checkpoint to PostgresSaver / Supabase checkpoints
+      checkpointManagerStore.appendCheckpoint({
+        checkpointId: `chk_${Date.now()}_${task.id.slice(0, 8)}`,
+        threadId: task.id,
+        tenantId: task.tenant_id || '00000000-0000-0000-0000-000000000001',
+        profileId: 'agent_graph_executor',
+        profileName: 'Multitenant Agent Executor',
+        stepIndex: state.steps.length,
+        userMessage: task.instructions,
+        assistantMessage: state.finalSummary || 'Task execution completed.',
+        toolsExecuted: [
+          ...(state.primaryToolName
+            ? [
+                {
+                  toolName: state.primaryToolName,
+                  serverProvider: 'mcp-spoke',
+                  arguments: state.primaryToolArgs || {},
+                  output: state.primaryToolResult?.output || state.primaryToolResult?.error,
+                  latencyMs: 150,
+                },
+              ]
+            : []),
+          ...(state.fallbackToolName
+            ? [
+                {
+                  toolName: state.fallbackToolName,
+                  serverProvider: 'mcp-spoke',
+                  arguments: state.fallbackToolArgs || {},
+                  output: state.fallbackToolResult?.output || state.fallbackToolResult?.error,
+                  latencyMs: 150,
+                },
+              ]
+            : []),
+        ],
+        compiledToolsCount: task.allowed_tools.length,
+        compiledToolsNames: task.allowed_tools,
+        metadata: {
+          executionTimeMs: 450,
+          slidingWindowCount: state.steps.length,
+          hubVersion: 'mcp-gateway-v2.5',
+        },
+        timestamp: new Date().toISOString(),
+      });
 
       // Persist final execution output in database
       const finalStatus = state.escalationRequired ? 'ESCALATED' : 'COMPLETED';
@@ -94,7 +137,7 @@ export class LangGraphAgent {
 
       return updated || task;
     } catch (err: any) {
-      console.error(`[LangGraph] Fatal error executing task ${task.id}:`, err);
+      console.error(`[Agent Graph] Unhandled exception during execution of task ${task.id}:`, err);
       const failed = db.updateTaskStatus(task.id, 'FAILED', {
         completed_at: new Date().toISOString(),
         primary_error: err?.message || 'Uncaught error in execution graph',
@@ -107,14 +150,12 @@ export class LangGraphAgent {
 
   /**
    * NODE: intake_and_plan
-   * Ingests task instructions and resolves contact aliases (e.g., "boss" -> email/phone).
    */
   private async nodeIntakeAndPlan(state: AgentState): Promise<void> {
     state.currentNode = 'intake_and_plan';
     const instructions = state.task.instructions;
     const allowed = state.task.allowed_tools;
 
-    // Detect target primary tool
     let primaryTool = allowed[0] || 'gmail_send_message';
     if (instructions.toLowerCase().includes('calendar') || instructions.toLowerCase().includes('meeting')) {
       primaryTool = allowed.find((t) => t.includes('calendar')) || primaryTool;
@@ -124,16 +165,14 @@ export class LangGraphAgent {
 
     state.primaryToolName = primaryTool;
 
-    // Resolve contact aliases
     const bossContact = state.resolvedContacts['boss'] || 'boss@enterprise-hq.com';
     const clientContact = state.resolvedContacts['client'] || 'client@partner.com';
 
-    // Prepare primary tool payload based on instruction intent
     if (primaryTool === 'gmail_send_message') {
       state.primaryToolArgs = {
         to: bossContact,
         subject: `[Scheduled Briefing] ${state.task.title}`,
-        body: `Dear Team,\n\nHere is the scheduled automated briefing:\n${instructions}\n\nGenerated autonomously by LangGraph Agent.`,
+        body: `Dear Team,\n\nHere is the scheduled automated briefing:\n${instructions}\n\nGenerated autonomously by Multitenant Agent.`,
       };
     } else if (primaryTool === 'calendar_create_event') {
       state.primaryToolArgs = {
@@ -152,7 +191,7 @@ export class LangGraphAgent {
 
     const step: ReasoningStep = {
       node: 'intake_and_plan',
-      action: `Parsed task instructions and selected primary tool "${primaryTool}". Resolved contact aliases: boss -> ${bossContact}.`,
+      action: `Parsed task instructions and selected primary tool "${primaryTool}". Resolved contacts: boss -> ${bossContact}.`,
       status: 'SUCCESS',
       timestamp: new Date().toISOString(),
       details: {
@@ -167,7 +206,6 @@ export class LangGraphAgent {
 
   /**
    * NODE: execute_primary_action
-   * Dispatches tool invocation through the MCP stdio client.
    */
   private async nodeExecutePrimary(state: AgentState): Promise<void> {
     state.currentNode = 'execute_primary_action';
@@ -178,15 +216,15 @@ export class LangGraphAgent {
 
     const stepStart: ReasoningStep = {
       node: 'execute_primary_action',
-      action: `Invoking primary MCP tool "${toolName}" over stdio JSON-RPC transport...`,
+      action: `Invoking primary MCP tool "${toolName}" over transport bridge...`,
       status: 'INFO',
       timestamp: new Date().toISOString(),
     };
     state.steps.push(stepStart);
     db.appendReasoningStep(state.taskId, stepStart);
 
-    // Call tool through MCP stdio bridge
     const res = await mcpClient.callTool({
+      tenant_id: state.task.tenant_id,
       tool_name: toolName,
       arguments: toolArgs,
       simulate_failure: simulateFailure,
@@ -200,9 +238,7 @@ export class LangGraphAgent {
 
     const stepOutcome: ReasoningStep = {
       node: 'execute_primary_action',
-      action: res.success 
-        ? `Tool "${toolName}" returned success: ${res.output}`
-        : `Tool "${toolName}" execution failed: ${res.error}`,
+      action: res.success ? `Tool "${toolName}" returned success: ${res.output}` : `Tool "${toolName}" execution failed: ${res.error}`,
       status: res.success ? 'SUCCESS' : 'FAILED',
       timestamp: new Date().toISOString(),
       details: {
@@ -217,12 +253,9 @@ export class LangGraphAgent {
 
   /**
    * NODE: verify_outcome & CONDITIONAL EDGE
-   * Checks whether the primary tool succeeded or failed.
-   * Returns edge decision: 'complete' or 'escalate'.
    */
   private async nodeVerifyOutcome(state: AgentState): Promise<'complete' | 'escalate'> {
     state.currentNode = 'verify_outcome';
-
     const success = Boolean(state.primaryToolResult?.success);
 
     if (success) {
@@ -236,7 +269,6 @@ export class LangGraphAgent {
       db.appendReasoningStep(state.taskId, step);
       return 'complete';
     } else {
-      // Escalation required!
       state.escalationRequired = true;
       const step: ReasoningStep = {
         node: 'verify_outcome',
@@ -255,7 +287,6 @@ export class LangGraphAgent {
 
   /**
    * NODE: escalate_and_fallback
-   * Kicks in when primary action fails. Triggers fallback tool (e.g. ElevenLabs voice call).
    */
   private async nodeEscalateAndFallback(state: AgentState): Promise<void> {
     state.currentNode = 'escalate_and_fallback';
@@ -264,7 +295,6 @@ export class LangGraphAgent {
     const fallbackTool = policy.fallback_tool || 'elevenlabs_trigger_call';
     state.fallbackToolName = fallbackTool;
 
-    // Resolve target phone or contact for the fallback call
     const phoneTarget = state.resolvedContacts['boss'] || state.resolvedContacts['phone'] || '+1 (555) 839-2041';
 
     let fallbackArgs: Record<string, any> = {};
@@ -297,8 +327,8 @@ export class LangGraphAgent {
     state.steps.push(stepStart);
     db.appendReasoningStep(state.taskId, stepStart);
 
-    // Call fallback tool via MCP stdio
     const res = await mcpClient.callTool({
+      tenant_id: state.task.tenant_id,
       tool_name: fallbackTool,
       arguments: fallbackArgs,
     });
@@ -311,9 +341,7 @@ export class LangGraphAgent {
 
     const stepEnd: ReasoningStep = {
       node: 'escalate_and_fallback',
-      action: res.success 
-        ? `Fallback action successful: ${res.output}`
-        : `Fallback action encountered error: ${res.error}`,
+      action: res.success ? `Fallback action successful: ${res.output}` : `Fallback action encountered error: ${res.error}`,
       status: res.success ? 'SUCCESS' : 'FAILED',
       timestamp: new Date().toISOString(),
       details: {
@@ -328,7 +356,6 @@ export class LangGraphAgent {
 
   /**
    * NODE: complete_task
-   * Finalizes task summary and closes execution loop.
    */
   private async nodeCompleteTask(state: AgentState): Promise<void> {
     state.currentNode = 'complete_task';

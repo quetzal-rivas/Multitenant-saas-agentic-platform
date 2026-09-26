@@ -4,6 +4,7 @@ import {
   ResolveResponse,
   SourceResolutionBreakdown,
 } from './types';
+import { supabase } from '../Backend/supabase';
 
 // Rough token estimation helper (1 token ~= 3.8 characters of formatted English text/markdown)
 export function estimateTokens(text: string): number {
@@ -48,15 +49,15 @@ const MOCK_TENANTS: Record<string, TenantRecord> = {
       'No fees on points rollover before November 1st',
     ],
   },
-  tenant_789: {
-    id: 'tenant_789',
-    name: 'CloudScale Technologies Inc.',
-    tier: 'Enterprise Gold',
-    industry: 'B2B SaaS & Cloud Infrastructure',
-    brandVoice: 'Clear, technical, direct, helpful',
-    legalEntity: 'CloudScale Inc. (California)',
-    sla: '4-hour critical ticket response',
-    policies: ['Double billing must be auto-credited within 2 business days', 'SSO mandatory for >10 seats'],
+  '00000000-0000-0000-0000-000000000001': {
+    id: '00000000-0000-0000-0000-000000000001',
+    name: 'Default Enterprise Tenant',
+    tier: 'Enterprise Platinum',
+    industry: 'Automated Agent Operations',
+    brandVoice: 'Professional, concise, authoritative, prompt',
+    legalEntity: 'Default Global Enterprise Org',
+    sla: '99.99% Enterprise SLA',
+    policies: ['Enforce tenant isolation on all database queries', 'Strict audit logging on tool invocations'],
   },
 };
 
@@ -71,33 +72,14 @@ const MOCK_USERS: Record<string, UserRecord> = {
     pointsBalance: 485000,
     preferences: ['Quiet cliffside villas', 'High-speed fiber internet', 'Morning yoga sessions', 'Ocean-view master suite'],
   },
-  user_882: {
-    id: 'user_882',
-    name: 'Marcus Sterling',
-    email: 'm.sterling@capitalpartners.com',
-    role: 'Managing Director',
-    loyaltyTier: 'Platinum Owner',
-    tenureYears: 3,
-    pointsBalance: 210000,
-    preferences: ['Penthouse villas only', 'Private yacht excursions', 'Dedicated butler'],
-  },
-  user_304: {
-    id: 'user_304',
-    name: 'David Chen',
-    email: 'dchen@devops-lead.org',
-    role: 'DevOps Lead & Workspace Admin',
-    loyaltyTier: 'Standard',
-    tenureYears: 2,
-    pointsBalance: 0,
-    preferences: ['Prefers CLI & API integrations', 'Billing alerts via Slack'],
-  },
 };
 
 const MOCK_LONG_TERM_MEMORIES = [
   {
     topic: 'cancellation_objections',
     score: 0.94,
-    content: 'Client Sarah Jenkins previously expressed concern about maintenance fee escalations during 2024 economic review; softened immediately when locked into 5-year fixed fee cap.',
+    content:
+      'Client Sarah Jenkins previously expressed concern about maintenance fee escalations during 2024 economic review; softened immediately when locked into 5-year fixed fee cap.',
   },
   {
     topic: 'family_preferences',
@@ -109,33 +91,20 @@ const MOCK_LONG_TERM_MEMORIES = [
     score: 0.82,
     content: 'Ranked Maui Bay Resort #1 and Cabo San Lucas Esperanza #2. Declined Aspen ski chalet proposal in 2025.',
   },
-  {
-    topic: 'payment_behavior',
-    score: 0.74,
-    content: 'Always pays annual club dues via corporate Amex Centurion in single lump-sum transfer.',
-  },
 ];
 
 const MOCK_KNOWLEDGE_BASE = [
   {
     title: 'Deeded Fractional Title Security & Asset Preservation',
     score: 0.91,
-    snippet: 'Pacific Sands fractional shares are recorded in county title registry as fee-simple real property, protected from developer encumbrances and transferable to heirs in perpetuity.',
+    snippet:
+      'Pacific Sands fractional shares are recorded in county title registry as fee-simple real property, protected from developer encumbrances and transferable to heirs in perpetuity.',
   },
   {
     title: 'VIP Retention & Goodwill Concession Guidelines (2026)',
     score: 0.86,
-    snippet: 'Authorized retention concessions for Diamond members requesting cancellation: (1) 50,000 bonus rollover points, (2) One-time 50% waiver on next maintenance assessment, (3) Free transfer to international exchange partners.',
-  },
-  {
-    title: 'Cabo San Lucas Esperanza Villa Specifications',
-    score: 0.79,
-    snippet: 'Phase 3 villas feature 3,400 sq ft, private infinity hot tubs, direct Sea of Cortez views, Sub-Zero Viking kitchens, and 24/7 dedicated concierge service.',
-  },
-  {
-    title: 'Exchange Network Inter-Resort Points Parity',
-    score: 0.72,
-    snippet: 'Points convert 1:1 across all 42 international partner retreats with zero black-out dates when booked at least 60 days in advance.',
+    snippet:
+      'Authorized retention concessions for Diamond members requesting cancellation: (1) 50,000 bonus rollover points, (2) One-time 50% waiver on next maintenance assessment, (3) Free transfer to international exchange partners.',
   },
 ];
 
@@ -149,7 +118,6 @@ export function compileContext(
   const options = request.options || {};
   const requestedFormat = options.format || profile.budget.outputFormat || 'markdown';
 
-  // 1. Contract Validation
   const providedKeys = [
     ...Object.keys(identity).filter((k) => identity[k] !== undefined && identity[k] !== ''),
     ...Object.keys(input).filter((k) => input[k] !== undefined && input[k] !== ''),
@@ -166,7 +134,6 @@ export function compileContext(
     provided: providedKeys,
   };
 
-  // 2. Resolve Pipeline Steps
   const enabledSteps = [...profile.pipeline]
     .filter((step) => step.enabled)
     .sort((a, b) => b.priority - a.priority);
@@ -175,7 +142,7 @@ export function compileContext(
   const sourcesUsed: string[] = [];
   const renderedSections: Array<{ title: string; content: string; priority: number; tokens: number; stepType: string }> = [];
 
-  const tenantId = identity.tenant_id || 'tenant_123';
+  const tenantId = identity.tenant_id || '00000000-0000-0000-0000-000000000001';
   const userId = identity.user_id || 'user_456';
   const conversationId = identity.conversation_id || 'conversation_789';
   const queryText = input.query || '';
@@ -204,13 +171,13 @@ export function compileContext(
       case 'tenant_context': {
         const tenant = MOCK_TENANTS[tenantId] || {
           id: tenantId,
-          name: `Organization (${tenantId})`,
-          tier: 'Standard Tier',
-          industry: 'General Enterprise',
-          brandVoice: 'Professional and helpful',
-          legalEntity: 'Global Enterprise Org',
-          sla: 'Standard SLA',
-          policies: ['Adhere to standard corporate governance'],
+          name: `Enterprise Organization (${tenantId.slice(0, 8)})`,
+          tier: 'Enterprise Tier',
+          industry: 'Multitenant Agent Infrastructure',
+          brandVoice: 'Concierge-level precision and security',
+          legalEntity: 'Enterprise SaaS Holdings',
+          sla: '99.99% Availability',
+          policies: ['Enforce tenant security boundaries', 'Durable execution logging'],
         };
         sectionTitle = `Tenant Context: ${tenant.name}`;
         sectionContent = `**Tenant ID:** \`${tenant.id}\` | **Tier:** ${tenant.tier} | **SLA:** ${tenant.sla}
@@ -245,9 +212,9 @@ ${user.preferences.map((p) => `- ${p}`).join('\n')}`;
 
       case 'working_memory':
         sectionTitle = 'Session Working Memory';
-        sectionContent = `- **Active Goal:** Prospect is reviewing seasonal ownership options; considering Thanksgiving week in Cabo San Lucas.
-- **Pending Concession:** Offered 50,000 bonus welcome points + 15% VIP fee reduction.
-- **Unresolved Inquiry:** Awaiting confirmation of 2-bedroom vs 3-bedroom villa floor plan availability.`;
+        sectionContent = `- **Active Goal:** Process scheduled agent execution graph and evaluate MCP tool status.
+- **Pending Concession:** Escalation path active via ElevenLabs voice call if primary tools encounter relay failure.
+- **Unresolved Inquiry:** Awaiting target slot verification on Google Calendar.`;
         sourcesUsed.push('memory');
         break;
 
@@ -257,7 +224,7 @@ ${user.preferences.map((p) => `- ${p}`).join('\n')}`;
         const filtered = MOCK_LONG_TERM_MEMORIES.filter((m) => m.score >= minScore).slice(0, topK);
         itemsRetrieved = filtered.length;
         relevanceScore = filtered.length > 0 ? filtered[0].score : 0.85;
-        sectionTitle = 'Relevant Long-Term Memories';
+        sectionTitle = 'Relevant Long-Term Memories (pgvector)';
         sectionContent = filtered
           .map((m) => `> **[Confidence: ${(m.score * 100).toFixed(0)}% | Topic: ${m.topic}]**\n> ${m.content}`)
           .join('\n\n');
@@ -266,11 +233,10 @@ ${user.preferences.map((p) => `- ${p}`).join('\n')}`;
       }
 
       case 'conversation': {
-        const recentCount = step.config.recentMessages || 8;
         sectionTitle = `Recent Conversation Context (${conversationId})`;
-        sectionContent = `[${new Date(Date.now() - 1000 * 60 * 12).toLocaleTimeString()}] **Customer:** "Hi, I received my annual ownership statement and I noticed the rate adjustment. We are considering cancelling our contract CTR-9281 unless we can get better dates for Cabo this Thanksgiving."
-[${new Date(Date.now() - 1000 * 60 * 10).toLocaleTimeString()}] **Assistant:** "Hello Sarah, I completely understand wanting the best value and timing for your family vacations. Let me check the Cabo San Lucas availability and see what special member privileges we can apply today."
-[${new Date(Date.now() - 1000 * 60 * 2).toLocaleTimeString()}] **Customer:** "${queryText || "What are our options if we decide to keep the membership but want to upgrade our Thanksgiving week?"}"`;
+        sectionContent = `[${new Date(Date.now() - 1000 * 60 * 12).toLocaleTimeString()}] **Customer:** "Hi, I received my annual ownership statement and I noticed the rate adjustment."
+[${new Date(Date.now() - 1000 * 60 * 10).toLocaleTimeString()}] **Assistant:** "Hello Sarah, I completely understand wanting the best value. Let me verify availability and special privileges."
+[${new Date(Date.now() - 1000 * 60 * 2).toLocaleTimeString()}] **Customer:** "${queryText || 'What are our options if we decide to keep the membership but want to upgrade?'}"`;
         sourcesUsed.push('conversation');
         break;
       }
@@ -283,10 +249,7 @@ ${user.preferences.map((p) => `- ${p}`).join('\n')}`;
         relevanceScore = filtered.length > 0 ? filtered[0].score : 0.88;
         sectionTitle = 'Relevant Knowledge & Policy Base (RAG)';
         sectionContent = filtered
-          .map(
-            (k, idx) =>
-              `### ${idx + 1}. ${k.title} *(Match Score: ${(k.score * 100).toFixed(0)}%)*\n${k.snippet}`
-          )
+          .map((k, idx) => `### ${idx + 1}. ${k.title} *(Match Score: ${(k.score * 100).toFixed(0)}%)\n${k.snippet}`)
           .join('\n\n');
         sourcesUsed.push('rag');
         break;
@@ -320,12 +283,6 @@ ${JSON.stringify(trigger, null, 2)}
         sourcesUsed.push('runtime_input');
         break;
 
-      case 'policy':
-        sectionTitle = step.title;
-        sectionContent = step.config.staticContent || 'Follow all standard compliance protocols.';
-        sourcesUsed.push('policy');
-        break;
-
       default:
         sectionTitle = step.title;
         sectionContent = step.config.staticContent || '';
@@ -333,7 +290,7 @@ ${JSON.stringify(trigger, null, 2)}
     }
 
     const stepTokens = estimateTokens(sectionContent);
-    const stepLatency = Date.now() - stepStart + Math.floor(Math.random() * 4 + 1);
+    const stepLatency = Date.now() - stepStart + 2;
 
     breakdown.push({
       step_id: step.id,
@@ -356,11 +313,9 @@ ${JSON.stringify(trigger, null, 2)}
     });
   }
 
-  // 3. Token Budget Management & Prioritization
   const maxBudget = options.max_tokens || profile.budget.maxTokens || 12000;
   let totalTokens = renderedSections.reduce((sum, s) => sum + s.tokens, 0);
 
-  // If budget exceeded, trim lowest priority items first
   if (totalTokens > maxBudget) {
     renderedSections.sort((a, b) => b.priority - a.priority);
     let runningTokens = 0;
@@ -376,7 +331,6 @@ ${JSON.stringify(trigger, null, 2)}
           section.content = section.content.slice(0, charLimit) + `\n\n*[Truncated to fit ${maxBudget} token budget]*`;
           section.tokens = allowedTokens;
         }
-        // Mark in breakdown
         const itemInBreakdown = breakdown.find((b) => b.name === section.title);
         if (itemInBreakdown) itemInBreakdown.truncated = true;
       }
@@ -385,15 +339,12 @@ ${JSON.stringify(trigger, null, 2)}
     totalTokens = runningTokens;
   }
 
-  // 4. Format Output
   let finalContent = '';
   let structuredOutput: Record<string, any> | undefined = undefined;
 
   if (requestedFormat === 'markdown') {
-    finalContent = renderedSections
-      .map((s) => `# ${s.title}\n\n${s.content}`)
-      .join('\n\n---\n\n');
-  } else if (requestedFormat === 'json') {
+    finalContent = renderedSections.map((s) => `# ${s.title}\n\n${s.content}`).join('\n\n---\n\n');
+  } else {
     structuredOutput = {
       profile: profile.slug,
       version: profile.version,
@@ -408,28 +359,10 @@ ${JSON.stringify(trigger, null, 2)}
       })),
     };
     finalContent = JSON.stringify(structuredOutput, null, 2);
-  } else {
-    // structured
-    structuredOutput = {
-      profile: profile.slug,
-      system_instructions: renderedSections.find((s) => s.stepType === 'system_instructions')?.content,
-      agent_instructions: renderedSections.find((s) => s.stepType === 'agent_instructions')?.content,
-      tenant_context: renderedSections.find((s) => s.stepType === 'tenant_context')?.content,
-      current_user: renderedSections.find((s) => s.stepType === 'current_user')?.content,
-      working_memory: renderedSections.find((s) => s.stepType === 'working_memory')?.content,
-      long_term_memory: renderedSections.find((s) => s.stepType === 'long_term_memory')?.content,
-      conversation_history: renderedSections.find((s) => s.stepType === 'conversation')?.content,
-      knowledge: renderedSections.find((s) => s.stepType === 'relevant_knowledge')?.content,
-      live_data: renderedSections.find((s) => s.stepType === 'live_data')?.content,
-      runtime_input: renderedSections.find((s) => s.stepType === 'runtime_input')?.content,
-    };
-    finalContent = JSON.stringify(structuredOutput, null, 2);
   }
 
   const finalTokenCount = estimateTokens(finalContent);
-  const totalResolutionTime = Date.now() - startTime + Math.floor(Math.random() * 8 + 4);
-
-  // Unique sources
+  const totalResolutionTime = Date.now() - startTime + 5;
   const uniqueSources = Array.from(new Set(sourcesUsed));
 
   return {

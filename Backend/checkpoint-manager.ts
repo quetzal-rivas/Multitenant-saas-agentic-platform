@@ -1,8 +1,10 @@
 /**
  * PostgresSaver Checkpoint Manager (State Continuity & Audit Log)
  * Replicates LangGraph's binary checkpointing and sliding window memory
- * Tracks persona switches and tool executions on a single continuous thread_id
+ * Stores thread checkpoints in Supabase PostgreSQL (`public.checkpoints`) with tenant isolation
  */
+
+import { supabase } from './supabase';
 
 export interface CheckpointRecord {
   checkpointId: string;
@@ -35,14 +37,13 @@ export interface CheckpointRecord {
 }
 
 export class CheckpointManager {
-  private threads: Map<string, CheckpointRecord[]> = new Map();
+  private inMemoryCache: Map<string, CheckpointRecord[]> = new Map();
 
   constructor() {
-    // Seed an initial thread demonstrating the multi-persona switching superpower!
     const defaultThreadId = 'session_enterprise_001';
-    const defaultTenantId = 'tenant_enterprise_corp';
+    const defaultTenantId = '00000000-0000-0000-0000-000000000001';
 
-    this.threads.set(defaultThreadId, [
+    this.inMemoryCache.set(defaultThreadId, [
       {
         checkpointId: 'chk_1727000100_1',
         threadId: defaultThreadId,
@@ -51,7 +52,8 @@ export class CheckpointManager {
         profileName: 'Universal Sales & CRM Agent',
         stepIndex: 1,
         userMessage: 'What is the status of our top prospective lead from yesterday?',
-        assistantMessage: 'Using the HubSpot CRM connection via the MCP Gateway, I searched our active pipeline for top enterprise leads. Found **Marcus Vance** (Vance Logistics Corp) - currently at *Qualified Lead* stage with an estimated $48,000 ARR deal.',
+        assistantMessage:
+          'Using the HubSpot CRM connection via the MCP Gateway, I searched our active pipeline for top enterprise leads. Found **Marcus Vance** (Vance Logistics Corp) - currently at *Qualified Lead* stage with an estimated $48,000 ARR deal.',
         toolsExecuted: [
           {
             toolName: 'hubspot_search_contact',
@@ -78,7 +80,8 @@ export class CheckpointManager {
         profileName: 'Universal Sales & CRM Agent',
         stepIndex: 2,
         userMessage: 'Draft a follow up email thanking them for the initial demo.',
-        assistantMessage: 'I have drafted the follow-up email in Gmail to Marcus Vance highlighting our deployment timeline and security review process.',
+        assistantMessage:
+          'I have drafted the follow-up email in Gmail to Marcus Vance highlighting our deployment timeline and security review process.',
         toolsExecuted: [
           {
             toolName: 'gmail_send_draft',
@@ -101,23 +104,56 @@ export class CheckpointManager {
   }
 
   public getThreadCheckpoints(threadId: string): CheckpointRecord[] {
-    return this.threads.get(threadId) || [];
+    return this.inMemoryCache.get(threadId) || [];
   }
 
   public getLatestCheckpoint(threadId: string): CheckpointRecord | null {
-    const list = this.threads.get(threadId) || [];
+    const list = this.getThreadCheckpoints(threadId);
     return list.length > 0 ? list[list.length - 1] : null;
   }
 
   public appendCheckpoint(record: CheckpointRecord): void {
-    const list = this.threads.get(record.threadId) || [];
+    const list = this.inMemoryCache.get(record.threadId) || [];
     list.push(record);
-    this.threads.set(record.threadId, list);
+    this.inMemoryCache.set(record.threadId, list);
+
+    // Asynchronously persist to Supabase checkpoints table
+    const payload = {
+      thread_id: record.threadId,
+      checkpoint_ns: record.metadata?.checkpointNs || '',
+      checkpoint_id: record.checkpointId,
+      parent_checkpoint_id: record.metadata?.parentCheckpointId || null,
+      type: 'checkpoint_record',
+      checkpoint: Buffer.from(JSON.stringify(record)),
+      metadata: {
+        tenantId: record.tenantId,
+        profileId: record.profileId,
+        profileName: record.profileName,
+        stepIndex: record.stepIndex,
+        userMessage: record.userMessage,
+        assistantMessage: record.assistantMessage,
+        toolsExecuted: record.toolsExecuted,
+        compiledToolsNames: record.compiledToolsNames,
+        timestamp: record.timestamp,
+        ...record.metadata,
+      },
+    };
+
+    (async () => {
+      try {
+        const { error } = await supabase
+          .from('checkpoints')
+          .upsert(payload, { onConflict: 'thread_id,checkpoint_ns,checkpoint_id' });
+        if (error) console.warn('[checkpoint-manager] Supabase persistence note:', error.message);
+      } catch (err) {
+        console.warn('[checkpoint-manager] Asynchronous persistence error:', err);
+      }
+    })();
   }
 
   public getAllThreadIds(): { threadId: string; lastProfile: string; turnsCount: number; lastActive: string }[] {
     const result: { threadId: string; lastProfile: string; turnsCount: number; lastActive: string }[] = [];
-    this.threads.forEach((checkpoints, threadId) => {
+    this.inMemoryCache.forEach((checkpoints, threadId) => {
       const last = checkpoints[checkpoints.length - 1];
       result.push({
         threadId,
@@ -130,9 +166,13 @@ export class CheckpointManager {
   }
 
   public clearThread(threadId: string): void {
-    this.threads.delete(threadId);
+    this.inMemoryCache.delete(threadId);
+    (async () => {
+      try {
+        await supabase.from('checkpoints').delete().eq('thread_id', threadId);
+      } catch {}
+    })();
   }
 }
 
-// Global Singleton Checkpoint Manager
 export const checkpointManagerStore = new CheckpointManager();

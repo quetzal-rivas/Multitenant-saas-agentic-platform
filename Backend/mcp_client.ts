@@ -1,9 +1,11 @@
 /**
- * Backend/mcp_client.ts - Model Context Protocol (MCP) Stdio Client
+ * Backend/mcp_client.ts - Model Context Protocol (MCP) Client Transport & Spoke Executor
  * 
- * Reaches external tools (Gmail, ElevenLabs voice calls, Google Calendar, Slack)
- * through MCP servers connected over stdio JSON-RPC transport.
+ * Manages tool definitions, input parameter validation, vault authorization,
+ * and JSON-RPC dispatch to active MCP spokes (Gmail, ElevenLabs, Calendar, Slack).
  */
+
+import { vaultManagerStore } from './vault-manager';
 
 export interface McpToolDefinition {
   name: string;
@@ -23,6 +25,7 @@ export interface McpToolDefinition {
 
 export interface McpToolCallRequest {
   server_id?: string;
+  tenant_id?: string;
   tool_name: string;
   arguments: Record<string, any>;
   simulate_failure?: boolean;
@@ -38,7 +41,7 @@ export interface McpToolCallResponse {
   raw_result?: any;
 }
 
-// Registry of MCP tools exposed over stdio
+// Registry of MCP tools exposed over transport
 export const AVAILABLE_MCP_TOOLS: McpToolDefinition[] = [
   {
     name: 'gmail_send_message',
@@ -70,7 +73,8 @@ export const AVAILABLE_MCP_TOOLS: McpToolDefinition[] = [
   },
   {
     name: 'elevenlabs_trigger_call',
-    description: 'Triggers an automated voice call via ElevenLabs Conversational AI to deliver urgent voice briefings or escalation alerts to a designated phone number.',
+    description:
+      'Triggers an automated voice call via ElevenLabs Conversational AI to deliver urgent voice briefings or escalation alerts to a designated phone number.',
     category: 'voice',
     parameters: {
       type: 'object',
@@ -129,53 +133,105 @@ export const AVAILABLE_MCP_TOOLS: McpToolDefinition[] = [
 ];
 
 export class McpClient {
-  private stdioConnected: boolean = true;
-
-  constructor() {
-    this.stdioConnected = true;
-  }
-
   public getAvailableTools(): McpToolDefinition[] {
     return AVAILABLE_MCP_TOOLS;
   }
 
   /**
-   * Dispatches a tool call across the MCP stdio JSON-RPC bridge
+   * Validates arguments against required parameters defined in tool schema
+   */
+  private validateArguments(toolDef: McpToolDefinition, args: Record<string, any>): string | null {
+    const requiredFields = toolDef.parameters?.required || [];
+    const missing = requiredFields.filter((field) => args[field] === undefined || args[field] === null || args[field] === '');
+    if (missing.length > 0) {
+      return `Missing required parameter(s) for tool "${toolDef.name}": ${missing.join(', ')}`;
+    }
+    return null;
+  }
+
+  /**
+   * Verifies vault pre-authentication for tenant
+   */
+  private verifyVaultSpokeAuth(tenantId: string, toolCategory: string): boolean {
+    const providerMap: Record<string, string> = {
+      email: 'google_workspace',
+      calendar: 'google_workspace',
+      communication: 'slack',
+      voice: 'elevenlabs',
+    };
+    const expectedProvider = providerMap[toolCategory];
+    if (!expectedProvider) return true;
+
+    const creds = vaultManagerStore.getCredentials(tenantId);
+    if (creds.length === 0) return true; // Default tenant fallback
+
+    const spoke = creds.find((c) => c.provider === expectedProvider || c.provider === 'google_workspace');
+    return spoke ? spoke.isActive : true;
+  }
+
+  /**
+   * Dispatches a tool call over the MCP JSON-RPC transport bridge
    */
   public async callTool(req: McpToolCallRequest): Promise<McpToolCallResponse> {
     const startTime = Date.now();
+    const toolDef = AVAILABLE_MCP_TOOLS.find((t) => t.name === req.tool_name);
 
-    // Intentional failure trigger for demonstration and fallback testing
-    if (req.simulate_failure) {
-      await new Promise((r) => setTimeout(r, 450));
+    if (!toolDef) {
       return {
         success: false,
         tool_name: req.tool_name,
-        error: `[MCP Stdio Transport Error] External provider (${req.tool_name}) rejected connection: 503 Service Unavailable / SMTP Relay Timeout`,
+        error: `Tool "${req.tool_name}" not registered in active MCP tool manifest.`,
         execution_time_ms: Date.now() - startTime,
         protocol: 'mcp-stdio-v1',
       };
     }
 
-    // Simulated short round-trip delay to mimic real stdio execution
-    await new Promise((r) => setTimeout(r, 350));
+    // Input Validation
+    const validationError = this.validateArguments(toolDef, req.arguments || {});
+    if (validationError) {
+      return {
+        success: false,
+        tool_name: req.tool_name,
+        error: `[MCP Input Validation Failure] ${validationError}`,
+        execution_time_ms: Date.now() - startTime,
+        protocol: 'mcp-stdio-v1',
+      };
+    }
+
+    // Vault Authentication Check
+    const tenantId = req.tenant_id || 'tenant_enterprise_corp';
+    const isAuthorized = this.verifyVaultSpokeAuth(tenantId, toolDef.category);
+    if (!isAuthorized) {
+      return {
+        success: false,
+        tool_name: req.tool_name,
+        error: `[MCP Vault Auth Error] Tenant "${tenantId}" credential for provider "${toolDef.category}" is disabled in Vault.`,
+        execution_time_ms: Date.now() - startTime,
+        protocol: 'mcp-stdio-v1',
+      };
+    }
+
+    // Intentional failure simulation flag for fallback escalation testing
+    if (req.simulate_failure) {
+      await new Promise((r) => setTimeout(r, 200));
+      return {
+        success: false,
+        tool_name: req.tool_name,
+        error: `[MCP Stdio Transport Error] External provider (${req.tool_name}) rejected connection: 503 Service Unavailable / Relay Timeout`,
+        execution_time_ms: Date.now() - startTime,
+        protocol: 'mcp-stdio-v1',
+      };
+    }
+
+    await new Promise((r) => setTimeout(r, 150));
 
     switch (req.tool_name) {
       case 'gmail_send_message': {
         const { to, subject, body } = req.arguments;
-        if (!to || !subject) {
-          return {
-            success: false,
-            tool_name: req.tool_name,
-            error: 'Missing required arguments: to, subject',
-            execution_time_ms: Date.now() - startTime,
-            protocol: 'mcp-stdio-v1',
-          };
-        }
         return {
           success: true,
           tool_name: req.tool_name,
-          output: `Message dispatched successfully via Gmail MCP server to "${to}". Subject: "${subject}". Thread ID: gm_msg_${Math.random().toString(36).substring(2, 9)}.`,
+          output: `Message dispatched successfully via Gmail MCP spoke to "${to}". Subject: "${subject}". Thread ID: gm_msg_${Math.random().toString(36).substring(2, 9)}.`,
           execution_time_ms: Date.now() - startTime,
           protocol: 'mcp-stdio-v1',
           raw_result: { message_id: `msg_${Date.now()}`, to, subject, bytes_sent: (body || '').length },
@@ -199,7 +255,7 @@ export class McpClient {
         return {
           success: true,
           tool_name: req.tool_name,
-          output: `ElevenLabs Conversational AI voice call placed to "${phone_number}". Urgency: ${urgency || 'high'}. Script dispatched: "${prompt_script.slice(0, 80)}...". Call session status: CONNECTED.`,
+          output: `ElevenLabs Conversational AI voice call placed to "${phone_number}". Urgency: ${urgency || 'high'}. Script dispatched: "${(prompt_script || '').slice(0, 80)}...". Call session status: CONNECTED.`,
           execution_time_ms: Date.now() - startTime,
           protocol: 'mcp-stdio-v1',
           raw_result: {
@@ -215,7 +271,8 @@ export class McpClient {
         return {
           success: true,
           tool_name: req.tool_name,
-          output: 'Found 3 calendar events scheduled for today: 1) Executive Standup (10:00 AM), 2) Q3 Strategy Review (2:00 PM), 3) Sprint Retrospective (4:30 PM).',
+          output:
+            'Found 3 calendar events scheduled for today: 1) Executive Standup (10:00 AM), 2) Q3 Strategy Review (2:00 PM), 3) Sprint Retrospective (4:30 PM).',
           execution_time_ms: Date.now() - startTime,
           protocol: 'mcp-stdio-v1',
         };
@@ -248,7 +305,7 @@ export class McpClient {
         return {
           success: false,
           tool_name: req.tool_name,
-          error: `Tool "${req.tool_name}" not found on active MCP stdio servers.`,
+          error: `Unhandled tool "${req.tool_name}" in MCP client transport.`,
           execution_time_ms: Date.now() - startTime,
           protocol: 'mcp-stdio-v1',
         };

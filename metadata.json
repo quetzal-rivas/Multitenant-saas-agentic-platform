@@ -1,0 +1,8 @@
+{
+  "name": "MCP-Agent-graph",
+  "description": "Universal Context Control & Hosted MCP Server Hub with 1-click OAuth connections, custom tool profiles, and agent graph integration.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

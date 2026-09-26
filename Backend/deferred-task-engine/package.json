@@ -1,0 +1,33 @@
+{
+  "name": "deferred-task-engine",
+  "version": "1.0.0",
+  "description": "A resilient, hybrid Durable Execution and Agent Graph pattern application built with Node.js, TypeScript, BullMQ, LangGraph, Model Context Protocol (MCP), and Supabase.",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "dev": "tsx watch src/server.ts",
+    "lint": "eslint src/**/*.ts"
+  },
+  "keywords": [
+    "langgraph",
+    "bullmq",
+    "redis",
+    "mcp",
+    "supabase",
+    "durable-execution",
+    "agent-graph"
+  ],
+  "author": "quetzal-rivas",
+  "license": "MIT",
+  "dependencies": {
+    "bullmq": "^5.41.0",
+    "dotenv": "^16.4.7",
+    "ioredis": "^5.5.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}

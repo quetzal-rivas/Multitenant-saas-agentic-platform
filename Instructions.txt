@@ -1,0 +1,77 @@
+
+
+# Mock → Real: Implementation Roadmap
+
+Quick context check first: there's already a **parallel Python backend** (`Backend/database.py`, `Backend/langgraph_worker.py`) that references real infra — `psycopg_pool`, Supavisor/Supabase Postgres, "PostgresSaver checkpointing" — but the TypeScript files we reviewed (`agent.ts`, `mcp_client.ts`, `checkpoint-manager.ts`, `queue.ts`) are the fully-mocked stand-ins. `package.json` currently has **no** `langgraph`, `@modelcontextprotocol/sdk`, `bullmq`, or `ioredis` installed — so the TS side needs real dependencies before anything else works.
+
+Recommended order: **persistence → real tool calls → real reasoning → real queue → cutover.** Each layer depends on the one before it, so do them in sequence rather than in parallel.
+
+---
+
+## Phase 0 — Decide the architecture split
+- [ ] Decide: is the **Python backend** (`Backend/*.py`) becoming the real runtime, with Next.js as pure frontend? Or does the **TS backend** (`agent.ts`, `queue.ts`, etc.) become real, with Python dropped? Right now you have two competing implementations — pick one before building further, or you'll pay to maintain both.
+- [ ] Confirm target deployment model: long-running Node/Python process (supports real `setTimeout`/workers) vs. serverless (Lambda/Cloud Run — no persistent in-memory state, so the queue *must* be external from day one).
+
+---
+
+## Phase 1 — Real persistence (unblocks everything else)
+- [ ] Provision a real Postgres instance (Supabase, since `database.py` already points at it) and get a working `DATABASE_URL`.
+- [ ] Write the actual schema: `tasks`, `reasoning_steps`, `checkpoints`, `threads` — check if `Backend/schema.sql` already has this (you have a file by that name; verify it matches what `checkpoint-manager.ts` and `queue.ts` currently fake in memory).
+- [ ] Replace `checkpoint-manager.ts`'s `Map<string, CheckpointRecord[]>` with real Postgres reads/writes (`getThreadCheckpoints`, `appendCheckpoint`, etc. keep the same method signatures — just swap the backing store).
+- [ ] Add a `tenant_id` column + a `WHERE tenant_id = $1` filter on every checkpoint/thread query — bake in tenant isolation now, not after data exists.
+- [ ] Migrate `Backend/db.ts` (the `ScheduledTask` store `agent.ts`/`queue.ts` call into) off whatever in-memory/JSON store it's using onto the same Postgres instance.
+- [ ] Write a smoke test: create a task, restart the process, confirm the task/checkpoint is still there.
+
+## Phase 2 — Real MCP tool calls
+- [ ] Install a real MCP client: `@modelcontextprotocol/sdk` (or confirm `mcp_client.ts` for Python's `Backend/mcp-server.ts` / `mcp_client.ts` counterparts are meant to be the real transport).
+- [ ] Stand up (or connect to) actual MCP servers for the tools you're mocking today: Gmail, Google Calendar, Slack, ElevenLabs. Each is usually a separate stdio or SSE server process.
+- [ ] Rewrite `McpClient.callTool()` in `mcp_client.ts`: replace the `switch` statement's canned returns with a real JSON-RPC call over the SDK's client transport. Keep the `McpToolCallResponse` shape the same so nothing downstream breaks.
+- [ ] Add real credential lookup here: pull OAuth tokens from `oauth-manager.ts` / the vault (`vault-manager.ts`) instead of using no auth at all, as the mock does.
+- [ ] Add real error handling: timeouts, malformed responses, and rate limits from actual providers — the mock never fails except when you explicitly ask it to (`simulate_failure`). Keep that flag for tests, but make sure real failures are handled the same way.
+- [ ] Add per-tool input validation against each tool's declared `parameters.required` (currently only `gmail_send_message` checks this).
+
+## Phase 3 — Real reasoning (replace the fake "LangGraph")
+- [ ] Install `@langchain/langgraph` (Node) or use the Python `langgraph_worker.py` path if Phase 0 pointed you there.
+- [ ] Replace `agent.ts`'s hardcoded method chain (`nodeIntakeAndPlan` → `nodeExecutePrimary` → ...) with an actual `StateGraph`: same node names work as a starting point, but node bodies should call an LLM instead of `if (instructions.includes('calendar'))`.
+- [ ] Replace the keyword-matching tool selection with real LLM-driven tool selection (function calling / structured output) against the tool list from `mcp_client.ts`'s `getAvailableTools()`.
+- [ ] Wire the real `PostgresSaver` (LangGraph's built-in checkpointer) into the graph, backed by the Postgres instance from Phase 1 — this can likely replace your custom `checkpoint-manager.ts` outright rather than reimplementing it.
+- [ ] Keep the `ReasoningStep` audit-log pattern — it's a good design, just populate it from real graph execution events instead of hand-written strings.
+- [ ] Test escalation logic end-to-end: force a real tool failure (bad credentials, wrong recipient) and confirm the escalation edge still fires correctly.
+
+## Phase 4 — Real queue (BullMQ + Redis)
+- [ ] Provision Redis (or confirm one already exists in your infra).
+- [ ] Install `bullmq`, replace `DurableTaskQueue`'s `Map` + `setTimeout` with a real BullMQ `Queue`/`Worker` pair.
+- [ ] This automatically fixes the 24.8-day `setTimeout` overflow bug — BullMQ's delayed jobs don't have that ceiling.
+- [ ] Replace the JSON journal file (`durable_queue_journal.json`) with BullMQ's Redis-backed persistence; delete the manual `saveJournal()`/`init()` file logic once Redis is confirmed durable in your environment.
+- [ ] Implement real retry/backoff using `attemptsMade` (currently tracked but unused) — BullMQ supports this natively via job options (`attempts`, `backoff`).
+- [ ] Re-implement `simulateServerCrash()`/`simulateServerRestart()` as real integration tests (kill the worker process, confirm Redis-persisted jobs resume) rather than in-memory flag flips — or keep them as a `/debug` endpoint for demoing durability, now backed by the real thing.
+- [ ] Load-test: schedule a burst of jobs at the same target time, confirm no dropped executions.
+
+## Phase 5 — Real context compiler
+- [ ] Replace `MOCK_TENANTS`, `MOCK_USERS`, `MOCK_LONG_TERM_MEMORIES`, `MOCK_KNOWLEDGE_BASE` in `lib/compiler.ts` with real data sources:
+  - [ ] Tenant/user records → Postgres tables from Phase 1
+  - [ ] Long-term memory → real vector store (pgvector on the same Postgres instance is simplest) with actual similarity search instead of a hardcoded `score` field
+  - [ ] Knowledge base (RAG) → same vector store or a dedicated search index
+  - [ ] Live data (CRM/billing) → real API calls through the MCP clients from Phase 2
+- [ ] Keep the token-budget trimming logic as-is — it's solid and doesn't depend on the data being mocked.
+- [ ] Re-benchmark `resolution_time_ms` once real network calls are involved — the mock's `Math.random() * 8` fake latency will be wildly optimistic vs. real RAG + DB round-trips.
+
+## Phase 6 — Security & multi-tenancy hardening
+- [ ] Confirm every new Postgres query is tenant-scoped (Phase 1's `tenant_id` column should make this a `WHERE` clause everywhere, no exceptions).
+- [ ] Fix the CORS wildcard in `Backend/standalone-server.ts` before this handles real authenticated traffic.
+- [ ] Move real credentials (Gmail/Slack/ElevenLabs/OAuth tokens) into actual encrypted storage — `vault-manager.ts`'s current seeded fake data shows the intended shape; wire it to a real secrets manager or encrypted DB column.
+- [ ] Add rate limiting / auth checks on any API route that can trigger `taskQueue.triggerNow()` or similar immediate-execution paths, since real tool calls now cost money and can send real emails/calls.
+
+## Phase 7 — Cutover
+- [ ] Add a feature flag (`USE_REAL_MCP`, `USE_REAL_QUEUE`, etc.) so you can flip each phase on independently and roll back fast if one breaks.
+- [ ] Run mock and real implementations side-by-side for one class of task first (e.g., just `gmail_send_message`) before cutting everything over at once.
+- [ ] Once stable, delete the mock code paths (`AVAILABLE_MCP_TOOLS`'s canned switch, `MOCK_*` constants, in-memory `Map`s) rather than leaving them as dead code / an alternate code path someone might accidentally hit.
+- [ ] Update the file-header comments (the ones currently claiming "LangGraph," "BullMQ + Redis," "PostgresSaver") to match reality at each phase — they were accurate-as-aspiration; make them accurate-as-fact.
+
+---
+
+### Suggested sequencing if you want a minimum viable real slice first
+1. Phase 1 (Postgres) for tasks + checkpoints only
+2. Phase 2 for **one** real tool (e.g., real Gmail send) end-to-end
+3. Phase 4 (BullMQ) so that one tool's scheduling is truly durable
+4. Then circle back for Phase 3 (real reasoning) and Phase 5 (real compiler) once the plumbing is proven

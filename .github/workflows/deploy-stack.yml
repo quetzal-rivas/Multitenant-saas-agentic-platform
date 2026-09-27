@@ -1,4 +1,4 @@
-name: Deploy Multitenant SaaS Stack (AWS & Supabase)
+name: Deploy Multitenant SaaS Stack
 
 on:
   push:
@@ -18,36 +18,34 @@ jobs:
   # Job 1: Supabase Database Schema Sync & Migration Validation
   # ============================================================================
   supabase-db-sync:
-    name: 🗄️ Supabase Schema & RLS Sync
+    name: Supabase Schema and RLS Sync
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Source Code
         uses: actions/checkout@v4
 
       - name: Setup Supabase CLI
-        uses: supabase/setup-cli@v1
-        with:
-          version: latest
+        uses: supabase/setup-cli@v2
 
-      - name: Link & Sync Database Schema
+      - name: Link and Sync Database Schema
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
         run: |
           if [ -n "$SUPABASE_ACCESS_TOKEN" ] && [ -n "$SUPABASE_PROJECT_ID" ]; then
-            echo "🔑 Linking Supabase Project: $SUPABASE_PROJECT_ID"
-            supabase link --project-ref "$SUPABASE_PROJECT_ID" --password "${{ secrets.SUPABASE_DB_PASSWORD }}" || true
-            echo "⚡ Applying schema.sql definitions..."
-            supabase db push --linked || true
+            echo "Linking Supabase Project: $SUPABASE_PROJECT_ID"
+            supabase link --project-ref "$SUPABASE_PROJECT_ID" || true
+            echo "Applying schema definitions..."
+            supabase db push || true
           else
-            echo "⚠️ SUPABASE_ACCESS_TOKEN or SUPABASE_PROJECT_ID secret not set. Skipping automated DB migration."
+            echo "SUPABASE_ACCESS_TOKEN or SUPABASE_PROJECT_ID secret not set. Skipping automated DB migration."
           fi
 
   # ============================================================================
   # Job 2: AWS SAM Backend Lambda Container Build & Deployment
   # ============================================================================
   backend-aws-sam-deploy:
-    name: 🚀 AWS SAM Backend Deployment
+    name: AWS SAM Backend Deployment
     runs-on: ubuntu-latest
     needs: supabase-db-sync
     steps:
@@ -78,12 +76,12 @@ jobs:
 
       - name: SAM Build Lambda Container
         run: |
-          echo "🔨 Building SAM container stack..."
+          echo "Building SAM container stack..."
           sam build
 
       - name: SAM Deploy Stack
         run: |
-          echo "🚀 Deploying Serverless SAM stack to AWS..."
+          echo "Deploying Serverless SAM stack to AWS..."
           sam deploy \
             --no-confirm-changeset \
             --no-fail-on-empty-changeset \
@@ -96,7 +94,7 @@ jobs:
   # Job 3: AWS Amplify Next.js 15 Frontend Deployment
   # ============================================================================
   frontend-aws-amplify-deploy:
-    name: 🌐 AWS Amplify Frontend Deployment
+    name: AWS Amplify Frontend Deployment
     runs-on: ubuntu-latest
     needs: backend-aws-sam-deploy
     steps:
@@ -128,13 +126,14 @@ jobs:
       - name: Trigger AWS Amplify Release Build
         run: |
           if [ -n "${{ secrets.AMPLIFY_APP_ID }}" ]; then
-            echo "🚀 Triggering release deployment on AWS Amplify App: ${{ secrets.AMPLIFY_APP_ID }}"
+            echo "Triggering release deployment on AWS Amplify App: ${{ secrets.AMPLIFY_APP_ID }}"
             aws amplify start-job \
               --app-id "${{ secrets.AMPLIFY_APP_ID }}" \
               --branch-name "main" \
               --job-type "RELEASE" \
               --region us-east-2
           else
-            echo "ℹ️ AMPLIFY_APP_ID secret not provided. Amplify Console auto-build will trigger automatically via GitHub webhook."
+            echo "AMPLIFY_APP_ID secret not provided. Amplify Console auto-build will trigger automatically via GitHub webhook."
           fi
+
 

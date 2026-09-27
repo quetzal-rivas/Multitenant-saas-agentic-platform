@@ -54,7 +54,8 @@ jobs:
       - name: SAM Build and Deploy
         run: |
           sam build
-          sam deploy --no-confirm-changeset --no-fail-on-empty-changeset --region us-east-2
+          sam deploy --no-confirm-changeset --no-fail-on-empty-changeset --resolve-image-repos --region us-east-2
+
 
   frontend-aws-amplify-deploy:
     name: AWS Amplify Frontend Deployment

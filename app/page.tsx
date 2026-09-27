@@ -26,7 +26,7 @@ export default function LandingPage() {
             <a href="#features" className="hover:text-emerald-400 transition-colors">Features</a>
             <a href="#architecture" className="hover:text-emerald-400 transition-colors">Architecture</a>
             <a href="#pricing" className="hover:text-emerald-400 transition-colors">Pricing</a>
-            <a href="#docs" className="hover:text-emerald-400 transition-colors">Documentation</a>
+            <Link href="/docs" className="hover:text-emerald-400 transition-colors">Documentation</Link>
           </nav>
 
           <div className="flex items-center gap-4">

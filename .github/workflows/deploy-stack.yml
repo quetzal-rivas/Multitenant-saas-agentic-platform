@@ -1,140 +1,88 @@
 name: Deploy Multitenant SaaS Stack
 
-"on":
+on:
   push:
     branches:
       - main
   workflow_dispatch:
 
-
-permissions:
-  id-token: write
-  contents: read
-
-env:
-  AWS_REGION: us-east-2
-
 jobs:
-  # ============================================================================
-  # Job 1: Supabase Database Schema Sync & Migration Validation
-  # ============================================================================
   supabase-db-sync:
-    name: Supabase Schema and RLS Sync
+    name: Supabase Schema Sync
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Source Code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Supabase CLI
-        uses: supabase/setup-cli@v2
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
 
-      - name: Link and Sync Database Schema
+      - name: Sync Database Schema
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
         run: |
           if [ -n "$SUPABASE_ACCESS_TOKEN" ] && [ -n "$SUPABASE_PROJECT_ID" ]; then
-            echo "Linking Supabase Project: $SUPABASE_PROJECT_ID"
+            echo "Linking Supabase project..."
             supabase link --project-ref "$SUPABASE_PROJECT_ID" || true
-            echo "Applying schema definitions..."
             supabase db push || true
           else
-            echo "SUPABASE_ACCESS_TOKEN or SUPABASE_PROJECT_ID secret not set. Skipping automated DB migration."
+            echo "Supabase secrets not configured, skipping migration."
           fi
 
-  # ============================================================================
-  # Job 2: AWS SAM Backend Lambda Container Build & Deployment
-  # ============================================================================
   backend-aws-sam-deploy:
     name: AWS SAM Backend Deployment
     runs-on: ubuntu-latest
     needs: supabase-db-sync
     steps:
-      - name: Checkout Source Code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-2
 
-      - name: Set up AWS SAM CLI
-        uses: aws-actions/setup-sam@v2
+      - uses: aws-actions/setup-sam@v2
 
-      - name: Log in to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
+      - uses: aws-actions/amazon-ecr-login@v2
 
-      - name: SAM Build Lambda Container
+      - name: SAM Build and Deploy
         run: |
-          echo "Building SAM container stack..."
           sam build
+          sam deploy --no-confirm-changeset --no-fail-on-empty-changeset --region us-east-2
 
-      - name: SAM Deploy Stack
-        run: |
-          echo "Deploying Serverless SAM stack to AWS..."
-          sam deploy \
-            --no-confirm-changeset \
-            --no-fail-on-empty-changeset \
-            --region us-east-2 \
-            --parameter-overrides \
-              SupabaseUrl="${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}" \
-              SupabaseServiceRoleKey="${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}"
-
-  # ============================================================================
-  # Job 3: AWS Amplify Next.js 15 Frontend Deployment
-  # ============================================================================
   frontend-aws-amplify-deploy:
     name: AWS Amplify Frontend Deployment
     runs-on: ubuntu-latest
     needs: backend-aws-sam-deploy
     steps:
-      - name: Checkout Source Code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Node.js 20
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
 
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-2
 
-      - name: Install Frontend Dependencies
-        run: npm ci
-
-      - name: Next.js Production Build Verification
+      - name: Build Next.js Application
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
-        run: npm run build
+        run: |
+          npm ci
+          npm run build
 
       - name: Trigger AWS Amplify Release Build
         run: |
           if [ -n "${{ secrets.AMPLIFY_APP_ID }}" ]; then
-            echo "Triggering release deployment on AWS Amplify App: ${{ secrets.AMPLIFY_APP_ID }}"
-            aws amplify start-job \
-              --app-id "${{ secrets.AMPLIFY_APP_ID }}" \
-              --branch-name "main" \
-              --job-type "RELEASE" \
-              --region us-east-2
-          else
-            echo "AMPLIFY_APP_ID secret not provided. Amplify Console auto-build will trigger automatically via GitHub webhook."
+            aws amplify start-job --app-id "${{ secrets.AMPLIFY_APP_ID }}" --branch-name main --job-type RELEASE --region us-east-2
           fi
-
-

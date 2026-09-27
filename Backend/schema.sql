@@ -232,3 +232,30 @@ CREATE POLICY ephemeral_context_tenant_isolation ON public.ephemeral_context
     FOR ALL
     USING (tenant_id IS NULL OR tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
 
+-- ==============================================================================
+-- 9. SaaS Platform Documentation Store
+-- Stores tenant UI documentation topics, section markdown, and media S3 URLs
+-- ==============================================================================
+
+CREATE TABLE IF NOT EXISTS public.documentation (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    section_id VARCHAR(64) UNIQUE NOT NULL,
+    title TEXT NOT NULL,
+    category TEXT NOT NULL,
+    content_markdown TEXT NOT NULL,
+    image_url TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_documentation_section ON public.documentation(section_id);
+
+ALTER TABLE public.documentation ENABLE ROW LEVEL SECURITY;
+
+-- Public read policy for tenant documentation (TO authenticated, anon)
+CREATE POLICY documentation_public_read ON public.documentation
+    FOR SELECT
+    TO authenticated, anon
+    USING (true);
+
+

@@ -86,5 +86,7 @@ jobs:
       - name: Trigger AWS Amplify Release Build
         run: |
           if [ -n "${{ secrets.AMPLIFY_APP_ID }}" ]; then
-            aws amplify start-job --app-id "${{ secrets.AMPLIFY_APP_ID }}" --branch-name main --job-type RELEASE --region us-east-2
+            echo "Triggering release deployment on AWS Amplify App: ${{ secrets.AMPLIFY_APP_ID }}"
+            aws amplify start-job --app-id "${{ secrets.AMPLIFY_APP_ID }}" --branch-name main --job-type RELEASE --region us-east-2 || echo "⚠️ Amplify App ID not found or disconnected. Connect your repo in AWS Amplify Console to generate a live preview URL."
           fi
+

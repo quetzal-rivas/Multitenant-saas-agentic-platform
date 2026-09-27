@@ -1,11 +1,18 @@
+export const dynamic = 'force-static';
 import { NextRequest, NextResponse } from 'next/server';
 import { checkpointManagerStore } from '@/Backend/checkpoint-manager';
 import { vaultManagerStore } from '@/Backend/vault-manager';
 
 export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url);
-  const threadId = searchParams.get('thread_id') || 'session_enterprise_001';
-  const tenantId = searchParams.get('tenant_id') || 'tenant_enterprise_corp';
+  let threadId = 'session_enterprise_001';
+  let tenantId = 'tenant_enterprise_corp';
+  try {
+    if (req && req.url) {
+      const { searchParams } = new URL(req.url);
+      threadId = searchParams.get('thread_id') || 'session_enterprise_001';
+      tenantId = searchParams.get('tenant_id') || 'tenant_enterprise_corp';
+    }
+  } catch (e) {}
 
   const checkpoints = checkpointManagerStore.getThreadCheckpoints(threadId);
   const latestCheckpoint = checkpointManagerStore.getLatestCheckpoint(threadId);

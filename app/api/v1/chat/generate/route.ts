@@ -1,3 +1,4 @@
+export const dynamic = 'force-static';
 import { NextRequest, NextResponse } from 'next/server';
 import { checkpointManagerStore, CheckpointRecord } from '@/Backend/checkpoint-manager';
 import { vaultManagerStore } from '@/Backend/vault-manager';

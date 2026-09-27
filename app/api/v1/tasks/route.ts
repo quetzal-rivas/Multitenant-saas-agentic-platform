@@ -1,11 +1,17 @@
+export const dynamic = 'force-static';
 import { NextRequest, NextResponse } from 'next/server';
 import { handleTaskIntake, handleListTasks } from '@/Backend/server';
 import { db } from '@/Backend/db';
 
 export async function GET(req: NextRequest) {
   try {
-    const { searchParams } = new URL(req.url);
-    const tenantId = searchParams.get('tenant_id') || undefined;
+    let tenantId: string | undefined = undefined;
+    try {
+      if (req && req.url) {
+        const { searchParams } = new URL(req.url);
+        tenantId = searchParams.get('tenant_id') || undefined;
+      }
+    } catch (e) {}
     const data = handleListTasks(tenantId);
     return NextResponse.json(data);
   } catch (err: any) {
@@ -33,7 +39,7 @@ export async function POST(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   try {
-    const { searchParams } = new URL(req.url);
+    const { searchParams } = new URL(req?.url || 'http://localhost');
     const action = searchParams.get('action');
 
     if (action === 'reset') {

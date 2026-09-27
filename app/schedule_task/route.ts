@@ -1,3 +1,4 @@
+export const dynamic = 'force-static';
 import { NextRequest, NextResponse } from 'next/server';
 import { handleScheduleTask, taskDb, taskQueue } from '@/Backend/deferred-task-engine/src/server';
 

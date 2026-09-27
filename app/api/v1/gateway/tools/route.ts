@@ -1,10 +1,16 @@
+export const dynamic = 'force-static';
 import { NextRequest, NextResponse } from 'next/server';
 import { teamBlueprintManager } from '@/Backend/team-blueprint-manager';
 import { vaultManagerStore } from '@/Backend/vault-manager';
 
 export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url);
-  const tenantId = searchParams.get('tenant_id') || 'tenant_enterprise_corp';
+  let tenantId = 'tenant_enterprise_corp';
+  try {
+    if (req && req.url) {
+      const { searchParams } = new URL(req.url);
+      tenantId = searchParams.get('tenant_id') || 'tenant_enterprise_corp';
+    }
+  } catch (e) {}
 
   // 1. Ask Proprietary MCP Gateway: "What tools does this tenant have authenticated?"
   const tools = teamBlueprintManager.getTenantAuthenticatedTools(tenantId);

@@ -1,11 +1,20 @@
+export const dynamic = 'force-static';
 import { NextRequest } from 'next/server';
 import { OAuthManager } from '@/Backend/oauth-manager';
 import { OAuthProvider } from '@/Backend/types';
 
 export async function GET(req: NextRequest) {
-  const url = new URL(req.url);
-  const provider = (url.searchParams.get('provider') || 'google') as OAuthProvider;
-  const code = url.searchParams.get('code') || undefined;
+  let provider: OAuthProvider = 'google';
+  let code: string | undefined = undefined;
+  try {
+    if (req && req.url) {
+      const url = new URL(req.url);
+      provider = (url.searchParams.get('provider') || 'google') as OAuthProvider;
+      code = url.searchParams.get('code') || undefined;
+    }
+  } catch (e) {
+    // Ignore static prerender evaluation error
+  }
 
   // Process the OAuth callback in the OAuth Manager
   const connection = OAuthManager.handleCallback(provider, code);

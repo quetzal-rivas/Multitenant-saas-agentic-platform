@@ -1,3 +1,4 @@
+export const dynamic = 'force-static';
 import { NextRequest, NextResponse } from 'next/server';
 import { compileContext } from '@/lib/compiler';
 import { INITIAL_PROFILES } from '@/lib/mock-data';
@@ -45,7 +46,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url);
+  const { searchParams } = new URL(req?.url || 'http://localhost');
   const profileSlug = searchParams.get('profile') || 'sales-agent';
   const tenantId = searchParams.get('tenant_id') || 'tenant_123';
   const userId = searchParams.get('user_id') || 'user_456';

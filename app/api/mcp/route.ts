@@ -1,10 +1,11 @@
+export const dynamic = 'force-static';
 import { NextRequest, NextResponse } from 'next/server';
 import { ProprietaryMcpServer } from '@/Backend/mcp-server';
 import { McpProfileManager } from '@/Backend/profile-manager';
 
 export async function POST(req: NextRequest) {
   try {
-    const url = new URL(req.url);
+    const url = new URL(req?.url || 'http://localhost');
     const profileSlug = url.searchParams.get('profile') || req.headers.get('x-mcp-profile') || undefined;
     const authHeader = req.headers.get('authorization') || '';
     const apiKey = authHeader.replace(/^Bearer\s+/i, '').trim() || undefined;
@@ -34,7 +35,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
-  const url = new URL(req.url);
+  const url = new URL(req?.url || 'http://localhost');
   const profileSlug = url.searchParams.get('profile') || undefined;
   const profile = profileSlug ? McpProfileManager.getProfileBySlug(profileSlug) : McpProfileManager.listProfiles()[0];
 

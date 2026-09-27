@@ -1,13 +1,22 @@
+export const dynamic = 'force-static';
 import { NextRequest, NextResponse } from 'next/server';
 import { conversationsManager } from '@/Backend/conversations-manager';
 
 export async function GET(req: NextRequest) {
   try {
-    const { searchParams } = new URL(req.url);
-    const type = searchParams.get('type') || undefined;
-    const status = searchParams.get('status') || undefined;
-    const search = searchParams.get('q') || searchParams.get('search') || undefined;
-    const threadId = searchParams.get('threadId') || undefined;
+    let type: string | undefined = undefined;
+    let status: string | undefined = undefined;
+    let search: string | undefined = undefined;
+    let threadId: string | undefined = undefined;
+    try {
+      if (req && req.url) {
+        const { searchParams } = new URL(req.url);
+        type = searchParams.get('type') || undefined;
+        status = searchParams.get('status') || undefined;
+        search = searchParams.get('q') || searchParams.get('search') || undefined;
+        threadId = searchParams.get('threadId') || undefined;
+      }
+    } catch (e) {}
 
     const list = conversationsManager.getAllConversations({
       type,

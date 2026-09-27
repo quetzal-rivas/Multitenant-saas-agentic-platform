@@ -1,3 +1,4 @@
+export const dynamic = 'force-static';
 import { NextRequest, NextResponse } from 'next/server';
 import { McpProfileManager } from '@/Backend/profile-manager';
 import { INITIAL_PROFILES } from '@/lib/mock-data';

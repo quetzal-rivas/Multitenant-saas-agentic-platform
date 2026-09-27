@@ -1,3 +1,4 @@
+export const dynamic = 'force-static';
 import { NextRequest, NextResponse } from 'next/server';
 import { PlatformControlMcpServer } from '@/Backend/platform-mcp-server';
 
@@ -15,7 +16,7 @@ import { PlatformControlMcpServer } from '@/Backend/platform-mcp-server';
 
 export async function POST(req: NextRequest) {
   try {
-    const url = new URL(req.url);
+    const url = new URL(req?.url || 'http://localhost');
     const tenantId =
       url.searchParams.get('tenant_id') ||
       req.headers.get('x-tenant-id') ||
@@ -50,7 +51,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
-  const url = new URL(req.url);
+  const url = new URL(req?.url || 'http://localhost');
   const tenantId =
     url.searchParams.get('tenant_id') ||
     req.headers.get('x-tenant-id') ||

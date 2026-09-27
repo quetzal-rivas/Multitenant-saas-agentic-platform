@@ -1,3 +1,7 @@
+export const dynamic = 'force-static';
+export function generateStaticParams() {
+  return [{ id: 'default' }];
+}
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/Backend/db';
 import { handleCancelTask, handleTriggerNow } from '@/Backend/server';

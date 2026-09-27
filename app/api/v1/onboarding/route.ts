@@ -1,3 +1,4 @@
+export const dynamic = 'force-static';
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/Backend/supabase';
 import { vaultManagerStore } from '@/Backend/vault-manager';

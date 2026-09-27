@@ -1,3 +1,4 @@
+export const dynamic = 'force-static';
 import { NextRequest, NextResponse } from 'next/server';
 import { SimulationRunPayloadSchema } from '@/Backend/simulation-schemas';
 import { simulationEngine } from '@/Backend/simulation-engine';

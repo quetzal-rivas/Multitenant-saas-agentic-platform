@@ -5,3 +5,9 @@ coverage/
 *.log
 .env*
 !.env.example
+out/
+out.zip
+out_amplify/
+amplify_deploy.zip
+*.zip
+

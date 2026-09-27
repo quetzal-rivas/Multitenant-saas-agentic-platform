@@ -1,13 +1,20 @@
+export const dynamic = 'force-static';
 import { NextRequest, NextResponse } from 'next/server';
 import { OAuthManager } from '@/Backend/oauth-manager';
 import { OAuthProvider } from '@/Backend/types';
 
 export async function GET(req: NextRequest) {
-  const url = new URL(req.url);
-  const provider = (url.searchParams.get('provider') || 'google') as OAuthProvider;
-
-  // Use the origin or APP_URL from runtime environment
-  const origin = process.env.APP_URL || url.origin;
+  let provider: OAuthProvider = 'google';
+  let origin = process.env.APP_URL || 'https://main.d1ct23sivfa3uv.amplifyapp.com';
+  try {
+    if (req && req.url) {
+      const url = new URL(req.url);
+      provider = (url.searchParams.get('provider') || 'google') as OAuthProvider;
+      origin = process.env.APP_URL || url.origin;
+    }
+  } catch (e) {
+    // Ignore static prerender evaluation error
+  }
   const redirectUri = `${origin.replace(/\/$/, '')}/auth/callback`;
 
   const authData = OAuthManager.getAuthorizationUrl(provider, redirectUri);

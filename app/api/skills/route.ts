@@ -1,9 +1,10 @@
+export const dynamic = 'force-static';
 import { NextRequest, NextResponse } from 'next/server';
 import { SkillManager } from '@/Backend/skill-manager';
 
 export async function GET(req: NextRequest) {
   try {
-    const { searchParams } = new URL(req.url);
+    const { searchParams } = new URL(req?.url || 'http://localhost');
     const source = searchParams.get('source');
     const category = searchParams.get('category');
     const search = searchParams.get('search')?.toLowerCase();

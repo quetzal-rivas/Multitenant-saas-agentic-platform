@@ -1,9 +1,10 @@
+export const dynamic = 'force-static';
 import { NextRequest, NextResponse } from 'next/server';
 import { twilioConferenceManager } from '@/Backend/twilio-conference-manager';
 
 export async function GET(req: NextRequest) {
   try {
-    const url = new URL(req.url);
+    const url = new URL(req?.url || 'http://localhost');
     const filter = url.searchParams.get('filter'); // 'active' | 'all'
     const calls = filter === 'active' 
       ? twilioConferenceManager.getActiveCalls() 

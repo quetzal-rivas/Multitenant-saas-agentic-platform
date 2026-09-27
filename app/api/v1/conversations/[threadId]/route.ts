@@ -1,3 +1,7 @@
+export const dynamic = 'force-static';
+export function generateStaticParams() {
+  return [{ threadId: 'default' }];
+}
 import { NextRequest, NextResponse } from 'next/server';
 import { conversationsManager } from '@/Backend/conversations-manager';
 

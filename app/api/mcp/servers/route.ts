@@ -1,3 +1,4 @@
+export const dynamic = 'force-static';
 import { NextRequest, NextResponse } from 'next/server';
 import { HOSTED_MCP_SERVERS } from '@/Backend/hosted-servers';
 import { OAuthManager } from '@/Backend/oauth-manager';

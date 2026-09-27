@@ -83,10 +83,26 @@ jobs:
           npm run build
 
 
-      - name: Trigger AWS Amplify Release Build
+      - name: Deploy to AWS Amplify Hosting
+        env:
+          AMPLIFY_APP_ID: ${{ secrets.AMPLIFY_APP_ID }}
+          AWS_REGION: us-east-2
         run: |
-          if [ -n "${{ secrets.AMPLIFY_APP_ID }}" ]; then
-            echo "Triggering release deployment on AWS Amplify App: ${{ secrets.AMPLIFY_APP_ID }}"
-            aws amplify start-job --app-id "${{ secrets.AMPLIFY_APP_ID }}" --branch-name main --job-type RELEASE --region us-east-2 || echo "⚠️ Amplify App ID not found or disconnected. Connect your repo in AWS Amplify Console to generate a live preview URL."
+          APP_ID="${{ secrets.AMPLIFY_APP_ID }}"
+          if [ -z "$APP_ID" ]; then
+            APP_ID="d1ct23sivfa3uv"
           fi
+          cd out && zip -r ../out.zip . && cd ..
+          python3 -c "
+          import json, subprocess, os
+          app_id = '${APP_ID}'
+          res = subprocess.check_output(['aws', 'amplify', 'create-deployment', '--app-id', app_id, '--branch-name', 'main', '--region', 'us-east-2'])
+          data = json.loads(res)
+          job_id = data['jobId']
+          upload_url = data['zipUploadUrl']
+          print(f'Uploading out.zip to Amplify Job {job_id}...')
+          subprocess.check_call(['curl', '-s', '-H', 'Content-Type: application/zip', '--upload-file', 'out.zip', upload_url])
+          subprocess.check_call(['aws', 'amplify', 'start-deployment', '--app-id', app_id, '--branch-name', 'main', '--job-id', job_id, '--region', 'us-east-2'])
+          print(f'Deployment job {job_id} successfully started on AWS Amplify App {app_id}.')
+          "
 

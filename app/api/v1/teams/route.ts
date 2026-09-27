@@ -1,11 +1,18 @@
+export const dynamic = 'force-static';
 import { NextRequest, NextResponse } from 'next/server';
 import { teamBlueprintManager } from '@/Backend/team-blueprint-manager';
 
 export async function GET(req: NextRequest) {
   try {
-    const { searchParams } = new URL(req.url);
-    const tenantId = searchParams.get('tenant_id') || 'tenant_enterprise_corp';
-    const profileId = searchParams.get('profile_id');
+    let tenantId = 'tenant_enterprise_corp';
+    let profileId: string | null = null;
+    try {
+      if (req && req.url) {
+        const { searchParams } = new URL(req.url);
+        tenantId = searchParams.get('tenant_id') || 'tenant_enterprise_corp';
+        profileId = searchParams.get('profile_id');
+      }
+    } catch (e) {}
 
     if (profileId) {
       const profile = teamBlueprintManager.getProfile(profileId);
@@ -90,7 +97,7 @@ export async function POST(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   try {
-    const { searchParams } = new URL(req.url);
+    const { searchParams } = new URL(req?.url || 'http://localhost');
     const profileId = searchParams.get('profile_id');
 
     if (!profileId) {

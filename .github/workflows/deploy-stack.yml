@@ -10,6 +10,9 @@ permissions:
   id-token: write
   contents: read
 
+env:
+  AWS_REGION: us-east-2
+
 jobs:
   # ============================================================================
   # Job 1: Supabase Database Schema Sync & Migration Validation
@@ -64,7 +67,7 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION || 'us-east-2' }}
+          aws-region: us-east-2
 
       - name: Set up AWS SAM CLI
         uses: aws-actions/setup-sam@v2
@@ -84,7 +87,7 @@ jobs:
           sam deploy \
             --no-confirm-changeset \
             --no-fail-on-empty-changeset \
-            --region ${{ secrets.AWS_REGION || 'us-east-2' }} \
+            --region us-east-2 \
             --parameter-overrides \
               SupabaseUrl="${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}" \
               SupabaseServiceRoleKey="${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}"
@@ -111,7 +114,7 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION || 'us-east-2' }}
+          aws-region: us-east-2
 
       - name: Install Frontend Dependencies
         run: npm ci
@@ -130,7 +133,8 @@ jobs:
               --app-id "${{ secrets.AMPLIFY_APP_ID }}" \
               --branch-name "main" \
               --job-type "RELEASE" \
-              --region ${{ secrets.AWS_REGION || 'us-east-2' }}
+              --region us-east-2
           else
             echo "ℹ️ AMPLIFY_APP_ID secret not provided. Amplify Console auto-build will trigger automatically via GitHub webhook."
           fi
+

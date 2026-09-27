@@ -1,0 +1,103 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Multitenant SaaS Agentic Platform & Deferred Task Engine Serverless Backend (AWS SAM)
+
+Globals:
+  Function:
+    Timeout: 30
+    MemorySize: 1024
+    LoggingConfig:
+      LogFormat: JSON
+
+Resources:
+  # ============================================================================
+  # 1. AWS ECR Container Repository
+  # ============================================================================
+  BackendContainerRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: context-control-backend
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
+
+  # ============================================================================
+  # 2. FastAPI Python Lambda Container Function
+  # ============================================================================
+  FastAPILambdaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: multitenant-agent-backend
+      PackageType: Image
+      ImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/context-control-backend:latest"
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          SUPABASE_URL: !Ref SupabaseUrl
+          SUPABASE_SERVICE_ROLE_KEY: !Ref SupabaseServiceRoleKey
+          ENVIRONMENT: production
+      Events:
+        ProxyApiRoot:
+          Type: HttpApi
+          Properties:
+            Path: /
+            Method: ANY
+        ProxyApiResource:
+          Type: HttpApi
+          Properties:
+            Path: /{proxy+}
+            Method: ANY
+    Metadata:
+      Dockerfile: Dockerfile
+      DockerContext: .
+      DockerTag: latest
+
+  # ============================================================================
+  # 3. EventBridge Scheduler Execution Role (Target-Time Deferred Tasks)
+  # ============================================================================
+  EventBridgeSchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: multitenant-eventbridge-scheduler-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: InvokeLambdaPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource: !GetAtt FastAPILambdaFunction.Arn
+
+Parameters:
+  SupabaseUrl:
+    Type: String
+    Description: Production Supabase Project URL
+    Default: "https://sttaszlypmeusqtqqqyt.supabase.co"
+  SupabaseServiceRoleKey:
+    Type: String
+    Description: Production Supabase Service Role API Key
+    NoEcho: true
+    Default: ""
+
+Outputs:
+  ApiUrl:
+    Description: HTTP API Gateway endpoint URL for FastAPI Lambda container
+    Value: !Sub "https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+  LambdaFunctionArn:
+    Description: Amazon Resource Name (ARN) of the FastAPI Lambda Function
+    Value: !GetAtt FastAPILambdaFunction.Arn
+  EcrRepositoryUri:
+    Description: URI of the Amazon ECR Repository
+    Value: !GetAtt BackendContainerRepo.RepositoryUri
+  EventBridgeSchedulerRoleArn:
+    Description: ARN of the EventBridge Scheduler Execution Role
+    Value: !GetAtt EventBridgeSchedulerRole.Arn

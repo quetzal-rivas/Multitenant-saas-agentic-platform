@@ -1,5 +1,4 @@
 @import "tailwindcss";
-@import "tw-animate-css";
 
 @layer base {
   body {
@@ -28,3 +27,4 @@
 ::-webkit-scrollbar-thumb:hover {
   background: #3b465a;
 }
+

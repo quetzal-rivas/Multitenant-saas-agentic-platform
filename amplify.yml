@@ -1,0 +1,18 @@
+version: 1
+frontend:
+  phases:
+    preBuild:
+      commands:
+        - npm ci --prefer-offline --no-audit
+    build:
+      commands:
+        - env | grep NEXT_PUBLIC_ >> .env.production || true
+        - npm run build
+  artifacts:
+    baseDirectory: .next
+    files:
+      - '**/*'
+  cache:
+    paths:
+      - .next/cache/**/*
+      - node_modules/**/*

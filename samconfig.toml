@@ -1,0 +1,22 @@
+version = 0.1
+
+[default.global.parameters]
+stack_name = "multitenant-agent-backend"
+
+[default.build.parameters]
+cached = true
+parallel = true
+
+[default.deploy.parameters]
+capabilities = "CAPABILITY_IAM CAPABILITY_NAMED_IAM"
+confirm_changeset = false
+resolve_s3 = true
+s3_prefix = "multitenant-agent-backend"
+region = "us-east-2"
+image_repositories = []
+
+[default.package.parameters]
+resolve_s3 = true
+
+[default.sync.parameters]
+watch = false

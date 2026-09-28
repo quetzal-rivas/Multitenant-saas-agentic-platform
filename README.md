@@ -135,48 +135,206 @@ The **Task Calendar** view provides a visual timeline and scheduling dashboard f
 
 ---
 
-### 5. Context Profiles Engine
+### 5. Context Profiles Engine & Token Budgeting
 
 ![Context Profiles](public/docs/images/profiles.png)
 
 #### 🎯 Overview & Strategic Purpose
-The **Context Profiles** view allows tenants to build and manage fine-tuned context templates that govern agent behavior across sessions, API endpoints, and scheduled tasks. Context profiles encapsulate system prompts, corporate brand voice, customer loyalty tier rules, and token budget allocations into reusable blueprints.
+In modern enterprise LLM architectures, unmanaged prompt context leads directly to context window drift, non-deterministic model behavior, severe hallucination, and escalating API infrastructure costs. The **Context Profiles Engine** serves as a deterministic context compiler (`compileContext`) designed to solve these challenges. It standardizes system prompts, corporate brand voice, customer loyalty rules, working memory, and vector RAG fragments into tight, token-budgeted prompt payloads.
 
-#### ⚡ Comprehensive Feature Breakdown & Architecture
-- **Priority-Based Token Trimming:** Enforces hard token limits (e.g. 4,096 or 8,192 tokens). When prompt context threatens to exceed limits, the compiler automatically trims lower-priority sections (such as older conversation history) while preserving core system instructions and active tool schemas.
-- **Tenant Brand Voice Injection:** Standardizes agent communications across chat and voice channels by injecting tenant-specific tone rules, brand guidelines, and forbidden word lists.
-- **Multi-Persona Profiles:** Tenants can maintain distinct profiles tailored for specific operational use cases, such as *Customer Support*, *Sales Outreach*, *DevOps Auditor*, and *Executive Summaries*.
+By establishing strict **Context Profiles**, tenant organizations can guarantee that their AI agents remain compliant with corporate brand guidelines, legal policies, and token allocation limits across every interaction channel—whether serving live customer support chats, executing background BullMQ tasks, or answering voice calls over PSTN phone lines.
+
+#### ⚡ Comprehensive Feature Breakdown & Deep-Dive Architecture
+- **Deterministic Context Compilation Pipeline:** The compiler executes a multi-stage pipeline defined in `lib/compiler.ts`. The pipeline evaluates and sequences context sources based on tenant-configured priority weights:
+  1. `system_instructions` (Priority 100): Core operational boundaries, security guardrails, and role definitions.
+  2. `agent_instructions` (Priority 90): Tactical directives, dialog strategy, and persona constraints.
+  3. `tenant_context` (Priority 85): Enterprise organization metadata, active SLA tier, brand voice, and legal policies.
+  4. `current_user` (Priority 80): User profile, account tenure, loyalty tier privileges, and saved preferences.
+  5. `runtime_input` (Priority 75): Primary user prompt and incoming trigger webhook payloads.
+  6. `relevant_knowledge` (Priority 70): Retrieval-Augmented Generation (RAG) snippets queried from Supabase `pgvector`.
+  7. `long_term_memory` (Priority 65): Vectorized past user interaction memories and preference score records.
+  8. `working_memory` (Priority 60): Ephemeral session state, active sub-goals, and pending concessions.
+  9. `conversation` (Priority 50): Recent message thread history serialized from Supabase checkpoints.
+
+- **Priority-Based Token Trimming Algorithm:** Standard token counters truncate messages arbitrarily from the top or bottom of the history stack, often destroying vital system instructions or user identity context. The platform's compiler utilizes a priority-aware trimming algorithm (`estimateTokens` based on a 3.8 characters-per-token heuristic):
+  - The compiler calculates total prompt tokens across all enabled pipeline steps.
+  - If total tokens exceed `maxTokensBudget` (e.g., 4,096 or 8,192 tokens), the compiler sorts steps by `priority` in descending order.
+  - Lower-priority steps (such as older conversation turns or supplementary long-term memories) are trimmed or omitted first.
+  - High-priority steps (`system_instructions`, `tenant_context`, `current_user`) are strictly preserved without truncation.
+
+- **Contract Validation Matrix:** Profiles specify a data contract (`profile.contract.required`) enforcing required identity and input parameters (e.g., `tenant_id`, `user_id`, `conversation_id`, `query`). Before context assembly begins, the contract validator checks incoming payload keys. If required parameters are missing, the compiler flags validation failures in the resolution metadata, preventing incomplete context execution.
+
+- **Tenant Brand Voice & Policy Injection:** Automatically injects tenant-specific corporate brand voice directives (e.g., *"Sophisticated, reassuring, concierge-level hospitality with zero aggressive pressure"*) and governance rules directly into system instructions, standardizing tone across all communication channels.
+
+- **Multi-Format Compilation:** Supports rendering output context in formatted GitHub Flavored Markdown (for direct LLM ingestion) or structured JSON (`ResolveResponse` payload containing detailed source breakdown metrics, latency counters, and token counts).
 
 #### 📖 Step-by-Step UI How-To-Use Guide
-1. Select **Profiles** from the left navigation bar under *Workspace*.
-2. Click **Create Profile** or select an existing profile card to edit.
-3. Configure profile settings:
-   - **Profile Name** and **Description**.
-   - **System Prompt Instructions** defining core agent behavior and boundaries.
-   - **Brand Voice & Tone** guidelines.
-   - **Max Token Budget** limit (e.g. `8192` tokens).
-4. Click **Save Profile** to make the context profile instantly available across the Agent Studio, Team Builder, and REST API endpoints.
+1. Navigate to **Profiles** from the workspace sidebar menu under the *Workspace* section.
+2. View active profile blueprints (e.g., *Customer Support Lead*, *Sales Outbound Representative*, *Technical Auditor*).
+3. **To Create or Modify a Context Profile:**
+   - Click **Create Profile** or click an existing profile card to edit.
+   - Enter the **Profile Name**, **Slug ID**, and **Description**.
+   - In the **System Prompt Instructions** field, define core agent behavior, operational guardrails, and forbidden response patterns.
+   - Specify **Brand Voice & Tone** guidelines (e.g. *Authoritative, concise, executive-focused*).
+   - Define **Max Token Budget** (e.g., `4096`, `8192`, or `16384` tokens).
+   - Configure **Pipeline Step Priorities** by adjusting priority sliders for System Instructions, Knowledge Base RAG, User Identity, and Conversation History.
+4. **To Test Context Compilation:**
+   - Click the **Live Compiler Sandbox** drawer.
+   - Input sample user identity attributes and query strings.
+   - Click **Compile Context**.
+   - Review the compiled prompt preview, token budget usage gauge, and step-by-step latency breakdown.
+5. Click **Save Profile Blueprint** to deploy the profile across the Agent Studio, Team Builder, and REST API.
+
+#### 💻 Developer API & Code Specifications
+Tenants can resolve context programmatically via the REST API endpoint `/api/v1/context/resolve`:
+
+```bash
+curl -X POST "https://d1ct23sivfa3uv.amplifyapp.com/api/v1/context/resolve" \
+  -H "Content-Type: application/json" \
+  -H "x-tenant-id: tenant_enterprise_corp" \
+  -d '{
+    "profile_id": "profile_customer_support",
+    "identity": {
+      "tenant_id": "tenant_123",
+      "user_id": "user_456",
+      "conversation_id": "conv_8910"
+    },
+    "input": {
+      "query": "What concessions can we offer for annual membership renewals?"
+    },
+    "options": {
+      "format": "json",
+      "max_tokens": 8192
+    }
+  }'
+```
+
+```json
+{
+  "profile": "customer_support",
+  "version": "1.4.0",
+  "context": {
+    "format": "json",
+    "structured": {
+      "sections": [
+        {
+          "section": "System Instructions",
+          "priority": 100,
+          "tokens": 240,
+          "content": "Adhere strictly to system boundaries..."
+        }
+      ]
+    }
+  },
+  "metadata": {
+    "token_count": 1840,
+    "max_tokens_budget": 8192,
+    "sources": ["instructions", "tenant", "user", "rag", "memory"],
+    "resolution_time_ms": 12,
+    "contract_validation": {
+      "valid": true,
+      "missing_required": [],
+      "provided": ["tenant_id", "user_id", "query"]
+    }
+  }
+}
+```
 
 ---
 
-### 6. Knowledge Sources & Memory (RAG Ingestion & Supabase pgvector)
+### 6. Knowledge Base Ingestion & pgvector RAG Engine
 
 ![Knowledge Sources](public/docs/images/sources.png)
 
 #### 🎯 Overview & Strategic Purpose
-The **Sources** view manages tenant Retrieval-Augmented Generation (RAG) knowledge bases and long-term semantic memories stored in Supabase `pgvector`. Agents query indexed knowledge sources automatically during conversation turns to provide accurate, factual responses based on company documentation.
+The **Knowledge Base Ingestion & RAG Engine** equips agents with enterprise-wide long-term memory and factual knowledge retrieval. LLMs trained on static pre-training data suffer from knowledge cutoff dates and cannot access internal corporate documents, customer SOPs, or private product knowledge. 
 
-#### ⚡ Comprehensive Feature Breakdown & Architecture
-- **Document & URL Knowledge Ingestion:** Upload PDF files, text documents, or submit website URLs for automated text extraction, chunking, and vector embedding.
-- **Supabase pgvector Embeddings:** Stores high-dimensional vector embeddings (1536-dimensional) in Supabase PostgreSQL (`public.memory_store`) with fast cosine similarity search indexes (`idx_memory_store_tenant_thread`).
-- **Hardware-Level Tenant Isolation:** Enforces strict Row-Level Security (RLS) policies to guarantee that knowledge fragments and vector embeddings are completely isolated between tenant organizations.
+By integrating a high-performance Retrieval-Augmented Generation (RAG) pipeline backed by Supabase `pgvector`, the platform allows agents to dynamically search, retrieve, and synthesize factual document fragments in real-time during chat sessions, voice calls, and scheduled background tasks.
+
+#### ⚡ Comprehensive Feature Breakdown & Deep-Dive Architecture
+- **Multi-Source Document Ingestion Pipeline:** Supports seamless ingestion across multiple content formats:
+  - **File Uploads:** PDF documents, plain text files (`.txt`), and Markdown manuals (`.md`).
+  - **Web Scraping & URL Crawler:** Automatically fetches web page HTML, strips clutter, extracts core semantic text, and converts content into clean markdown.
+  - **Database Records:** Direct ingestion of customer CRM tables and operational knowledge objects.
+
+- **Automated Text Chunking & Overlap Strategy:** Incoming documents pass through a text chunking engine that splits large texts into optimized passages (500 tokens per chunk with a 50-token sliding window overlap). Overlapping guarantees that key context spanning sentence boundaries is preserved across adjacent chunks.
+
+- **Supabase pgvector Embedding Store:** Chunks are transformed into 1536-dimensional vector embeddings using OpenAI `text-embedding-3-small` / Gemini embedding models. Vector embeddings are stored in Supabase PostgreSQL under `public.memory_store`:
+
+```sql
+CREATE TABLE IF NOT EXISTS public.memory_store (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL REFERENCES public.tenants(id) ON DELETE CASCADE,
+    thread_id VARCHAR(128) NOT NULL,
+    profile_id VARCHAR(64),
+    content TEXT NOT NULL,
+    embedding vector(1536),
+    metadata JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+- **Cosine Distance Vector Indexing:** Fast vector similarity search is powered by an HNSW / IVFFlat cosine similarity index (`idx_memory_store_tenant_thread`):
+
+```sql
+SELECT id, content, metadata, 1 - (embedding <=> $1) AS similarity_score
+FROM public.memory_store
+WHERE tenant_id = current_setting('app.current_tenant_id')::uuid
+  AND 1 - (embedding <=> $1) >= 0.70
+ORDER BY similarity_score DESC
+LIMIT 5;
+```
+
+- **Hardware-Level Tenant RLS Security:** Vector similarity queries enforce strict PostgreSQL Row-Level Security (RLS). Cross-tenant data leaks are physically impossible at the database engine level because queries evaluate `tenant_id = current_setting('app.current_tenant_id')`.
+
+- **Semantic Search Sandbox:** Includes a built-in search testing tool allowing tenant administrators to input natural language queries, execute real-time similarity vector searches, inspect match confidence scores, and preview raw text fragments.
 
 #### 📖 Step-by-Step UI How-To-Use Guide
-1. Click **Sources** in the left sidebar menu.
-2. Click **Ingest New Source**.
-3. Choose **File Upload** (PDF, TXT, Markdown) or **Website URL**.
-4. Click **Process & Embed**. The platform chunking engine will extract text and store vector embeddings in `public.memory_store`.
-5. Use the **Semantic Search Sandbox** field to submit query terms and verify retrieved document fragments and similarity scores.
+1. Select **Sources** from the workspace sidebar menu under *Workspace*.
+2. Review the list of active knowledge sources, indexed document counts, total vector embeddings, and last sync timestamps.
+3. **To Ingest a New Knowledge Source:**
+   - Click **Ingest New Source** in the top right corner.
+   - Choose **File Upload** or **URL Web Crawler**.
+   - If *File Upload*: Drag and drop PDF, TXT, or MD files into the dropzone.
+   - If *URL Web Crawler*: Enter target website URLs (e.g. `https://docs.company.com/sop`).
+   - Select target **Knowledge Category** (e.g. *Legal & Compliance*, *Product Specifications*, *Customer SOPs*).
+   - Click **Process & Embed**.
+4. Monitor live ingestion status: Text extraction -> Chunk generation -> Embedding creation -> Supabase index write.
+5. **To Test Vector Retrieval:**
+   - Click the **Semantic Search Sandbox** tab.
+   - Type a query string (e.g., *"What is our refund policy for VIP members?"*).
+   - Set the **Similarity Threshold** slider (e.g. `0.75`) and **Max Results** (`Top 5`).
+   - Click **Run Vector Search** to inspect matching chunks and similarity percentages.
+
+#### 💻 Developer API & Code Specifications
+Developers can ingest documents programmatically via the REST API endpoint `/api/v1/sources`:
+
+```bash
+curl -X POST "https://d1ct23sivfa3uv.amplifyapp.com/api/v1/sources/ingest" \
+  -H "Content-Type: application/json" \
+  -H "x-tenant-id: tenant_enterprise_corp" \
+  -d '{
+    "source_type": "url",
+    "url": "https://company.com/terms",
+    "category": "legal_policies",
+    "metadata": {
+      "author": "Compliance Team",
+      "version": "2026.1"
+    }
+  }'
+```
+
+```json
+{
+  "status": "success",
+  "document_id": "doc_99182",
+  "chunks_created": 14,
+  "embeddings_stored": 14,
+  "vector_dimensions": 1536,
+  "index_name": "idx_memory_store_tenant_thread",
+  "execution_time_ms": 1420
+}
+```
 
 ---
 
@@ -185,22 +343,71 @@ The **Sources** view manages tenant Retrieval-Augmented Generation (RAG) knowled
 ![MCP Hub & Tools](public/docs/images/mcp_hub.png)
 
 #### 🎯 Overview & Strategic Purpose
-The **MCP Hub** is the central control panel for Model Context Protocol (MCP 2024-11-05 JSON-RPC 2.0) tool integrations. It provides one-click connectivity for pre-authenticated tool spokes (Gmail, Slack, Google Calendar, Cloudflare, Supabase Vector) and allows tenants to register custom stdio or SSE MCP tool servers.
+The **MCP Hub** acts as the secure, high-performance nerve center for all external tool connections. By adopting the open standard **Model Context Protocol (MCP 2024-11-05 JSON-RPC 2.0)**, the platform establishes a decentralized Hub-and-Spoke architecture. This allows agents to interact with external enterprise systems (like Salesforce, Gmail, Slack, and cloud databases) without needing hardcoded REST API integrations for every service.
 
-#### ⚡ Comprehensive Feature Breakdown & Architecture
-- **Zero Credential Exposure:** API keys and OAuth2 refresh tokens are encrypted using AES-256-GCM inside the tenant vault (`public.tenant_vault`). Credentials are decrypted exclusively inside the MCP gateway proxy and are never exposed to LLM context windows or client browsers.
-- **Pre-Authenticated Tool Spokes:** One-click integration for popular enterprise spokes:
-  - `gmail_send_message` & `gmail_fetch_threads`
-  - `slack_post_message` & `slack_post_incident_alert`
-  - `calendar_list_events` & `calendar_create_event`
-  - `cloudflare_verify_token` & `supabase_vector_query`
-- **Custom Tool Transport Support:** Connect custom MCP tool servers via stdio commands or SSE HTTP endpoints.
+Crucially, the MCP Hub solves the "Zero-Trust Agent Tooling" problem. Instead of injecting raw API keys into the LLM's system prompt (which risks catastrophic credential leakage during prompt injection attacks), all API keys remain encrypted inside the `public.tenant_vault`. The MCP Gateway proxy intercepts tool calls, injects the decrypted credentials on the server side, executes the action against the spoke, and returns only the sanitized result back to the agent's context window.
+
+#### ⚡ Comprehensive Feature Breakdown & Deep-Dive Architecture
+- **Zero Credential Exposure (AES-256-GCM Vault):** The platform maintains a rigorous boundary between the LLM inference engine and the API execution layer. API keys, OAuth2 refresh tokens, and JWT secrets are stored in the PostgreSQL `public.tenant_vault` table using AES-256-GCM authenticated encryption. The LLM never sees these tokens.
+- **Pre-Authenticated Enterprise Spokes:** The Hub includes a library of out-of-the-box, one-click enterprise spokes configured to execute standard operational playbooks:
+  - **Google Workspace (Gmail):** `gmail_send_message` (dispatching outgoing client replies), `gmail_fetch_threads` (auditing customer email history).
+  - **Slack Communications:** `slack_post_message` (general channel updates), `slack_post_incident_alert` (high-priority escalation pings).
+  - **Google Calendar:** `calendar_list_events` (checking team availability), `calendar_create_event` (booking meetings).
+  - **Cloudflare & Network:** `cloudflare_verify_token` (DNS validation), `supabase_vector_query` (cross-database RAG fetching).
+- **Custom MCP Transports (Stdio & SSE):** Beyond the pre-built spokes, tenants can connect their own custom tool servers using two standardized transports:
+  - **Stdio Transport:** Spawns local Node.js or Python subprocesses (e.g., `npx @modelcontextprotocol/server-postgres`) communicating via stdin/stdout.
+  - **SSE (Server-Sent Events) HTTP Transport:** Connects to remote HTTP servers over persistent SSE streaming connections, allowing agent execution against VPC-isolated internal enterprise APIs.
+- **Strict JSON Schema Validation:** Every tool registered in the Hub provides a rigid JSON Schema definition for its parameters. The compiler validates LLM tool outputs against this schema before execution. If validation fails, the Hub automatically generates a localized error response (e.g., *"Missing required property 'recipient_email'"*) and prompts the agent to self-correct its payload without crashing the session.
 
 #### 📖 Step-by-Step UI How-To-Use Guide
 1. Select **MCP Hub & Tools** from the sidebar menu under *Workspace*.
-2. Toggle active tool spokes on or off.
-3. Click **Configure Credentials** on any spoke card to enter required API keys or authorize OAuth connections.
-4. Click **Test Tool Connection** to send an RPC ping and verify tool readiness.
+2. Browse the grid of available tool spokes.
+3. **To Activate a Pre-Built Spoke (e.g. Gmail):**
+   - Click the toggle switch in the upper-right corner of the Gmail spoke card.
+   - Click **Configure Credentials** to open the secure BYOK (Bring Your Own Key) drawer.
+   - Paste your OAuth Refresh Token or API Key. The UI masks this input and immediately encrypts it in the vault.
+   - Click **Test Tool Connection** to dispatch a JSON-RPC `ping` command to the spoke server. A green success badge indicates the tool is operational.
+4. **To Register a Custom MCP Server:**
+   - Click **Add Custom MCP Server** at the top of the hub.
+   - Define the **Server Name** and **Transport Protocol** (Stdio or SSE).
+   - For Stdio: Provide the execution command (e.g. `npx -y @mcp/my-custom-server`).
+   - For SSE: Provide the remote endpoint URL (e.g. `https://api.mycompany.internal/mcp`).
+   - Save the configuration. The hub will automatically request a `list_tools` payload from the custom server and map the new tools into the agent's available inventory.
+
+#### 💻 Developer API & Code Specifications
+The MCP Gateway expects standard JSON-RPC 2.0 payloads for tool execution.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "id": "req_847192",
+  "params": {
+    "name": "gmail_send_message",
+    "arguments": {
+      "to": "client@acmecorp.io",
+      "subject": "Your Retention Concessions",
+      "body": "Hi Sarah, we have successfully waived your 2026 assessment fee."
+    }
+  }
+}
+```
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "req_847192",
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "Message successfully dispatched via Gmail API. Thread ID: 18b48f9d8a3c."
+      }
+    ],
+    "isError": false
+  }
+}
+```
 
 ---
 
@@ -209,17 +416,61 @@ The **MCP Hub** is the central control panel for Model Context Protocol (MCP 202
 ![Skills Library](public/docs/images/skills_library.png)
 
 #### 🎯 Overview & Strategic Purpose
-The **Library** view manages modular skill packages (`SKILL.md`) that extend agent capabilities with domain-specific workflows, multi-step heuristics, and specialized API automation kits.
+The **Skills Library** shifts autonomous agents from generalized chat assistants into highly specialized operational workers. While tools provide the "hands" to perform actions (like sending an email), **Skills** provide the "brain" (the multi-step heuristic instructions on *when* and *how* to use those tools). 
 
-#### ⚡ Comprehensive Feature Breakdown & Architecture
-- **Pre-Built Skill Packages:** Pre-configured skill kits for CRM lead enrichment, security audits, calendar management, and database query optimization.
-- **Custom Skill Import:** Import custom skill markdown definitions containing YAML frontmatter metadata and step-by-step execution scripts.
-- **One-Click Agent Skill Assignment:** Enable or disable individual skills per agent profile with a single UI toggle switch.
+By packaging complex standard operating procedures (SOPs) into modular `SKILL.md` markdown files, tenants can instantly upgrade agent capabilities. Instead of writing massive, fragile system prompts, administrators can dynamically toggle discrete skills on or off depending on the agent's assigned role in the team graph.
+
+#### ⚡ Comprehensive Feature Breakdown & Deep-Dive Architecture
+- **`SKILL.md` Markdown Packaging:** Skills are defined using a structured Markdown syntax combining YAML frontmatter metadata and descriptive instruction blocks. This dual-format ensures skills are both machine-readable (for the context compiler) and easily auditable by human operators.
+  - **YAML Frontmatter:** Defines the skill's `name`, `description`, `version`, `required_mcp_tools`, and regex `triggers`.
+  - **Instruction Body:** Contains the step-by-step heuristic logic the LLM must follow when executing the skill (e.g., *"Step 1: Fetch invoice status using `stripe_get_invoice`. Step 2: If unpaid, dispatch `slack_post_message` to the billing channel."*).
+- **Dynamic Context Injection:** The context compiler (`lib/compiler.ts`) monitors the incoming user query against the `triggers` defined in the active agent's bound skills. If a trigger matches, the compiler dynamically injects that specific skill's instructions into the priority prompt context, maximizing token efficiency by excluding irrelevant SOPs.
+- **Pre-Built Enterprise Catalog:** The registry includes a curated catalog of standard skills ready for one-click deployment, including:
+  - *CRM Lead Enrichment Pipeline:* Automatically fetches company data via Clearbit and logs updates in HubSpot.
+  - *PostgreSQL Performance Tuning:* Executes `EXPLAIN ANALYZE` on slow queries and recommends index creations.
+  - *Security Audit Hardening:* Scans imported dependencies and checks for CVE vulnerabilities.
 
 #### 📖 Step-by-Step UI How-To-Use Guide
-1. Navigate to **Library** in the workspace sidebar.
-2. Browse the skill catalog cards or click **Upload Custom Skill**.
-3. Toggle the status switch on any skill card to make it immediately available to your Agent Studio and Team Builder graphs.
+1. Navigate to **Library** under the *Workspace* section.
+2. Browse the grid of available skill packages. 
+3. **To Enable a Skill for an Agent:**
+   - Open the **Agent Studio** or **Team Builder**.
+   - In the agent configuration drawer, scroll to **Bound Skills**.
+   - Select the desired skill (e.g. *Database Query Optimizer*) from the dropdown menu to bind it to the agent's profile (`bound_skill_ids`).
+4. **To Upload a Custom Skill (`SKILL.md`):**
+   - In the Library view, click **Upload Custom Skill**.
+   - Drag and drop your `.md` file containing the valid YAML frontmatter block.
+   - The platform will parse the file, validate the required MCP tool dependencies, and add the skill card to your tenant registry.
+
+#### 💻 Developer API & Code Specifications
+An example of a valid `SKILL.md` package payload parsed by the registry:
+
+```markdown
+---
+name: Stripe Billing Dispute Resolver
+description: Standard operating procedure for handling customer chargebacks and invoice disputes.
+version: 1.0.0
+author: Finance Operations
+triggers:
+  - "chargeback"
+  - "dispute"
+  - "invoice incorrect"
+required_mcp_tools:
+  - stripe_get_dispute
+  - stripe_issue_refund
+  - slack_post_message
+---
+
+# Stripe Billing Dispute Resolver
+
+## Execution Heuristics
+When a user asks about a disputed charge or an incorrect invoice, follow these steps exactly:
+1. Extract the Invoice ID or Charge ID from the user query.
+2. Execute `stripe_get_dispute` to retrieve the current dispute status.
+3. If the dispute status is "needs_response", evaluate the concession matrix.
+4. If the user is a Diamond Tier member, execute `stripe_issue_refund` immediately without human intervention.
+5. If the user is below Diamond Tier, execute `slack_post_message` to the `#finance-escalations` channel and inform the user that the review is pending.
+```
 
 ---
 
@@ -228,38 +479,118 @@ The **Library** view manages modular skill packages (`SKILL.md`) that extend age
 ![Endpoints API](public/docs/images/endpoints_api.png)
 
 #### 🎯 Overview & Strategic Purpose
-The **Endpoints** view provides interactive documentation and a live cURL request generator for the tenant REST API (`/api/v1/*`). It enables headless integration into external webhooks, custom frontends, and mobile apps.
+The **Endpoints API** enables seamless headless integration of the Context Control autonomous agent engine into external enterprise systems. By utilizing the platform's RESTful API (`/api/v1/*`), tenants can embed autonomous capabilities directly into their own custom mobile apps, React web frontends, Zapier webhooks, and legacy CRM backend triggers.
 
-#### ⚡ Comprehensive Feature Breakdown & Architecture
-- **Interactive cURL Generator:** Live request builder for `/api/v1/tasks`, `/api/v1/schedule_task`, `/api/v1/conversations`, and `/api/v1/context/resolve`.
-- **Pre-Populated Auth Headers:** Automatically pre-populates request headers with your active workspace tenant ID (`x-tenant-id`) and API authorization key.
-- **Multi-Language Snippets:** Copy-and-paste code snippets available in cURL, JavaScript (Fetch), Python (Requests), and Go.
+To accelerate developer onboarding, the UI features an interactive, real-time **Live cURL Generator**. As developers adjust payload parameters in the visual form (such as selecting a target agent profile or modifying a scheduled execution time), the code snippet automatically regenerates in cURL, JavaScript (Fetch), Python (Requests), and Go.
+
+#### ⚡ Comprehensive Feature Breakdown & Deep-Dive Architecture
+- **Tenant API Gateway (`/api/v1/*`):** The core REST engine validates inbound requests using a strict multi-tenant authentication protocol. Every request must include the `x-tenant-id` header and a secure Bearer Authorization token signed by the tenant's BYOK vault.
+- **Core Exposed Routes:**
+  - `POST /api/v1/chat`: Synchronous blocking endpoint that submits a message to an agent profile and waits for the final response (ideal for simple chat interfaces).
+  - `POST /api/v1/schedule_task`: Asynchronous endpoint that pushes a deferred task to the BullMQ Redis queue with a specific ISO 8601 `targetTime`.
+  - `GET /api/v1/conversations`: Fetches the audit trail and state checkpoints for a specific persistent thread.
+  - `POST /api/v1/context/resolve`: Triggers the dry-run Context Compiler without executing an LLM call, returning the raw token-budgeted prompt structure.
+- **Interactive Snippet Hydration:** The UI dynamically pre-populates authorization headers (`x-tenant-id`) and variables matching the currently logged-in user's workspace session, ensuring that copied snippets work instantly when pasted into a local terminal.
 
 #### 📖 Step-by-Step UI How-To-Use Guide
-1. Click **Endpoints** in the sidebar navigation.
-2. Select an API endpoint from the route selector list.
-3. Fill in request body fields in the interactive form to update the cURL command in real-time.
-4. Click **Copy cURL** to copy the command or click **Execute Request** to test the API route directly inside the browser.
+1. Click **Endpoints** in the sidebar navigation menu under the *Developer* section.
+2. Use the left pane to select the target API route (e.g. `POST /api/v1/schedule_task`).
+3. In the center form pane, adjust the request body parameters:
+   - Select the target **Agent Blueprint**.
+   - Input the **Execution Instructions**.
+   - Use the date-picker to set the **Target Execution Time**.
+4. Observe the right pane **Code Viewer** updating in real-time.
+5. Select your preferred programming language from the top tabs (cURL, JS, Python, Go).
+6. Click **Copy Snippet** or click **Execute Request** to fire the payload directly from the browser window and preview the JSON response payload.
 
----
+#### 💻 Developer API & Code Specifications
+**Python (Requests) Implementation Example for Scheduling a Task:**
+
+```python
+import requests
+import json
+from datetime import datetime, timedelta
+
+url = "https://d1ct23sivfa3uv.amplifyapp.com/api/v1/schedule_task"
+
+target_time = (datetime.utcnow() + timedelta(hours=24)).isoformat() + "Z"
+
+payload = json.dumps({
+  "agent_id": "profile_crm_specialist",
+  "instructions": "Run the daily pipeline hygiene audit. Tag stale leads.",
+  "target_time": target_time,
+  "edge_policies": {
+    "on_failure": "escalate_to_voice_call"
+  }
+})
+
+headers = {
+  'Content-Type': 'application/json',
+  'x-tenant-id': 'tenant_enterprise_corp',
+  'Authorization': 'Bearer sec_live_981273981273912'
+}
+
+response = requests.request("POST", url, headers=headers, data=payload)
+print(response.json())
+```
+
 
 ### 10. Test Simulator & Time-Travel Sandbox
 
 ![Test Simulator](public/docs/images/test_simulator.png)
 
 #### 🎯 Overview & Strategic Purpose
-The **Test Simulator** is a sandbox testing playground designed to evaluate agent graph state machine transitions, simulate tool failures, and verify scheduled task execution without modifying production database records.
+The **Test Simulator** is an isolated developer playground designed specifically to evaluate complex multi-agent graph state transitions, test fallback escalation matrices, and debug BullMQ scheduled tasks safely without mutating production database tables or firing real API requests.
 
-#### ⚡ Comprehensive Feature Breakdown & Architecture
-- **Time-Travel Execution:** Fast-forward target-time countdown timers to trigger deferred background tasks immediately in a simulated state environment.
-- **Simulated Tool Failure Injection:** Test edge-case escalation graphs by injecting simulated tool outages (e.g. Gmail rate limit HTTP 429) to verify that fallback voice calls trigger as expected.
-- **Waterfall Step Inspector:** Detailed visual trace showing step-by-step state transitions, execution timings, and payload diffs.
+Because the Context Control platform relies heavily on autonomous, delayed background jobs (e.g., executing a billing audit 24 hours from now), waiting for actual time to pass to observe a bug is not feasible. The Simulator solves this with a "Time-Travel" clock overriding architecture, coupled with synthetic fault injection.
+
+#### ⚡ Comprehensive Feature Breakdown & Deep-Dive Architecture
+- **Time-Travel Clock Fast-Forwarding:** Developers can input a virtual target time, allowing the simulator engine to immediately flush and execute deferred BullMQ and EventBridge scheduled tasks as if the target date had arrived. This executes the entire LangGraph supervisor-to-worker tree in seconds instead of days.
+- **Synthetic Fault Injection & Chaos Testing:** The single biggest risk in autonomous systems is how they handle tool execution failures (e.g., Gmail rate limits, Stripe API timeouts). The Sandbox allows administrators to toggle synthetic failures:
+  - Mock `HTTP 429 Too Many Requests` on Gmail spoke calls.
+  - Mock `HTTP 500 Internal Server Error` on Salesforce updates.
+  By injecting these failures, tenants can verify that their `edgeCasePolicies` successfully catch the error and route the state machine to an escalation edge (such as triggering an ElevenLabs voice call to a human supervisor).
+- **Execution Waterfall Tracing:** Once a simulation runs, the UI displays a detailed waterfall trace chart. It visualizes:
+  - The node-to-node state transition path (e.g. `supervisor_router` -> `worker_billing` -> `escalation_alert`).
+  - Total latency per step and LLM token usage breakdown.
+  - The exact payload diffs mutated in the LangGraph state channel at each stage.
+- **Isolated Memory Sandbox:** All simulated operations write to an ephemeral, in-memory state dictionary rather than committing persistent records to `public.checkpoints` or `public.ephemeral_context`.
 
 #### 📖 Step-by-Step UI How-To-Use Guide
-1. Select **Test Simulator** under the *Developer* section of the sidebar.
-2. Select a pre-configured scenario or enter custom task input parameters.
-3. Toggle **Simulate Primary Tool Failure** to test fallback policy handling.
-4. Click **Run Simulation** and review the step-by-step waterfall execution trace.
+1. Select **Test Simulator** under the *Developer* section of the sidebar menu.
+2. Under the **Scenario Setup** panel, select the target Agent Profile or Team Graph to evaluate.
+3. Enter custom task input parameters (e.g., *"Simulate an overnight refund request for Client X"*).
+4. **To Inject Faults:**
+   - Scroll to the **Chaos Testing & Fault Injection** drawer.
+   - Toggle **Simulate Primary Tool Failure**.
+   - Select the target tool to fail (e.g. `stripe_issue_refund`) and choose the failure mode (*Timeout*, *Rate Limit*, *Auth Error*).
+5. **To Time-Travel:**
+   - Under the **Virtual Clock** section, set the simulated execution date to a future timestamp.
+6. Click **Run Simulation**.
+7. Analyze the output in the **Waterfall Step Inspector**, reviewing the exact prompt tokens used, the error catching mechanism in action, and the final state matrix.
+
+#### 💻 Developer API & Code Specifications
+Developers can trigger isolated simulations via the REST API endpoint `/api/v1/simulation`:
+
+```bash
+curl -X POST "https://d1ct23sivfa3uv.amplifyapp.com/api/v1/simulation/run" \
+  -H "Content-Type: application/json" \
+  -H "x-tenant-id: tenant_enterprise_corp" \
+  -d '{
+    "team_blueprint_id": "team_finance_audit",
+    "virtual_timestamp": "2026-11-01T12:00:00Z",
+    "inject_faults": [
+      {
+        "tool_name": "stripe_issue_refund",
+        "error_code": "rate_limit_exceeded",
+        "latency_ms": 3500
+      }
+    ],
+    "initial_state": {
+      "input_query": "Process all pending refunds for Q3."
+    }
+  }'
+```
 
 ---
 
@@ -268,18 +599,55 @@ The **Test Simulator** is a sandbox testing playground designed to evaluate agen
 ![Platform MCP Controller](public/docs/images/platform_mcp.png)
 
 #### 🎯 Overview & Strategic Purpose
-The **Platform MCP** view manages external host connections (such as Claude Desktop, Cursor IDE, Windsurf, and local CLI agents) to your tenant workspace. It exposes a standardized MCP server endpoint (`/api/mcp/platform`).
+The **Platform MCP Controller** flips the standard Hub-and-Spoke model inside out. Rather than the platform connecting outward to third-party tools, the Platform MCP allows external developer environments—such as Claude Desktop, Cursor IDE, Windsurf IDE, and local CLI agents—to connect *inward* to the tenant workspace.
 
-#### ⚡ Comprehensive Feature Breakdown & Architecture
-- **Stdio & SSE Transport Adapters:** Complies with Model Context Protocol (MCP 2024-11-05 JSON-RPC 2.0) transport standards.
-- **11 Direct Controller Tools:** Exposes 11 platform controllers allowing external host applications to create team blueprints, schedule deferred tasks, inspect database schemas, and view vault status.
-- **Automated Configuration Generator:** Generates copy-and-paste JSON configurations for `claude_desktop_config.json` and Cursor `.cursor/mcp.json`.
+By exposing a standardized Model Context Protocol (MCP 2024-11-05 JSON-RPC 2.0) server endpoint (`/api/mcp/platform`), your local desktop AI assistants instantly gain administrative control over the cloud platform. They can schedule deferred jobs, manage multi-agent topologies, and query secure cloud databases directly from your local IDE prompt.
+
+#### ⚡ Comprehensive Feature Breakdown & Deep-Dive Architecture
+- **11 Direct Administrative Controllers:** The server exposes the following highly privileged platform tools:
+  1. `create_agent_profile`: Mints a new Team Blueprint in the PostgreSQL profiles store.
+  2. `attach_worker_to_profile`: Inserts specialized worker nodes with scoped MCP tool whitelists.
+  3. `list_team_blueprints`: Queries all active agent topologies and routing rules.
+  4. `schedule_deferred_task`: Pushes an asynchronous background task directly into the BullMQ queue.
+  5. `cancel_deferred_task`: Removes a pending execution from the target-time schedule.
+  6. `list_scheduled_tasks`: Retrieves active countdowns and queue statuses.
+  7. `trigger_task_now`: Fast-forwards and executes a scheduled job immediately.
+  8. `inspect_database_schema`: Retrieves live PostgreSQL table definitions and RLS policies.
+  9. `query_database_table`: Executes safe read-only SQL commands against the tenant's isolated data rows.
+  10. `view_tenant_vault_status`: Audits the health of active encrypted OAuth spoke connections.
+  11. `update_tenant_spoke_auth`: Programmatically injects new encrypted tokens into the secure vault.
+- **Dual Transport Adapters:** 
+  - **SSE (Server-Sent Events) HTTP Transport:** Connects remote web-based clients over persistent HTTP streams.
+  - **Stdio Transport:** A lightweight wrapper script allows local desktop apps (like Claude Desktop) to invoke the API over standard input/output pipes.
+- **Automated Client Configuration Generator:** Manually mapping MCP server JSON configurations is error-prone. The UI automatically generates copy-and-paste configurations tailored specifically for popular clients (Cursor, Claude Desktop), pre-injected with the tenant's workspace ID and API tokens.
 
 #### 📖 Step-by-Step UI How-To-Use Guide
-1. Navigate to **Platform MCP** in the workspace sidebar.
-2. Select your client application tab (*Claude Desktop*, *Cursor*, *Windsurf*, or *cURL*).
-3. Click **Copy Config JSON**.
-4. Paste the configuration snippet into your local client's MCP configuration file and restart the client to access all 11 platform controller tools.
+1. Navigate to **Platform MCP** in the workspace sidebar under the *Developer* section.
+2. Select your target client application tab (*Claude Desktop*, *Cursor*, *Windsurf*, or *cURL*).
+3. Review the list of the 11 exposed direct controller tools.
+4. Click **Copy Config JSON**.
+5. Paste the generated configuration snippet into your local client's MCP configuration file:
+   - For Claude Desktop: `~/Library/Application Support/Claude/claude_desktop_config.json`
+   - For Cursor: `.cursor/mcp.json` in your repository root.
+6. Restart your client application. You can now type *"Cursor, please schedule a deferred task on the cloud platform to run an audit tomorrow morning"* and the IDE will autonomously invoke the `schedule_deferred_task` tool.
+
+#### 💻 Developer API & Code Specifications
+**Generated Cursor IDE Configuration (`.cursor/mcp.json`):**
+
+```json
+{
+  "mcpServers": {
+    "context-control-platform": {
+      "command": "node",
+      "args": [
+        "./node_modules/@modelcontextprotocol/server-platform/dist/index.js",
+        "--tenant-id=tenant_enterprise_corp",
+        "--api-key=sec_live_981273981273912"
+      ]
+    }
+  }
+}
+```
 
 ---
 
@@ -288,12 +656,47 @@ The **Platform MCP** view manages external host connections (such as Claude Desk
 ![API Keys & Security](public/docs/images/api_keys.png)
 
 #### 🎯 Overview & Strategic Purpose
-The **API Keys & Security** view governs workspace access tokens and tenant Bring Your Own Key (BYOK) credentials. All third-party secrets are stored using AES-256-GCM encryption in the tenant vault (`public.tenant_vault`) and isolated using PostgreSQL Row-Level Security (RLS).
+The **API Keys & BYOK (Bring Your Own Key) Security Vault** forms the cryptographic foundation of the platform's multi-tenant architecture. In an environment where autonomous agents act on behalf of enterprise organizations, credential leakage or cross-tenant data exposure represents an existential threat.
 
-#### ⚡ Comprehensive Feature Breakdown & Architecture
-- **AES-256-GCM BYOK Vault:** Encrypts API keys and OAuth tokens before writing to PostgreSQL, maintaining zero plaintext credential storage.
-- **Short-Lived Token Minter:** Generate client-scoped context tokens for embedding agent chat widgets in web applications.
-- **Postgres Row-Level Security (RLS):** Hardware-level tenant isolation enforced via `current_setting('app.current_tenant_id')`.
+This module guarantees that all API tokens, database connection strings, and third-party OAuth credentials are encrypted at rest using military-grade AES-256-GCM authenticated encryption. Furthermore, it enforces hardware-level data isolation using PostgreSQL Row-Level Security (RLS), ensuring that even if an agent prompt goes rogue, it is physically impossible to query data belonging to another tenant.
+
+#### ⚡ Comprehensive Feature Breakdown & Deep-Dive Architecture
+- **AES-256-GCM Vault Encryption:** When a tenant enters an API key for a tool spoke (e.g., a Salesforce API key), the frontend sends it securely to the vault manager. The vault manager encrypts the plaintext using the `pgcrypto` extension and a master encryption key, storing only the encrypted ciphertext (`encrypted_access_token`) and a hashed `key_fingerprint`. Plaintext tokens are strictly scrubbed from LLM context windows and application logs.
+- **Hardware-Level Row-Level Security (RLS):** Every table in the database (`tenants`, `tenant_vault`, `profiles`, `profile_workers`, `thread_instances`, `memory_store`, `checkpoints`, `ephemeral_context`) implements restrictive RLS policies. When a request hits the platform API, the server sets a local Postgres configuration parameter:
+  ```sql
+  SET LOCAL app.current_tenant_id = 'tenant_123';
+  ```
+  The database engine natively filters all `SELECT`, `INSERT`, `UPDATE`, and `DELETE` operations where `tenant_id != app.current_tenant_id`, guaranteeing absolute data isolation.
+- **Short-Lived Client Token Minter:** To embed secure chat agent widgets into external websites (like a customer support portal), tenants cannot use their master API keys. The vault provides a short-lived token minter that generates HMAC-SHA256 signed JSON Web Tokens (JWTs) with granular scope restrictions and tight expiration windows (Time-To-Live).
+- **Key Rotation & Auditing:** Provides full auditability of active keys, expiration timestamps, and rotation protocols.
+
+#### 📖 Step-by-Step UI How-To-Use Guide
+1. Navigate to **API Keys & Security Vault** under the *Workspace Settings* menu.
+2. **To Manage the BYOK Vault:**
+   - Review the list of active encrypted provider connections (e.g. Gmail OAuth, Stripe API).
+   - Click the key fingerprint to view connection health and expiration timestamps.
+   - Click **Rotate Credential** to securely override an existing token with a new key.
+3. **To Generate Workspace API Keys:**
+   - Click **Generate New API Key** in the API Access panel.
+   - Assign a descriptive name (e.g., *CI/CD Pipeline Key*, *Local Cursor IDE Key*).
+   - Select the desired permission scopes (*Read-Only*, *Task Scheduling*, *Full Admin*).
+   - Copy the plaintext API key. (Note: This key will only be displayed once; if lost, it must be revoked and regenerated).
+4. **To Mint a Short-Lived Client Token:**
+   - Open the **Client Token Minter** drawer.
+   - Specify the target agent profile ID and set the TTL (e.g., `3600` seconds / 1 hour).
+   - Click **Mint Token** and copy the resulting JWT to embed in your external web application frontend.
+
+#### 💻 Developer API & Code Specifications
+**PostgreSQL RLS Policy Enforcement Example (`Backend/schema.sql`):**
+
+```sql
+-- Vault Policy (Zero-leakage enforcement)
+ALTER TABLE public.tenant_vault ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY vault_isolation_policy ON public.tenant_vault
+    FOR ALL
+    USING (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
+```
 
 ---
 

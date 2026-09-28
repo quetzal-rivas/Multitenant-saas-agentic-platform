@@ -659,12 +659,32 @@ function DocContextProfiles() {
         />
       </div>
 
-      <div className="space-y-4">
-        <h3 className="text-lg font-bold text-white font-mono">1. Key Capabilities & Integrations</h3>
-        <ul className="space-y-2 text-sm text-zinc-300 list-disc pl-5 leading-relaxed">
-          <li><strong>Priority-Based Token Trimming:</strong> Automatically trims context sections when approaching max token limits.</li>
-          <li><strong>Brand Voice Rules:</strong> Enforce tenant tone, style guidelines, and forbidden word lists.</li>
+      <div className="space-y-6 text-sm text-zinc-300 leading-relaxed">
+        <h3 className="text-xl font-bold text-white font-mono border-b border-zinc-800 pb-2">1. Overview & Strategic Purpose</h3>
+        <p>
+          In modern enterprise LLM architectures, unmanaged prompt context leads directly to context window drift, non-deterministic model behavior, severe hallucination, and escalating API infrastructure costs. The <strong>Context Profiles Engine</strong> serves as a deterministic context compiler (`compileContext`) designed to solve these challenges. It standardizes system prompts, corporate brand voice, customer loyalty rules, working memory, and vector RAG fragments into tight, token-budgeted prompt payloads.
+        </p>
+        <p>
+          By establishing strict Context Profiles, tenant organizations can guarantee that their AI agents remain compliant with corporate brand guidelines, legal policies, and token allocation limits across every interaction channel—whether serving live customer support chats, executing background BullMQ tasks, or answering voice calls over PSTN phone lines.
+        </p>
+
+        <h3 className="text-xl font-bold text-white font-mono border-b border-zinc-800 pb-2 mt-6">2. Key Capabilities & Architecture</h3>
+        <ul className="space-y-3 list-disc pl-5">
+          <li><strong>Deterministic Context Compilation Pipeline:</strong> The compiler evaluates and sequences context sources based on tenant-configured priority weights (e.g., `system_instructions` Priority 100, `agent_instructions` Priority 90, `tenant_context` Priority 85).</li>
+          <li><strong>Priority-Based Token Trimming Algorithm:</strong> Standard token counters truncate messages arbitrarily. The platform's compiler utilizes a priority-aware trimming algorithm (`estimateTokens` based on 3.8 chars/token). If total tokens exceed `maxTokensBudget`, lower-priority steps are progressively truncated while high-priority system instructions remain pristine.</li>
+          <li><strong>Contract Validation Matrix:</strong> Profiles specify a data contract (`profile.contract.required`) enforcing required identity and input parameters (e.g., `tenant_id`, `user_id`, `query`). Missing parameters trigger validation failures in the resolution metadata, preventing incomplete context execution.</li>
+          <li><strong>Tenant Brand Voice & Policy Injection:</strong> Automatically injects tenant-specific corporate brand voice directives directly into system instructions, standardizing tone across all communication channels.</li>
         </ul>
+
+        <h3 className="text-xl font-bold text-white font-mono border-b border-zinc-800 pb-2 mt-6">3. Step-by-Step UI How-To-Use Guide</h3>
+        <ol className="space-y-3 list-decimal pl-5">
+          <li>Navigate to <strong>Profiles</strong> from the workspace sidebar menu under the *Workspace* section.</li>
+          <li>Click <strong>Create Profile</strong> or select an existing blueprint (e.g., *Customer Support Lead*).</li>
+          <li>In the **System Prompt Instructions** field, define core agent behavior and operational guardrails.</li>
+          <li>Specify **Brand Voice & Tone** guidelines and define the **Max Token Budget** (e.g., `8192` tokens).</li>
+          <li>Configure **Pipeline Step Priorities** by adjusting priority sliders for System Instructions, Knowledge Base RAG, User Identity, and Conversation History.</li>
+          <li>Click the **Live Compiler Sandbox** drawer to test token trimming with sample input data.</li>
+        </ol>
       </div>
     </div>
   );
@@ -691,6 +711,30 @@ function DocKnowledgeSources() {
           className="w-full rounded-xl border border-zinc-800/80 shadow-2xl"
         />
       </div>
+
+      <div className="space-y-6 text-sm text-zinc-300 leading-relaxed">
+        <h3 className="text-xl font-bold text-white font-mono border-b border-zinc-800 pb-2">1. Overview & Strategic Purpose</h3>
+        <p>
+          The <strong>Knowledge Base Ingestion & RAG Engine</strong> equips agents with enterprise-wide long-term memory and factual knowledge retrieval. By integrating a high-performance Retrieval-Augmented Generation (RAG) pipeline backed by Supabase `pgvector`, the platform allows agents to dynamically search, retrieve, and synthesize factual document fragments in real-time.
+        </p>
+
+        <h3 className="text-xl font-bold text-white font-mono border-b border-zinc-800 pb-2 mt-6">2. Key Capabilities & Architecture</h3>
+        <ul className="space-y-3 list-disc pl-5">
+          <li><strong>Multi-Source Document Ingestion Pipeline:</strong> Supports file uploads (PDF, TXT, Markdown) and automated URL Web Crawlers to scrape and extract clean markdown from target websites.</li>
+          <li><strong>Automated Text Chunking & Overlap Strategy:</strong> Documents pass through a text chunking engine that splits large texts into optimized passages (500 tokens per chunk with a 50-token sliding window overlap) to preserve context continuity.</li>
+          <li><strong>Supabase pgvector Embedding Store:</strong> Chunks are transformed into 1536-dimensional vector embeddings using models like OpenAI `text-embedding-3-small`. Embeddings are indexed using HNSW / IVFFlat cosine similarity indexes in `public.memory_store`.</li>
+          <li><strong>Hardware-Level Tenant RLS Security:</strong> Vector similarity queries enforce strict PostgreSQL Row-Level Security (RLS). Cross-tenant data leaks are physically impossible at the database engine level because queries evaluate `tenant_id = current_setting('app.current_tenant_id')`.</li>
+        </ul>
+
+        <h3 className="text-xl font-bold text-white font-mono border-b border-zinc-800 pb-2 mt-6">3. Step-by-Step UI How-To-Use Guide</h3>
+        <ol className="space-y-3 list-decimal pl-5">
+          <li>Select <strong>Sources</strong> from the workspace sidebar menu.</li>
+          <li>Click <strong>Ingest New Source</strong> and choose either <strong>File Upload</strong> or <strong>URL Web Crawler</strong>.</li>
+          <li>Enter the target website URLs or drop your PDF files into the dropzone.</li>
+          <li>Select the target <strong>Knowledge Category</strong> (e.g. *Legal & Compliance*) and click <strong>Process & Embed</strong>.</li>
+          <li>To test vector retrieval, click the <strong>Semantic Search Sandbox</strong> tab. Type a query string (e.g., *"What is our refund policy?"*), set the Similarity Threshold slider, and click <strong>Run Vector Search</strong> to inspect matching chunks.</li>
+        </ol>
+      </div>
     </div>
   );
 }
@@ -702,9 +746,9 @@ function DocMcpHub() {
         <span className="text-xs font-mono text-emerald-400 font-semibold uppercase tracking-wider">
           MCP Tools & Integrations · Section 08
         </span>
-        <h1 className="text-3xl font-extrabold text-white mt-2">MCP Hub & Tool Connections</h1>
+        <h1 className="text-3xl font-extrabold text-white mt-2">MCP Hub & Tools Protocol (Hub-and-Spoke)</h1>
         <p className="text-zinc-300 text-sm mt-2 leading-relaxed">
-          Connect pre-built MCP spokes (Gmail, Slack, Google Calendar, Cloudflare, Supabase) and custom tool servers.
+          Connect pre-built MCP spokes (Gmail, Slack, Google Calendar, Cloudflare, Supabase) and custom tool servers securely.
         </p>
       </div>
 
@@ -715,6 +759,32 @@ function DocMcpHub() {
           alt="MCP Hub UI Preview"
           className="w-full rounded-xl border border-zinc-800/80 shadow-2xl"
         />
+      </div>
+
+      <div className="space-y-6 text-sm text-zinc-300 leading-relaxed">
+        <h3 className="text-xl font-bold text-white font-mono border-b border-zinc-800 pb-2">1. Overview & Strategic Purpose</h3>
+        <p>
+          The <strong>MCP Hub</strong> acts as the secure, high-performance nerve center for all external tool connections. By adopting the open standard <strong>Model Context Protocol (MCP 2024-11-05 JSON-RPC 2.0)</strong>, the platform establishes a decentralized Hub-and-Spoke architecture. This allows agents to interact with external enterprise systems without needing hardcoded REST API integrations for every service.
+        </p>
+        <p>
+          Crucially, the MCP Hub solves the "Zero-Trust Agent Tooling" problem. Instead of injecting raw API keys into the LLM's system prompt (which risks catastrophic credential leakage during prompt injection attacks), all API keys remain encrypted inside the `public.tenant_vault`. The MCP Gateway proxy intercepts tool calls, injects the decrypted credentials on the server side, executes the action against the spoke, and returns only the sanitized result back to the agent's context window.
+        </p>
+
+        <h3 className="text-xl font-bold text-white font-mono border-b border-zinc-800 pb-2 mt-6">2. Key Capabilities & Architecture</h3>
+        <ul className="space-y-3 list-disc pl-5">
+          <li><strong>Zero Credential Exposure (AES-256-GCM Vault):</strong> API keys, OAuth2 refresh tokens, and JWT secrets are stored in the PostgreSQL `public.tenant_vault` table using AES-256-GCM authenticated encryption. The LLM never sees these tokens.</li>
+          <li><strong>Pre-Authenticated Enterprise Spokes:</strong> The Hub includes a library of out-of-the-box, one-click enterprise spokes configured to execute standard operational playbooks (e.g., Google Workspace for Gmail, Slack Communications, Google Calendar, Cloudflare).</li>
+          <li><strong>Custom MCP Transports (Stdio & SSE):</strong> Beyond pre-built spokes, tenants can connect their own custom tool servers using standardized transports (Stdio or SSE).</li>
+          <li><strong>Strict JSON Schema Validation:</strong> Every tool registered in the Hub provides a rigid JSON Schema definition for its parameters. The compiler validates LLM tool outputs against this schema before execution.</li>
+        </ul>
+
+        <h3 className="text-xl font-bold text-white font-mono border-b border-zinc-800 pb-2 mt-6">3. Step-by-Step UI How-To-Use Guide</h3>
+        <ol className="space-y-3 list-decimal pl-5">
+          <li>Select <strong>MCP Hub & Tools</strong> from the sidebar menu under *Workspace*.</li>
+          <li>Browse the grid of available tool spokes.</li>
+          <li><strong>To Activate a Pre-Built Spoke (e.g. Gmail):</strong> Click the toggle switch, click **Configure Credentials** to open the secure BYOK drawer, paste your API Key, and click **Test Tool Connection**.</li>
+          <li><strong>To Register a Custom MCP Server:</strong> Click **Add Custom MCP Server**, define the **Server Name** and **Transport Protocol** (Stdio or SSE), and save the configuration.</li>
+        </ol>
       </div>
     </div>
   );
@@ -741,6 +811,31 @@ function DocSkillsLibrary() {
           className="w-full rounded-xl border border-zinc-800/80 shadow-2xl"
         />
       </div>
+
+      <div className="space-y-6 text-sm text-zinc-300 leading-relaxed">
+        <h3 className="text-xl font-bold text-white font-mono border-b border-zinc-800 pb-2">1. Overview & Strategic Purpose</h3>
+        <p>
+          The <strong>Skills Library</strong> shifts autonomous agents from generalized chat assistants into highly specialized operational workers. While tools provide the "hands" to perform actions (like sending an email), <strong>Skills</strong> provide the "brain" (the multi-step heuristic instructions on *when* and *how* to use those tools).
+        </p>
+        <p>
+          By packaging complex standard operating procedures (SOPs) into modular `SKILL.md` markdown files, tenants can instantly upgrade agent capabilities. Instead of writing massive, fragile system prompts, administrators can dynamically toggle discrete skills on or off depending on the agent's assigned role in the team graph.
+        </p>
+
+        <h3 className="text-xl font-bold text-white font-mono border-b border-zinc-800 pb-2 mt-6">2. Key Capabilities & Architecture</h3>
+        <ul className="space-y-3 list-disc pl-5">
+          <li><strong>`SKILL.md` Markdown Packaging:</strong> Skills are defined using a structured Markdown syntax combining YAML frontmatter metadata and descriptive instruction blocks. This ensures skills are machine-readable and human-auditable.</li>
+          <li><strong>Dynamic Context Injection:</strong> The context compiler monitors the incoming user query against the `triggers` defined in the active agent's bound skills. If a trigger matches, the compiler dynamically injects that specific skill's instructions into the priority prompt context.</li>
+          <li><strong>Pre-Built Enterprise Catalog:</strong> The registry includes a curated catalog of standard skills ready for one-click deployment, such as CRM Lead Enrichment pipelines and PostgreSQL Performance Tuning heuristics.</li>
+        </ul>
+
+        <h3 className="text-xl font-bold text-white font-mono border-b border-zinc-800 pb-2 mt-6">3. Step-by-Step UI How-To-Use Guide</h3>
+        <ol className="space-y-3 list-decimal pl-5">
+          <li>Navigate to <strong>Library</strong> under the *Workspace* section.</li>
+          <li>Browse the grid of available skill packages.</li>
+          <li><strong>To Enable a Skill for an Agent:</strong> Open the **Agent Studio** or **Team Builder**, scroll to **Bound Skills**, and select the desired skill from the dropdown menu to bind it to the agent's profile.</li>
+          <li><strong>To Upload a Custom Skill (`SKILL.md`):</strong> Click **Upload Custom Skill**, drag and drop your `.md` file containing the valid YAML frontmatter block, and the platform will parse and validate it.</li>
+        </ol>
+      </div>
     </div>
   );
 }
@@ -765,6 +860,29 @@ function DocEndpointsApi({ copyToClipboard, copiedCode }: any) {
           alt="Endpoints API UI Preview"
           className="w-full rounded-xl border border-zinc-800/80 shadow-2xl"
         />
+      </div>
+
+      <div className="space-y-6 text-sm text-zinc-300 leading-relaxed">
+        <h3 className="text-xl font-bold text-white font-mono border-b border-zinc-800 pb-2">1. Overview & Strategic Purpose</h3>
+        <p>
+          The <strong>Endpoints API</strong> enables seamless headless integration of the Context Control autonomous agent engine into external enterprise systems. By utilizing the platform's RESTful API (`/api/v1/*`), tenants can embed autonomous capabilities directly into their own custom mobile apps, React web frontends, Zapier webhooks, and legacy CRM backend triggers.
+        </p>
+
+        <h3 className="text-xl font-bold text-white font-mono border-b border-zinc-800 pb-2 mt-6">2. Key Capabilities & Architecture</h3>
+        <ul className="space-y-3 list-disc pl-5">
+          <li><strong>Tenant API Gateway (`/api/v1/*`):</strong> The core REST engine validates inbound requests using a strict multi-tenant authentication protocol. Every request must include the `x-tenant-id` header and a secure Bearer Authorization token signed by the tenant's BYOK vault.</li>
+          <li><strong>Core Exposed Routes:</strong> Include `POST /api/v1/chat`, `POST /api/v1/schedule_task`, `GET /api/v1/conversations`, and `POST /api/v1/context/resolve`.</li>
+          <li><strong>Interactive Snippet Hydration:</strong> The UI dynamically pre-populates authorization headers (`x-tenant-id`) and variables matching the currently logged-in user's workspace session, ensuring that copied snippets work instantly when pasted into a local terminal.</li>
+        </ul>
+
+        <h3 className="text-xl font-bold text-white font-mono border-b border-zinc-800 pb-2 mt-6">3. Step-by-Step UI How-To-Use Guide</h3>
+        <ol className="space-y-3 list-decimal pl-5">
+          <li>Click <strong>Endpoints</strong> in the sidebar navigation menu under the *Developer* section.</li>
+          <li>Use the left pane to select the target API route (e.g. `POST /api/v1/schedule_task`).</li>
+          <li>In the center form pane, adjust the request body parameters.</li>
+          <li>Observe the right pane <strong>Code Viewer</strong> updating in real-time.</li>
+          <li>Select your preferred programming language from the top tabs (cURL, JS, Python, Go) and click <strong>Copy Snippet</strong>.</li>
+        </ol>
       </div>
     </div>
   );
@@ -791,6 +909,34 @@ function DocTestSimulator() {
           className="w-full rounded-xl border border-zinc-800/80 shadow-2xl"
         />
       </div>
+
+      <div className="space-y-6 text-sm text-zinc-300 leading-relaxed">
+        <h3 className="text-xl font-bold text-white font-mono border-b border-zinc-800 pb-2">1. Overview & Strategic Purpose</h3>
+        <p>
+          The <strong>Test Simulator</strong> is an isolated developer playground designed specifically to evaluate complex multi-agent graph state transitions, test fallback escalation matrices, and debug BullMQ scheduled tasks safely without mutating production database tables or firing real API requests.
+        </p>
+        <p>
+          Because the Context Control platform relies heavily on autonomous, delayed background jobs (e.g., executing a billing audit 24 hours from now), waiting for actual time to pass to observe a bug is not feasible. The Simulator solves this with a "Time-Travel" clock overriding architecture, coupled with synthetic fault injection.
+        </p>
+
+        <h3 className="text-xl font-bold text-white font-mono border-b border-zinc-800 pb-2 mt-6">2. Key Capabilities & Architecture</h3>
+        <ul className="space-y-3 list-disc pl-5">
+          <li><strong>Time-Travel Clock Fast-Forwarding:</strong> Developers can input a virtual target time, allowing the simulator engine to immediately flush and execute deferred BullMQ and EventBridge scheduled tasks as if the target date had arrived.</li>
+          <li><strong>Synthetic Fault Injection & Chaos Testing:</strong> Allows administrators to toggle synthetic failures (e.g. Mock HTTP 429 Too Many Requests on Gmail spoke calls). By injecting these failures, tenants can verify that their `edgeCasePolicies` successfully catch the error.</li>
+          <li><strong>Execution Waterfall Tracing:</strong> Once a simulation runs, the UI displays a detailed waterfall trace chart visualizing the node-to-node state transition path, total latency, LLM token usage, and payload diffs.</li>
+          <li><strong>Isolated Memory Sandbox:</strong> All simulated operations write to an ephemeral, in-memory state dictionary rather than committing persistent records to production.</li>
+        </ul>
+
+        <h3 className="text-xl font-bold text-white font-mono border-b border-zinc-800 pb-2 mt-6">3. Step-by-Step UI How-To-Use Guide</h3>
+        <ol className="space-y-3 list-decimal pl-5">
+          <li>Select <strong>Test Simulator</strong> under the *Developer* section of the sidebar menu.</li>
+          <li>Under the **Scenario Setup** panel, select the target Agent Profile or Team Graph to evaluate.</li>
+          <li>Enter custom task input parameters (e.g., *"Simulate an overnight refund request for Client X"*).</li>
+          <li><strong>To Inject Faults:</strong> Scroll to the **Chaos Testing & Fault Injection** drawer, toggle **Simulate Primary Tool Failure**, select the target tool to fail, and choose the failure mode.</li>
+          <li><strong>To Time-Travel:</strong> Under the **Virtual Clock** section, set the simulated execution date to a future timestamp.</li>
+          <li>Click **Run Simulation** and review the exact prompt tokens used, the error catching mechanism in action, and the final state matrix.</li>
+        </ol>
+      </div>
     </div>
   );
 }
@@ -816,6 +962,33 @@ function DocPlatformMcp({ copyToClipboard, copiedCode }: any) {
           className="w-full rounded-xl border border-zinc-800/80 shadow-2xl"
         />
       </div>
+
+      <div className="space-y-6 text-sm text-zinc-300 leading-relaxed">
+        <h3 className="text-xl font-bold text-white font-mono border-b border-zinc-800 pb-2">1. Overview & Strategic Purpose</h3>
+        <p>
+          The <strong>Platform MCP Controller</strong> flips the standard Hub-and-Spoke model inside out. Rather than the platform connecting outward to third-party tools, the Platform MCP allows external developer environments—such as Claude Desktop, Cursor IDE, Windsurf IDE, and local CLI agents—to connect *inward* to the tenant workspace.
+        </p>
+        <p>
+          By exposing a standardized Model Context Protocol (MCP 2024-11-05 JSON-RPC 2.0) server endpoint (`/api/mcp/platform`), your local desktop AI assistants instantly gain administrative control over the cloud platform. They can schedule deferred jobs, manage multi-agent topologies, and query secure cloud databases directly from your local IDE prompt.
+        </p>
+
+        <h3 className="text-xl font-bold text-white font-mono border-b border-zinc-800 pb-2 mt-6">2. Key Capabilities & Architecture</h3>
+        <ul className="space-y-3 list-disc pl-5">
+          <li><strong>11 Direct Administrative Controllers:</strong> Exposes highly privileged tools including `create_agent_profile`, `schedule_deferred_task`, `trigger_task_now`, and `inspect_database_schema`.</li>
+          <li><strong>Dual Transport Adapters:</strong> Connect over persistent HTTP streams (SSE) or a lightweight Stdio wrapper script for local desktop apps.</li>
+          <li><strong>Automated Client Configuration Generator:</strong> The UI automatically generates copy-and-paste JSON configurations tailored specifically for popular clients (Cursor, Claude Desktop), pre-injected with the tenant's workspace ID and API tokens.</li>
+        </ul>
+
+        <h3 className="text-xl font-bold text-white font-mono border-b border-zinc-800 pb-2 mt-6">3. Step-by-Step UI How-To-Use Guide</h3>
+        <ol className="space-y-3 list-decimal pl-5">
+          <li>Navigate to <strong>Platform MCP</strong> in the workspace sidebar under the *Developer* section.</li>
+          <li>Select your target client application tab (*Claude Desktop*, *Cursor*, *Windsurf*, or *cURL*).</li>
+          <li>Review the list of the 11 exposed direct controller tools.</li>
+          <li>Click <strong>Copy Config JSON</strong>.</li>
+          <li>Paste the generated configuration snippet into your local client's MCP configuration file (e.g., `.cursor/mcp.json` in your repository root).</li>
+          <li>Restart your client application and begin controlling the cloud platform from your IDE.</li>
+        </ol>
+      </div>
     </div>
   );
 }
@@ -840,6 +1013,31 @@ function DocSecurityVault() {
           alt="API Keys & Security UI Preview"
           className="w-full rounded-xl border border-zinc-800/80 shadow-2xl"
         />
+      </div>
+
+      <div className="space-y-6 text-sm text-zinc-300 leading-relaxed">
+        <h3 className="text-xl font-bold text-white font-mono border-b border-zinc-800 pb-2">1. Overview & Strategic Purpose</h3>
+        <p>
+          The <strong>API Keys & BYOK (Bring Your Own Key) Security Vault</strong> forms the cryptographic foundation of the platform's multi-tenant architecture. In an environment where autonomous agents act on behalf of enterprise organizations, credential leakage or cross-tenant data exposure represents an existential threat.
+        </p>
+        <p>
+          This module guarantees that all API tokens, database connection strings, and third-party OAuth credentials are encrypted at rest using military-grade AES-256-GCM authenticated encryption. Furthermore, it enforces hardware-level data isolation using PostgreSQL Row-Level Security (RLS), ensuring that even if an agent prompt goes rogue, it is physically impossible to query data belonging to another tenant.
+        </p>
+
+        <h3 className="text-xl font-bold text-white font-mono border-b border-zinc-800 pb-2 mt-6">2. Key Capabilities & Architecture</h3>
+        <ul className="space-y-3 list-disc pl-5">
+          <li><strong>AES-256-GCM Vault Encryption:</strong> When a tenant enters an API key for a tool spoke, the vault manager encrypts the plaintext using the `pgcrypto` extension and a master encryption key. Plaintext tokens are strictly scrubbed from LLM context windows and application logs.</li>
+          <li><strong>Hardware-Level Row-Level Security (RLS):</strong> Every table in the database implements restrictive RLS policies. The database engine natively filters all operations where `tenant_id != app.current_tenant_id`, guaranteeing absolute data isolation.</li>
+          <li><strong>Short-Lived Client Token Minter:</strong> Provides a short-lived token minter that generates HMAC-SHA256 signed JSON Web Tokens (JWTs) with granular scope restrictions and tight expiration windows for secure agent widget embedding.</li>
+        </ul>
+
+        <h3 className="text-xl font-bold text-white font-mono border-b border-zinc-800 pb-2 mt-6">3. Step-by-Step UI How-To-Use Guide</h3>
+        <ol className="space-y-3 list-decimal pl-5">
+          <li>Navigate to <strong>API Keys & Security Vault</strong> under the *Workspace Settings* menu.</li>
+          <li><strong>To Manage the BYOK Vault:</strong> Review active encrypted provider connections, click the key fingerprint to view health, and click **Rotate Credential** to override an existing token.</li>
+          <li><strong>To Generate Workspace API Keys:</strong> Click **Generate New API Key**, assign a descriptive name, select permission scopes, and copy the plaintext API key.</li>
+          <li><strong>To Mint a Short-Lived Client Token:</strong> Open the **Client Token Minter** drawer, specify the target agent profile ID and set the TTL, then click **Mint Token** to copy the resulting JWT.</li>
+        </ol>
       </div>
     </div>
   );

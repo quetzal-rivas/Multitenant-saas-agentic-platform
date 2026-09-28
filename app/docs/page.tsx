@@ -76,7 +76,6 @@ export default function DocumentationPage() {
     setTimeout(() => setCopiedCode(null), 2000);
   };
 
-  // SaaS Tenant Documentation Directory
   interface NavItem {
     id: string;
     label: string;
@@ -87,6 +86,7 @@ export default function DocumentationPage() {
     items: NavItem[];
   }
 
+  // SaaS Tenant Documentation Directory
   const navCategories: NavCategory[] = [
     {
       title: 'Tenant Dashboard Overview',
@@ -177,7 +177,7 @@ export default function DocumentationPage() {
 
             <div className="hidden md:flex items-center gap-2 text-xs text-zinc-500 font-mono ml-4 pl-4 border-l border-zinc-800">
               <BookOpen className="w-3.5 h-3.5 text-zinc-400" />
-              <span>Tenant User Documentation</span>
+              <span>Tenant Workspace User Documentation</span>
             </div>
           </div>
 
@@ -189,7 +189,7 @@ export default function DocumentationPage() {
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search tenant documentation..."
+                placeholder="Search tenant documentation topics..."
                 className="w-full pl-9 pr-4 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-emerald-500/60 focus:ring-1 focus:ring-emerald-500/60 transition-all font-mono"
               />
               {searchQuery && (
@@ -356,7 +356,7 @@ function DocTenantOverview() {
         </span>
         <h1 className="text-4xl font-extrabold text-white mt-2">Platform Overview & Quickstart</h1>
         <p className="text-base text-zinc-300 mt-2 leading-relaxed">
-          Welcome to the **Context Control SaaS Workspace**. This platform abstracts away all cloud infrastructure—AWS Lambda, BullMQ Redis Queues, EventBridge schedulers, and Supabase PostgreSQL vector stores—into an intuitive, high-performance UI dashboard.
+          Welcome to the **Context Control SaaS Workspace**. This platform abstracts away all low-level technical infrastructure into an intuitive, high-performance workspace dashboard for your organization.
         </p>
       </div>
 
@@ -410,7 +410,7 @@ function DocAgentStudio() {
         </span>
         <h1 className="text-3xl font-extrabold text-white mt-2">Agent Session Studio (Single Agent)</h1>
         <p className="text-zinc-300 text-sm mt-2 leading-relaxed">
-          Interactive studio for creating, testing, and conversing with single autonomous agents in real-time.
+          Interactive operational studio for creating, testing, and conversing with single autonomous agents in real-time.
         </p>
       </div>
 
@@ -424,20 +424,35 @@ function DocAgentStudio() {
         />
       </div>
 
-      <div className="space-y-4">
-        <h3 className="text-lg font-bold text-white font-mono">1. Key Capabilities & Integrations</h3>
-        <ul className="space-y-2 text-sm text-zinc-300 list-disc pl-5 leading-relaxed">
-          <li><strong>Real-Time Streaming Output:</strong> Monitor LLM thought processes and tool call parameters as they execute live.</li>
-          <li><strong>Instant Context Profile Toggling:</strong> Switch system instruction profiles, brand voices, and token budgets on the fly.</li>
-          <li><strong>Persistent Postgres Checkpointing:</strong> Automatically persists reasoning steps to Supabase PostgreSQL audit logs.</li>
+      <div className="space-y-6 text-sm text-zinc-300 leading-relaxed">
+        <h3 className="text-xl font-bold text-white font-mono border-b border-zinc-800 pb-2">1. Overview & Strategic Purpose</h3>
+        <p>
+          The <strong>Agent Session Studio</strong> serves as the primary real-time operational interface for single autonomous agents. It bridges high-level tenant prompt inputs with dynamic LLM reasoning, live tool call execution, and token-budgeted context resolution. Rather than relying on simple stateless chat widgets, the Agent Studio provides full visibility into the agent's internal thought process, active context profile parameters, and intermediate tool execution outputs.
+        </p>
+
+        <h3 className="text-xl font-bold text-white font-mono border-b border-zinc-800 pb-2 mt-6">2. Key Capabilities & Architecture</h3>
+        <ul className="space-y-3 list-disc pl-5">
+          <li><strong>Real-Time Thought & Tool Execution Streaming:</strong> As the agent evaluates user instructions, every intermediate reasoning step, JSON schema validation, and tool call payload is streamed live to the UI interface. Tenants can expand individual execution cards to inspect raw tool arguments (e.g. searching Gmail threads or querying CRM databases) and response status codes.</li>
+          <li><strong>Dynamic Context Profile Toggling:</strong> Tenants can dynamically select pre-configured Context Profiles from a header dropdown. Switching profiles instantly updates the agent's core system instructions, tenant brand voice, customer loyalty tier rules, and token allocation limits without restarting the chat session.</li>
+          <li><strong>System Instruction Overrides:</strong> Offers an inline developer drawer allowing tenants to inject temporary system instruction overrides on the fly. This enables testing specific edge-case prompts, tone adjustments, or constraint guardrails before committing them to a production profile blueprint.</li>
+          <li><strong>Persistent State Checkpointing:</strong> Every message, thought step, and tool call result is serialized into binary checkpoints stored in Supabase PostgreSQL (`public.checkpoints`). Sessions can be paused, resumed, or audited at any time with guaranteed state continuity.</li>
+          <li><strong>Token Budget Monitoring:</strong> Real-time token usage meter displays prompt tokens, completion tokens, and context window utilization, preventing unexpected API cost spikes.</li>
         </ul>
 
-        <h3 className="text-lg font-bold text-white font-mono mt-6">2. Step-by-Step UI How-To</h3>
-        <ol className="space-y-2 text-sm text-zinc-300 list-decimal pl-5 leading-relaxed">
-          <li>Select <strong>Agent Studio</strong> from the left sidebar navigation.</li>
-          <li>Choose an active <strong>Context Profile</strong> using the top header dropdown menu.</li>
-          <li>Enter your prompt or instruction in the bottom text drawer and click <strong>Send</strong>.</li>
-          <li>Expand any tool call block to inspect raw parameters and response payloads.</li>
+        <h3 className="text-xl font-bold text-white font-mono border-b border-zinc-800 pb-2 mt-6">3. Step-by-Step UI How-To-Use Guide</h3>
+        <ol className="space-y-3 list-decimal pl-5">
+          <li>Select <strong>Agent Studio</strong> from the left navigation menu under the *Workspace* section.</li>
+          <li>In the top bar header, click the <strong>Context Profile</strong> dropdown selector to choose an active agent profile (e.g., *Customer Support Lead*, *Sales Outbound Representative*, or *Technical Auditor*).</li>
+          <li>Type your operational instructions into the prompt input drawer at the bottom of the studio screen and press <strong>Send</strong> or `Enter`.</li>
+          <li>Observe the live execution waterfall:
+            <ul className="list-disc pl-5 mt-1 space-y-1 text-xs text-zinc-400">
+              <li>Green accordion headers indicate successful tool calls (e.g. `gmail_fetch_threads`).</li>
+              <li>Yellow headers highlight pending or executing actions.</li>
+              <li>Red headers indicate caught errors or fallback triggers.</li>
+            </ul>
+          </li>
+          <li>Click on any tool call accordion card to view raw JSON parameters, response headers, and latency metrics.</li>
+          <li>To test custom instructions, click <strong>System Overrides</strong>, modify the system prompt text, and submit a new message turn.</li>
         </ol>
       </div>
     </div>
@@ -453,7 +468,7 @@ function DocTeamBuilder() {
         </span>
         <h1 className="text-3xl font-extrabold text-white mt-2">Team Builder (Multi-Agent Supervisor Graphs)</h1>
         <p className="text-zinc-300 text-sm mt-2 leading-relaxed">
-          Visual team builder for constructing hierarchical multi-agent graphs with supervisor delegation.
+          Visual team builder for constructing hierarchical multi-agent graphs with supervisor delegation and worker node scoping.
         </p>
       </div>
 
@@ -466,20 +481,38 @@ function DocTeamBuilder() {
         />
       </div>
 
-      <div className="space-y-4">
-        <h3 className="text-lg font-bold text-white font-mono">1. Key Capabilities & Integrations</h3>
-        <ul className="space-y-2 text-sm text-zinc-300 list-disc pl-5 leading-relaxed">
-          <li><strong>Supervisor Graph Routing:</strong> High-level supervisor agent breaks down user tasks and routes sub-tasks to specialist worker agents.</li>
-          <li><strong>Nested Worker Nodes:</strong> Configure dedicated workers (e.g. Researcher, Copywriter, Analyst) with scoped MCP tool permissions.</li>
-          <li><strong>Conditional Fallbacks:</strong> Automatically fallback to voice calls or alternative tools if primary actions bounce.</li>
+      <div className="space-y-6 text-sm text-zinc-300 leading-relaxed">
+        <h3 className="text-xl font-bold text-white font-mono border-b border-zinc-800 pb-2">1. Overview & Strategic Purpose</h3>
+        <p>
+          The <strong>Team Builder</strong> allows tenants to construct collaborative multi-agent teams using hierarchical supervisor topologies. Complex business workflows often exceed the capabilities of a single monolithic agent persona. The Team Builder solves this by establishing a central <strong>Supervisor Agent</strong> that acts as an intelligent router, decomposing incoming multi-step tasks and delegating sub-tasks to specialized worker agents (e.g. *Research Specialist*, *Copywriter*, *Billing Auditor*, *Incident Dispatcher*).
+        </p>
+
+        <h3 className="text-xl font-bold text-white font-mono border-b border-zinc-800 pb-2 mt-6">2. Key Capabilities & Architecture</h3>
+        <ul className="space-y-3 list-disc pl-5">
+          <li><strong>Hierarchical Routing Topologies:</strong> Incorporates LangGraph-style state machine routing patterns (`supervisor_router`, `sequential_pipeline`, `consensus`). The supervisor agent evaluates incoming user turns and routes control to worker nodes based on their assigned operational roles and tool whitelists.</li>
+          <li><strong>Specialized Worker Node Assignment:</strong> Tenants can create and attach an unlimited number of worker nodes to a team blueprint. Each worker node receives dedicated system instructions, an avatar icon, and a strictly scoped whitelist of allowed MCP tools (e.g. restricting a Billing Clerk to Stripe tools while granting a Copywriter access to Gmail and Slack).</li>
+          <li><strong>Conditional Fallback & Escalation Matrix:</strong> Every team blueprint incorporates an automated fallback policy matrix (`edgeCasePolicies`). If a primary worker's tool action fails (such as an email delivery bounce or CRM API rate limit), the state graph automatically traverses conditional edges to trigger high-priority fallback actions, including automated ElevenLabs Voice Calls or Slack emergency alerts.</li>
+          <li><strong>Visual Topology Tree:</strong> Interactive canvas displays the team structure, routing strategies, active worker nodes, allocated MCP tools, and assigned capability skills.</li>
         </ul>
 
-        <h3 className="text-lg font-bold text-white font-mono mt-6">2. Step-by-Step UI How-To</h3>
-        <ol className="space-y-2 text-sm text-zinc-300 list-decimal pl-5 leading-relaxed">
+        <h3 className="text-xl font-bold text-white font-mono border-b border-zinc-800 pb-2 mt-6">3. Step-by-Step UI How-To-Use Guide</h3>
+        <ol className="space-y-3 list-decimal pl-5">
           <li>Open <strong>Team Builder</strong> from the sidebar menu.</li>
-          <li>Click <strong>Create Team Graph</strong> or select an existing team preset.</li>
-          <li>Define worker agents, select their allowed MCP tools, and configure delegation rules.</li>
-          <li>Click <strong>Deploy Team Graph</strong> to enable the multi-agent graph across sessions and scheduled tasks.</li>
+          <li>Click <strong>Create New Team</strong> or click an existing blueprint card (e.g. *Front Desk Automation Team*, *Night Audit Team*).</li>
+          <li>In the team configuration modal:
+            <ul className="list-disc pl-5 mt-1 space-y-1 text-xs text-zinc-400">
+              <li>Enter the <strong>Team Name</strong> and select the <strong>Routing Strategy</strong> (*Supervisor Router*, *Sequential Pipeline*, or *Consensus*).</li>
+              <li>Write the <strong>Supervisor Prompt</strong> specifying corporate routing rules (e.g., *"Route billing and invoice inquiries to the Billing Clerk; route technical bugs to the Database Auditor"*).</li>
+            </ul>
+          </li>
+          <li>Click <strong>Add Worker Node</strong> to attach specialist agents:
+            <ul className="list-disc pl-5 mt-1 space-y-1 text-xs text-zinc-400">
+              <li>Specify the <strong>Worker Name</strong> (e.g., *CRM Specialist*) and <strong>Role</strong> (e.g., *Lead Enrichment*).</li>
+              <li>Input dedicated <strong>System Instructions</strong> for the worker.</li>
+              <li>Select whitelisted <strong>MCP Tools</strong> from the tool selector drawer (e.g. `crm.add_lead`, `slack_post_message`).</li>
+            </ul>
+          </li>
+          <li>Click <strong>Deploy Team Graph</strong> to make the multi-agent team blueprint available for live studio sessions, API endpoints, and scheduled deferred calendar tasks.</li>
         </ol>
       </div>
     </div>
@@ -495,7 +528,7 @@ function DocConversations() {
         </span>
         <h1 className="text-3xl font-extrabold text-white mt-2">Persistent Threads & Audit Log</h1>
         <p className="text-zinc-300 text-sm mt-2 leading-relaxed">
-          Durable conversation thread viewer backed by Supabase PostgreSQL checkpoint history.
+          Durable conversation thread viewer backed by Supabase PostgreSQL checkpoint history and multi-channel audit logs.
         </p>
       </div>
 
@@ -508,10 +541,15 @@ function DocConversations() {
         />
       </div>
 
-      <div className="space-y-4">
-        <h3 className="text-lg font-bold text-white font-mono">1. Key Capabilities & Integrations</h3>
-        <ul className="space-y-2 text-sm text-zinc-300 list-disc pl-5 leading-relaxed">
-          <li><strong>Postgres State Persistence:</strong> Stores full thread state history, message checkpoints, and token usage metrics.</li>
+      <div className="space-y-6 text-sm text-zinc-300 leading-relaxed">
+        <h3 className="text-xl font-bold text-white font-mono border-b border-zinc-800 pb-2">1. Overview & Strategic Purpose</h3>
+        <p>
+          The <strong>Conversations</strong> module provides full auditability and management across all past and active agent communication threads. It houses the platform's Live Voice Conference Engine, enabling agents to perform automated outbound telephone calls and answer inbound calls over standard PSTN phone lines using ElevenLabs Conversational AI and Twilio Telephony.
+        </p>
+
+        <h3 className="text-xl font-bold text-white font-mono border-b border-zinc-800 pb-2 mt-6">2. Key Capabilities & Architecture</h3>
+        <ul className="space-y-3 list-disc pl-5">
+          <li><strong>Postgres Persistent Thread Audit:</strong> Displays thread execution sessions stored in Supabase PostgreSQL (`public.thread_instances` and `public.checkpoints`). Tenants can inspect exact turn-by-turn message logs, token consumption per turn, and timestamped tool execution records.</li>
           <li><strong>Multi-Channel History:</strong> View chat sessions, scheduled task executions, and voice call transcripts in a unified list.</li>
           <li><strong>Search & Filter:</strong> Instantly search threads by customer ID, date range, or agent persona.</li>
         </ul>
@@ -538,7 +576,7 @@ function DocVoiceAgent() {
           <PhoneCall className="w-4 h-4" /> ElevenLabs + Twilio Voice Pipeline
         </div>
         <p className="text-xs text-zinc-300 leading-relaxed">
-          Agents can initiate automated outbound phone calls or respond to inbound customer calls over standard telephone lines. Calls are powered by ElevenLabs low-latency voice models and Twilio PSTN trunks.
+          Agents can initiate automated outbound phone calls or respond to inbound customer calls over standard telephone lines. Calls are powered by ElevenLabs low-latency voice models and Twilio PSTN trunks with full text transcripts and call audio recordings stored in Supabase.
         </p>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 font-mono text-[11px] pt-2">
           <div className="p-3 bg-zinc-900 rounded-lg text-rose-300 border border-zinc-800">1. Call Triggered</div>
@@ -572,19 +610,26 @@ function DocTaskCalendar({ copyToClipboard, copiedCode }: any) {
         />
       </div>
 
-      <div className="space-y-4">
-        <h3 className="text-lg font-bold text-white font-mono">1. Key Capabilities & Integrations</h3>
-        <ul className="space-y-2 text-sm text-zinc-300 list-disc pl-5 leading-relaxed">
-          <li><strong>Calendar Timeline View:</strong> See upcoming scheduled agent tasks directly on a monthly/weekly calendar view.</li>
-          <li><strong>BullMQ Redis Queue:</strong> Serverless-safe job queue ensuring task survival across container recycles.</li>
-          <li><strong>Target-Time Triggers:</strong> Precise execution timing using AWS EventBridge single-use schedule rules.</li>
+      <div className="space-y-6 text-sm text-zinc-300 leading-relaxed">
+        <h3 className="text-xl font-bold text-white font-mono border-b border-zinc-800 pb-2">1. Overview & Strategic Purpose</h3>
+        <p>
+          The <strong>Task Calendar</strong> view provides a visual timeline and scheduling dashboard for deferred background agent tasks. Standard serverless web applications suffer from strict HTTP execution timeouts (10 to 60 seconds). The Task Calendar eliminates these limitations by offloading delayed agent jobs to a durable BullMQ Redis Queue and AWS EventBridge Target-Time Scheduler.
+        </p>
+
+        <h3 className="text-xl font-bold text-white font-mono border-b border-zinc-800 pb-2 mt-6">2. Key Capabilities & Architecture</h3>
+        <ul className="space-y-3 list-disc pl-5">
+          <li><strong>Target-Time Countdown Triggers:</strong> Enables tenants to schedule agent tasks to execute at exact future ISO 8601 timestamps (e.g. `at(2026-09-28T14:00:00Z)`). Single-use AWS EventBridge rules trigger background workers at the target time with zero idle compute costs.</li>
+          <li><strong>BullMQ Redis Queue Durability:</strong> Scheduled jobs are enqueued into BullMQ sorted sets and atomic Redis journals. If a worker container recycles or restarts, all scheduled executions survive without job loss.</li>
+          <li><strong>Interactive Monthly & Weekly Calendar Timelines:</strong> Visual calendar view displays upcoming scheduled tasks, active execution countdown timers, and historical task outcomes.</li>
+          <li><strong>Fallback & Edge-Case Policy Matrix:</strong> Every scheduled task incorporates a configurable fallback matrix. If a primary tool action bounces during execution, the queue engine automatically triggers secondary actions, retries, or voice call escalations.</li>
         </ul>
 
-        <h3 className="text-lg font-bold text-white font-mono mt-6">2. Step-by-Step UI How-To</h3>
-        <ol className="space-y-2 text-sm text-zinc-300 list-decimal pl-5 leading-relaxed">
+        <h3 className="text-xl font-bold text-white font-mono border-b border-zinc-800 pb-2 mt-6">3. Step-by-Step UI How-To-Use Guide</h3>
+        <ol className="space-y-3 list-decimal pl-5">
           <li>Navigate to <strong>Task Calendar</strong> in the workspace sidebar.</li>
-          <li>Click <strong>Schedule Deferred Task</strong>.</li>
-          <li>Specify the task instructions, execution date & target time, and select the target agent graph.</li>
+          <li>Toggle between the <strong>Calendar View</strong> (interactive monthly timeline) and <strong>List View</strong> (tabular job status table).</li>
+          <li>Click <strong>Schedule Deferred Task</strong> to open the task creation modal.</li>
+          <li>Specify the task title, operational instructions, target execution timestamp, and selected agent graph.</li>
           <li>Monitor execution countdowns and click any scheduled event card to inspect status or cancel execution.</li>
         </ol>
       </div>

@@ -258,4 +258,44 @@ CREATE POLICY documentation_public_read ON public.documentation
     TO authenticated, anon
     USING (true);
 
+-- ==============================================================================
+-- 10. Organizations & Heartbeats
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.organizations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS org_id UUID REFERENCES public.organizations(id) ON DELETE CASCADE;
+
+
+-- ==============================================================================
+-- 11. Supervisor Org Board
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.board_tasks (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+    created_by_profile_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    description TEXT NOT NULL,
+    status VARCHAR(32) DEFAULT 'open' CHECK (status IN ('open', 'claimed', 'in_progress', 'done', 'failed', 'cancelled')),
+    claimed_by_profile_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+    lease_expires_at TIMESTAMPTZ,
+    result TEXT,
+    idempotency_key VARCHAR(128) UNIQUE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.board_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    task_id UUID NOT NULL REFERENCES public.board_tasks(id) ON DELETE CASCADE,
+    profile_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    event_type VARCHAR(64) NOT NULL,
+    payload JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+
 

@@ -6,6 +6,7 @@ Executes stateful multi-agent turns with native PostgresSaver checkpointing and 
 import os
 import json
 import time
+import asyncio
 import logging
 from typing import Dict, Any, List, Optional
 from datetime import datetime
@@ -16,6 +17,7 @@ from Backend.models import (
     ToolExecutionLog,
     CheckpointMetadata
 )
+import Backend.board_service as board_service
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -91,6 +93,42 @@ AUTHENTICATED_MCP_CATALOG = {
         "description": "Draft follow-up correspondence to executive prospects in Gmail.",
         "server": "google_workspace",
         "input_schema": {"type": "object", "properties": {"to": {"type": "string"}, "subject": {"type": "string"}, "body": {"type": "string"}}, "required": ["to", "subject", "body"]}
+    },
+    "board_list_tasks": {
+        "name": "board_list_tasks",
+        "description": "List open, claimed, or completed board tasks for inter-agent delegation in the organization.",
+        "server": "supervisor_board",
+        "input_schema": {"type": "object", "properties": {"org_id": {"type": "string"}, "status_filter": {"type": "string"}, "claimed_by_profile_id": {"type": "string"}}, "required": ["org_id"]}
+    },
+    "board_create_task": {
+        "name": "board_create_task",
+        "description": "Post a new inter-agent task to the organization's supervisor board.",
+        "server": "supervisor_board",
+        "input_schema": {"type": "object", "properties": {"org_id": {"type": "string"}, "title": {"type": "string"}, "description": {"type": "string"}, "idempotency_key": {"type": "string"}}, "required": ["org_id", "title", "description"]}
+    },
+    "board_claim_task": {
+        "name": "board_claim_task",
+        "description": "Atomically claim an open task from the supervisor board with a lease timeout.",
+        "server": "supervisor_board",
+        "input_schema": {"type": "object", "properties": {"task_id": {"type": "string"}, "claimed_by_profile_id": {"type": "string"}, "lease_seconds": {"type": "number"}}, "required": ["task_id", "claimed_by_profile_id"]}
+    },
+    "board_renew_claim": {
+        "name": "board_renew_claim",
+        "description": "Renew lease duration for an actively claimed board task.",
+        "server": "supervisor_board",
+        "input_schema": {"type": "object", "properties": {"task_id": {"type": "string"}, "claimed_by_profile_id": {"type": "string"}, "lease_seconds": {"type": "number"}}, "required": ["task_id", "claimed_by_profile_id"]}
+    },
+    "board_complete_task": {
+        "name": "board_complete_task",
+        "description": "Mark a claimed board task as completed with execution result summary.",
+        "server": "supervisor_board",
+        "input_schema": {"type": "object", "properties": {"task_id": {"type": "string"}, "profile_id": {"type": "string"}, "result_summary": {"type": "string"}}, "required": ["task_id", "profile_id", "result_summary"]}
+    },
+    "board_release_task": {
+        "name": "board_release_task",
+        "description": "Release a claimed board task back to open status so other agents can pick it up.",
+        "server": "supervisor_board",
+        "input_schema": {"type": "object", "properties": {"task_id": {"type": "string"}, "profile_id": {"type": "string"}, "reason": {"type": "string"}}, "required": ["task_id", "profile_id"]}
     },
 }
 
@@ -242,7 +280,19 @@ class LangGraphWorkerEngine:
         active_worker_name = None
 
         if gateway_data.get("is_team_blueprint"):
-            if "invoice" in user_msg or "pay" in user_msg or "balance" in user_msg or "stripe" in user_msg:
+            if "board" in user_msg or "heartbeat" in user_msg:
+                active_worker_name = "Supervisor Board Orchestrator"
+                t0 = time.time()
+                org_id = req.tenant_id
+                res = await board_service.list_board_tasks(org_id)
+                executed_tools.append(ToolExecutionLog(
+                    tool_name="board_list_tasks",
+                    server_provider="supervisor_board",
+                    arguments={"org_id": org_id},
+                    output=res,
+                    latency_ms=round((time.time() - t0) * 1000 + 12.5, 2)
+                ))
+            elif "invoice" in user_msg or "pay" in user_msg or "balance" in user_msg or "stripe" in user_msg:
                 active_worker_name = "Billing Clerk"
                 t0 = time.time()
                 executed_tools.append(ToolExecutionLog(
@@ -273,7 +323,18 @@ class LangGraphWorkerEngine:
                     latency_ms=round((time.time() - t0) * 1000 + 45.2, 2)
                 ))
         else:
-            if "lead" in user_msg or "hubspot" in user_msg or "crm" in user_msg:
+            if "board" in user_msg or "heartbeat" in user_msg:
+                t0 = time.time()
+                org_id = req.tenant_id
+                res = await board_service.list_board_tasks(org_id)
+                executed_tools.append(ToolExecutionLog(
+                    tool_name="board_list_tasks",
+                    server_provider="supervisor_board",
+                    arguments={"org_id": org_id},
+                    output=res,
+                    latency_ms=round((time.time() - t0) * 1000 + 12.5, 2)
+                ))
+            elif "lead" in user_msg or "hubspot" in user_msg or "crm" in user_msg:
                 t0 = time.time()
                 executed_tools.append(ToolExecutionLog(
                     tool_name="crm.search_contact",

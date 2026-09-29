@@ -120,6 +120,9 @@ class CreateTeamProfileRequest(BaseModel):
     supervisor_prompt: str
     routing_strategy: str = "supervisor_router"
     workers: List[ProfileWorkerBlueprint]
+    heartbeat_enabled: bool = False
+    heartbeat_rate_minutes: int = 15
+    heartbeat_goal: str = "Monitor the supervisor board and claim new tasks."
 
 
 class ThreadInstance(BaseModel):

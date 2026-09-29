@@ -26,7 +26,8 @@ from Backend.langgraph_worker import (
     TEAM_BLUEPRINTS,
     AUTHENTICATED_MCP_CATALOG
 )
-from Backend.scheduler import schedule_deferred_task_eventbridge
+from Backend.scheduler import schedule_deferred_task_eventbridge, create_recurring_heartbeat
+from Backend.database import init_db_pool, close_db_pool, get_db_pool
 
 
 @asynccontextmanager
@@ -111,14 +112,66 @@ async def handle_eventbridge_trigger(payload: Dict[str, Any]):
     """
     Invocation receiver when AWS EventBridge Scheduler fires at target_time
     """
-    task_id = payload.get("task_id", "unknown_task")
     task_payload = payload.get("payload", {})
+    trigger_type = task_payload.get("trigger_type")
+    task_id = payload.get("task_id", "unknown_task")
+
+    import time
+    if trigger_type == "heartbeat":
+        profile_id = task_payload.get("profile_id")
+        
+        # CHEAP CHECK
+        pool = await get_db_pool()
+        if pool:
+            async with pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    # Get org_id for profile
+                    await cur.execute("SELECT org_id FROM profiles WHERE id = %s", (profile_id,))
+                    org_row = await cur.fetchone()
+                    if org_row and org_row[0]:
+                        org_id = org_row[0]
+                        # Check open board tasks for this org
+                        await cur.execute("SELECT COUNT(*) FROM board_tasks WHERE org_id = %s AND status = 'open'", (org_id,))
+                        open_tasks = (await cur.fetchone())[0]
+                        
+                        if open_tasks == 0:
+                            return {"status": "no-op", "reason": "No open board tasks, sleeping."}
+
+        # Wake up LLM if work exists (Synthesize a ChatGenerateRequest)
+        req = ChatGenerateRequest(
+            thread_id=f"heartbeat_{profile_id}_{int(time.time())}",
+            tenant_id="00000000-0000-0000-0000-000000000001",
+            profile_id=profile_id,
+            message=f"[HEARTBEAT] Wake up. Goal: {task_payload.get('goal_checklist', '')}. Check board tasks."
+        )
+        res = await global_worker.execute_turn(req)
+        return {
+            "success": True,
+            "eventbridge_triggered": True,
+            "trigger_type": "heartbeat",
+            "execution": res
+        }
+
+    # Paradigm 1: Calendar / Task Heartbeat Subscriptions
+    subscribed_profile_ids = task_payload.get("subscribed_profile_ids", [])
+    subscriber_executions = []
     
+    for profile_id in subscribed_profile_ids:
+        req = ChatGenerateRequest(
+            thread_id=f"cal_event_{task_id}_{profile_id}_{int(time.time())}",
+            tenant_id=task_payload.get("tenant_id", "00000000-0000-0000-0000-000000000001"),
+            profile_id=profile_id,
+            message=f"[CALENDAR EVENT WAKEUP] Scheduled event triggered. Instructions: {task_payload.get('instructions', '')}"
+        )
+        res = await global_worker.execute_turn(req)
+        subscriber_executions.append(res)
+
     res = await global_worker.execute_deferred_task_eventbridge(task_id, task_payload)
     return {
         "success": True,
         "eventbridge_triggered": True,
-        "execution": res
+        "execution": res,
+        "subscriber_executions": subscriber_executions
     }
 
 
@@ -188,11 +241,20 @@ async def publish_team_blueprint(payload: CreateTeamProfileRequest):
         ]
     }
     global_worker.register_team_blueprint(blueprint)
+    
+    heartbeat_res = None
+    if payload.heartbeat_enabled:
+        heartbeat_res = create_recurring_heartbeat(
+            profile_id=profile_id,
+            rate_minutes=payload.heartbeat_rate_minutes,
+            goal_checklist=payload.heartbeat_goal
+        )
 
     return {
         "success": True,
         "message": f"Team profile blueprint '{payload.name}' successfully published to Supabase.",
-        "profile": blueprint
+        "profile": blueprint,
+        "heartbeat_scheduler": heartbeat_res
     }
 
 

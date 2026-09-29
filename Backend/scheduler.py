@@ -69,7 +69,7 @@ def schedule_deferred_task_eventbridge(
                 "Input": json.dumps({"action": "execute_deferred_task", "task_id": task_id, "payload": payload}),
                 "RetryPolicy": {"MaximumRetryAttempts": 2},
             },
-            ActionAfterCompletion="DELETE", // Auto-clean ephemeral schedule after execution
+            ActionAfterCompletion="DELETE", # Auto-clean ephemeral schedule after execution
         )
 
         logger.info(f"[EventBridge Scheduler] Created schedule {schedule_name} for target time {at_expression}")
@@ -87,4 +87,64 @@ def schedule_deferred_task_eventbridge(
             "error": str(exc),
             "schedule_name": schedule_name,
             "target_time": target_time_iso,
+        }
+
+def create_recurring_heartbeat(
+    profile_id: str,
+    rate_minutes: int = 15,
+    goal_checklist: str = ""
+) -> Dict[str, Any]:
+    """
+    Creates an AWS EventBridge rule that fires on a rate expression (e.g. rate(15 minutes)).
+    Target: /v1/tasks/eventbridge-trigger
+    Payload: {"trigger_type": "heartbeat", "profile_id": profile_id, "goal_checklist": goal_checklist}
+    """
+    client = get_scheduler_client()
+    schedule_name = f"heartbeat_profile_{profile_id.replace('-', '_')[:40]}"
+
+    try:
+        rate_expression = f"rate({rate_minutes} minutes)"
+        payload = {
+            "trigger_type": "heartbeat",
+            "profile_id": profile_id,
+            "goal_checklist": goal_checklist
+        }
+
+        if not client or not LAMBDA_TARGET_ARN or not SCHEDULER_ROLE_ARN:
+            logger.info(f"[Scheduler Local Mode] Heartbeat for {profile_id} registered at {rate_expression}.")
+            return {
+                "success": True,
+                "mode": "local_mock",
+                "schedule_name": schedule_name,
+                "rate_expression": rate_expression,
+            }
+
+        response = client.create_schedule(
+            Name=schedule_name,
+            GroupName="default",
+            ScheduleExpression=rate_expression,
+            FlexibleTimeWindow={"Mode": "OFF"},
+            Target={
+                "Arn": LAMBDA_TARGET_ARN,
+                "RoleArn": SCHEDULER_ROLE_ARN,
+                "Input": json.dumps({"action": "execute_deferred_task", "payload": payload}),
+                "RetryPolicy": {"MaximumRetryAttempts": 0},
+            },
+            ActionAfterCompletion="NONE", # Recurring schedule, do not delete
+        )
+
+        logger.info(f"[EventBridge Scheduler] Created recurring heartbeat {schedule_name} at {rate_expression}")
+        return {
+            "success": True,
+            "mode": "aws_eventbridge_scheduler",
+            "schedule_arn": response.get("ScheduleArn"),
+            "schedule_name": schedule_name,
+            "rate_expression": rate_expression,
+        }
+    except Exception as exc:
+        logger.error(f"[EventBridge Scheduler Error] Failed to schedule heartbeat for {profile_id}: {exc}")
+        return {
+            "success": False,
+            "error": str(exc),
+            "schedule_name": schedule_name,
         }

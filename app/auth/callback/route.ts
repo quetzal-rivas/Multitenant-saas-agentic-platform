@@ -6,11 +6,13 @@ import { OAuthProvider } from '@/Backend/legacy_ts_mocks/types';
 export async function GET(req: NextRequest) {
   let provider: OAuthProvider = 'google';
   let code: string | undefined = undefined;
+  let nextUrl: string = '/';
   try {
     if (req && req.url) {
       const url = new URL(req.url);
       provider = (url.searchParams.get('provider') || 'google') as OAuthProvider;
       code = url.searchParams.get('code') || undefined;
+      nextUrl = url.searchParams.get('next') || '/';
     }
   } catch (e) {
     // Ignore static prerender evaluation error
@@ -112,7 +114,7 @@ export async function GET(req: NextRequest) {
               }, '*');
               window.close();
             } else {
-              window.location.href = '/';
+              window.location.href = '${nextUrl}';
             }
           }
 

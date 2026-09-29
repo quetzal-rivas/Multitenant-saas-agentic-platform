@@ -203,10 +203,10 @@ export default function DocumentationPage() {
             </div>
 
             <Link
-              href="/dashboard"
+              href="/login"
               className="text-xs font-semibold bg-emerald-500 hover:bg-emerald-400 text-zinc-950 px-3.5 py-2 rounded-lg transition-all shadow-md shadow-emerald-500/20 flex items-center gap-1.5"
             >
-              Open Workspace Dashboard <ArrowRight className="w-3.5 h-3.5" />
+              Login to Workspace Dashboard <ArrowRight className="w-3.5 h-3.5" />
             </Link>
           </div>
         </div>

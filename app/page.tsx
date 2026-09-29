@@ -88,10 +88,10 @@ export default function LandingPage() {
               Create Workspace Free <ArrowRight className="w-5 h-5" />
             </Link>
             <Link
-              href="/dashboard"
+              href="/login"
               className="w-full sm:w-auto px-8 py-3.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-200 border border-zinc-800 font-semibold text-base transition-all flex items-center justify-center gap-2"
             >
-              Open Live Dashboard
+              Login to Dashboard
             </Link>
           </div>
         </div>

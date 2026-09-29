@@ -9,8 +9,12 @@ export default function OnboardingPage() {
   const router = useRouter();
   const [step, setStep] = useState<number>(1);
   const [orgName, setOrgName] = useState<string>('QuantumLeads LLC');
-  const [openaiKey, setOpenaiKey] = useState<string>('');
-  const [anthropicKey, setAnthropicKey] = useState<string>('');
+  const [apiKeys, setApiKeys] = useState<{ name: string; value: string }[]>([
+    { name: 'OPENAI_API_KEY', value: '' },
+    { name: 'ANTHROPIC_API_KEY', value: '' },
+    { name: 'ELEVENLABS_API_KEY', value: '' },
+    { name: 'GEMINI_API_TOKEN', value: '' }
+  ]);
   const [selectedTwilioNumber, setSelectedTwilioNumber] = useState<string>('+1 (555) 839-2041');
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -31,8 +35,7 @@ export default function OnboardingPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           orgName,
-          openaiKey,
-          anthropicKey,
+          apiKeys: apiKeys.filter(k => k.value.trim() !== ''),
           twilioNumber: selectedTwilioNumber,
         }),
       });
@@ -146,29 +149,57 @@ export default function OnboardingPage() {
               </p>
             </div>
 
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs font-medium text-zinc-300 mb-1.5">OpenAI API Key (Optional)</label>
-                <input
-                  type="password"
-                  value={openaiKey}
-                  onChange={(e) => setOpenaiKey(e.target.value)}
-                  placeholder="sk-proj-..."
-                  className="w-full px-4 py-2.5 rounded-xl bg-zinc-950 border border-zinc-800 text-white text-sm font-mono focus:outline-none focus:border-emerald-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-zinc-300 mb-1.5">Anthropic API Key (Optional)</label>
-                <input
-                  type="password"
-                  value={anthropicKey}
-                  onChange={(e) => setAnthropicKey(e.target.value)}
-                  placeholder="sk-ant-..."
-                  className="w-full px-4 py-2.5 rounded-xl bg-zinc-950 border border-zinc-800 text-white text-sm font-mono focus:outline-none focus:border-emerald-500"
-                />
-              </div>
+            <div className="space-y-4 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+              {apiKeys.map((keyObj, index) => (
+                <div key={index} className="flex items-end gap-3 bg-zinc-900/50 p-3 rounded-xl border border-zinc-800">
+                  <div className="w-1/3">
+                    <label className="block text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-1">Key Name</label>
+                    <input
+                      type="text"
+                      value={keyObj.name}
+                      onChange={(e) => {
+                        const newKeys = [...apiKeys];
+                        newKeys[index].name = e.target.value.toUpperCase().replace(/\s+/g, '_');
+                        setApiKeys(newKeys);
+                      }}
+                      placeholder="API_KEY_NAME"
+                      className="w-full px-3 py-2 rounded-lg bg-zinc-950 border border-zinc-700 text-white text-xs font-mono focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                  <div className="flex-1">
+                    <label className="block text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-1">Secret Value</label>
+                    <input
+                      type="password"
+                      value={keyObj.value}
+                      onChange={(e) => {
+                        const newKeys = [...apiKeys];
+                        newKeys[index].value = e.target.value;
+                        setApiKeys(newKeys);
+                      }}
+                      placeholder="sk-..."
+                      className="w-full px-3 py-2 rounded-lg bg-zinc-950 border border-zinc-700 text-white text-xs font-mono focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                  <button 
+                    onClick={() => {
+                      const newKeys = [...apiKeys];
+                      newKeys.splice(index, 1);
+                      setApiKeys(newKeys);
+                    }}
+                    className="p-2 mb-0.5 rounded-lg text-zinc-500 hover:bg-rose-500/10 hover:text-rose-400 transition-colors"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
             </div>
+
+            <button
+              onClick={() => setApiKeys([...apiKeys, { name: 'NEW_API_KEY', value: '' }])}
+              className="text-xs text-emerald-400 hover:text-emerald-300 font-mono flex items-center gap-1 mt-2 transition-colors"
+            >
+              + Add Custom API Key
+            </button>
 
             <div className="p-3.5 rounded-xl bg-zinc-950/80 border border-zinc-800 text-xs text-zinc-400 flex items-start gap-2.5">
               <ShieldAlert className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />

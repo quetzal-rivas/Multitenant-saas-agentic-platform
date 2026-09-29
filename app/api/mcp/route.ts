@@ -1,7 +1,7 @@
 export const dynamic = 'force-static';
 import { NextRequest, NextResponse } from 'next/server';
-import { ProprietaryMcpServer } from '@/Backend/mcp-server';
-import { McpProfileManager } from '@/Backend/profile-manager';
+import { ProprietaryMcpServer } from '@/Backend/legacy_ts_mocks/mcp-server';
+import { McpProfileManager } from '@/Backend/legacy_ts_mocks/profile-manager';
 
 export async function POST(req: NextRequest) {
   try {

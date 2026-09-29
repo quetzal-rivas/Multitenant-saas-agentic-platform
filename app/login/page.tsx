@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Bot, Github, Mail, ArrowRight, ShieldCheck, CheckCircle2 } from 'lucide-react';
-import { supabase } from '@/Backend/supabase';
+import { supabase } from '@/Backend/legacy_ts_mocks/supabase';
 
 export default function LoginPage() {
   const router = useRouter();

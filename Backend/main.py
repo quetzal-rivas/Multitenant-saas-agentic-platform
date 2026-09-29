@@ -282,6 +282,93 @@ async def spawn_thread_instance(payload: Dict[str, Any]):
     }
 
 
+from Backend.models import OrganizationCreateRequest, InviteUserRequest, AcceptInviteRequest
+import uuid
+
+@app.post("/v1/organizations")
+async def create_organization(payload: OrganizationCreateRequest):
+    # Simulated auth.uid()
+    user_id = "00000000-0000-0000-0000-000000000001"
+    org_id = str(uuid.uuid4())
+    pool = await get_db_pool()
+    if pool:
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "INSERT INTO organizations (id, name, created_by) VALUES (%s, %s, %s)",
+                    (org_id, payload.name, user_id)
+                )
+                await cur.execute(
+                    "INSERT INTO organization_members (org_id, user_id, role) VALUES (%s, %s, %s)",
+                    (org_id, user_id, "owner")
+                )
+                await conn.commit()
+    return {"success": True, "org_id": org_id, "name": payload.name}
+
+
+@app.get("/v1/organizations/me")
+async def list_my_organizations():
+    user_id = "00000000-0000-0000-0000-000000000001"
+    orgs = []
+    pool = await get_db_pool()
+    if pool:
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT o.id, o.name, om.role FROM organizations o JOIN organization_members om ON o.id = om.org_id WHERE om.user_id = %s",
+                    (user_id,)
+                )
+                rows = await cur.fetchall()
+                for r in rows:
+                    orgs.append({"id": str(r[0]), "name": r[1], "role": r[2]})
+    return {"organizations": orgs}
+
+
+@app.post("/v1/organizations/{org_id}/invites")
+async def invite_user(org_id: str, payload: InviteUserRequest):
+    token = "".join(random.choices(string.ascii_letters + string.digits, k=32))
+    pool = await get_db_pool()
+    if pool:
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "INSERT INTO invitations (org_id, email, token, expires_at) VALUES (%s, %s, %s, NOW() + INTERVAL '7 days')",
+                    (org_id, payload.email, token)
+                )
+                await conn.commit()
+    # In a real app, send email via AWS SES here
+    return {"success": True, "message": f"Invited {payload.email}", "token": token}
+
+
+@app.post("/v1/invites/accept")
+async def accept_invite(payload: AcceptInviteRequest):
+    user_id = "00000000-0000-0000-0000-000000000001"
+    pool = await get_db_pool()
+    if pool:
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT org_id FROM invitations WHERE token = %s AND status = 'pending' AND expires_at > NOW()",
+                    (payload.token,)
+                )
+                row = await cur.fetchone()
+                if not row:
+                    raise HTTPException(status_code=400, detail="Invalid or expired token")
+                org_id = row[0]
+                
+                await cur.execute(
+                    "INSERT INTO organization_members (org_id, user_id, role) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",
+                    (org_id, user_id, "member")
+                )
+                await cur.execute(
+                    "UPDATE invitations SET status = 'accepted' WHERE token = %s",
+                    (payload.token,)
+                )
+                await conn.commit()
+    return {"success": True, "message": "Invitation accepted."}
+
+
+
 # Mangum handler for AWS Lambda serverless execution
 try:
     from mangum import Mangum

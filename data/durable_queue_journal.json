@@ -1,1 +1,120 @@
-[]
+[
+  {
+    "id": "job_task_1790603853593_v0y53",
+    "taskId": "task_1790603853593_v0y53",
+    "name": "Automated Nightly CRM & Postgres Audit",
+    "delayMs": 3599988,
+    "scheduledAt": "2026-09-28T14:57:33.583Z",
+    "enqueuedAt": "2026-09-28T13:57:33.595Z",
+    "status": "completed",
+    "attemptsMade": 1,
+    "data": {
+      "id": "task_1790603853593_v0y53",
+      "title": "Automated Nightly CRM & Postgres Audit",
+      "instructions": "Run nightly audit query on customer lead table and send Slack report.",
+      "scheduled_at": "2026-09-28T14:57:33.583Z",
+      "created_at": "2026-09-28T13:57:33.593Z",
+      "updated_at": "2026-09-28T14:57:33.848Z",
+      "status": "COMPLETED",
+      "allowed_tools": [
+        "postgres_read",
+        "slack_post_message"
+      ],
+      "fallback_policy": {
+        "on_failure": "escalate",
+        "fallback_tool": "elevenlabs_trigger_call",
+        "escalation_instructions": "Call on-call engineer if DB query fails."
+      },
+      "tenant_id": "tenant_enterprise_corp",
+      "simulate_failure": false,
+      "category": "email",
+      "execution_result": {
+        "started_at": "2026-09-28T14:57:33.515Z",
+        "escalation_triggered": false,
+        "reasoning_steps": [
+          {
+            "node": "intake_and_plan",
+            "action": "Parsed task instructions and selected primary tool \"slack_post_message\". Resolved contacts: boss -> boss@enterprise-hq.com.",
+            "status": "SUCCESS",
+            "timestamp": "2026-09-28T14:57:33.522Z",
+            "details": {
+              "primaryTool": "slack_post_message",
+              "resolvedContacts": {},
+              "preparedArgs": {
+                "channel": "#general-alerts",
+                "text": "Automated Task Report: Automated Nightly CRM & Postgres Audit\nDetails: Run nightly audit query on customer lead table and send Slack report."
+              }
+            }
+          },
+          {
+            "node": "execute_primary_action",
+            "action": "Invoking primary MCP tool \"slack_post_message\" over transport bridge...",
+            "status": "INFO",
+            "timestamp": "2026-09-28T14:57:33.528Z"
+          },
+          {
+            "node": "execute_primary_action",
+            "action": "Tool \"slack_post_message\" returned success: Slack message posted to #general-alerts: \"Automated Task Report: Automated Nightly CRM & Postgres Audi...\"",
+            "status": "SUCCESS",
+            "timestamp": "2026-09-28T14:57:33.846Z",
+            "details": {
+              "durationMs": 317
+            }
+          },
+          {
+            "node": "verify_outcome",
+            "action": "Verification verified primary tool output is valid. Traversal edge -> \"complete_task\".",
+            "status": "SUCCESS",
+            "timestamp": "2026-09-28T14:57:33.847Z"
+          },
+          {
+            "node": "complete_task",
+            "action": "Execution graph terminated. Final state summary: Task completed successfully on primary path via slack_post_message. All verification checks passed.",
+            "status": "SUCCESS",
+            "timestamp": "2026-09-28T14:57:33.847Z"
+          }
+        ],
+        "completed_at": "2026-09-28T14:57:33.848Z",
+        "primary_tool_used": "slack_post_message",
+        "primary_tool_status": "SUCCESS",
+        "primary_tool_output": "Slack message posted to #general-alerts: \"Automated Task Report: Automated Nightly CRM & Postgres Audi...\"",
+        "final_summary": "Task completed successfully on primary path via slack_post_message. All verification checks passed."
+      }
+    }
+  },
+  {
+    "id": "job_task_1790663849720_q8uju",
+    "taskId": "task_1790663849720_q8uju",
+    "name": "Executive Weekly Briefing via Gmail",
+    "delayMs": 19710277,
+    "scheduledAt": "2026-09-29T12:06:00.000Z",
+    "enqueuedAt": "2026-09-29T06:37:29.723Z",
+    "status": "delayed",
+    "attemptsMade": 0,
+    "data": {
+      "id": "task_1790663849720_q8uju",
+      "title": "Executive Weekly Briefing via Gmail",
+      "instructions": "Fetch metric highlights and send executive briefing to boss. If email fails, trigger voice call alert.",
+      "scheduled_at": "2026-09-29T12:06:00.000Z",
+      "created_at": "2026-09-29T06:37:29.720Z",
+      "updated_at": "2026-09-29T06:37:29.720Z",
+      "status": "SCHEDULED",
+      "allowed_tools": [
+        "gmail_send_message",
+        "elevenlabs_trigger_call"
+      ],
+      "fallback_policy": {
+        "on_failure": "escalate",
+        "fallback_tool": "elevenlabs_trigger_call",
+        "escalation_instructions": "If email delivery fails, immediately trigger an automated voice call via ElevenLabs to alert the boss.",
+        "contact_overrides": {
+          "boss": "+1 (555) 438-9021"
+        },
+        "max_retries": 1
+      },
+      "category": "email",
+      "simulate_failure": false,
+      "tenant_id": "00000000-0000-0000-0000-000000000001"
+    }
+  }
+]

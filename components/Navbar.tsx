@@ -1,7 +1,8 @@
 'use client';
 
-import React from 'react';
-import { Layers, Terminal, Sparkles, Shield, Activity, ChevronRight, Key, Cpu, Server } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { Layers, Terminal, Sparkles, Shield, Activity, ChevronRight, Key, Cpu, Server, Building2 } from 'lucide-react';
 
 interface NavbarProps {
   activeTab?: string;
@@ -16,6 +17,27 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenSimulator,
   onOpenNewProfile,
 }) => {
+  const router = useRouter();
+  const [activeOrgName, setActiveOrgName] = useState<string>('Loading...');
+
+  useEffect(() => {
+    const fetchOrg = async () => {
+      try {
+        const res = await fetch('/api/v1/organizations/me');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.organizations && data.organizations.length > 0) {
+            setActiveOrgName(data.organizations[0].name);
+          } else {
+            setActiveOrgName('No Organization');
+          }
+        }
+      } catch (err) {
+        setActiveOrgName('Mock Organization (Dev)');
+      }
+    };
+    fetchOrg();
+  }, []);
   return (
     <header className="h-14 border-b border-zinc-800 bg-[#0e1117] px-4 flex items-center justify-between sticky top-0 z-40">
       {/* Brand & Breadcrumbs */}
@@ -46,16 +68,17 @@ export const Navbar: React.FC<NavbarProps> = ({
       </div>
 
       {/* Center Status Pill */}
-      <div className="hidden lg:flex items-center gap-2 px-3 py-1 rounded-full bg-zinc-900/90 border border-zinc-800 text-xs font-mono">
-        <span className="relative flex h-2 w-2">
-          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-          <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-        </span>
-        <span className="text-zinc-400">Context Engine v2.4</span>
-        <span className="text-zinc-600">•</span>
-        <span className="text-emerald-400 font-medium">MCP v2024-11-05</span>
-        <span className="text-zinc-600">•</span>
-        <span className="text-zinc-400">1-Click OAuth</span>
+      <div className="hidden lg:flex items-center gap-2">
+        <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-zinc-900/90 border border-zinc-800 text-xs font-mono">
+          <Building2 className="w-3.5 h-3.5 text-emerald-400" />
+          <span className="text-zinc-300 font-sans font-medium">{activeOrgName}</span>
+        </div>
+        <button 
+          onClick={() => router.push('/organizations')}
+          className="text-[10px] uppercase font-mono px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 transition-colors border border-zinc-700"
+        >
+          Switch Org
+        </button>
       </div>
 
       {/* Right Quick Actions */}

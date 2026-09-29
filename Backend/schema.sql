@@ -259,15 +259,50 @@ CREATE POLICY documentation_public_read ON public.documentation
     USING (true);
 
 -- ==============================================================================
--- 10. Organizations & Heartbeats
+-- 10. Organizations, Members & Invitations
 -- ==============================================================================
 CREATE TABLE IF NOT EXISTS public.organizations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name VARCHAR(255) NOT NULL,
+    created_by UUID, -- Usually auth.uid(), optional FK to auth.users if using full Supabase Auth
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS public.organization_members (
+    org_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL, -- references auth.users in a real Supabase setup
+    role VARCHAR(32) NOT NULL DEFAULT 'member' CHECK (role IN ('owner', 'admin', 'member')),
+    PRIMARY KEY (org_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS public.invitations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+    email VARCHAR(255) NOT NULL,
+    token VARCHAR(255) UNIQUE NOT NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'expired')),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL
+);
+
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS org_id UUID REFERENCES public.organizations(id) ON DELETE CASCADE;
+
+-- RLS Policies for Organizations
+ALTER TABLE public.organizations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.organization_members ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.invitations ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY orgs_isolation_policy ON public.organizations
+    FOR ALL
+    USING (id IN (SELECT org_id FROM public.organization_members WHERE user_id = NULLIF(current_setting('app.current_user_id', true), '')::uuid));
+
+CREATE POLICY org_members_isolation_policy ON public.organization_members
+    FOR ALL
+    USING (org_id IN (SELECT org_id FROM public.organization_members WHERE user_id = NULLIF(current_setting('app.current_user_id', true), '')::uuid));
+
+CREATE POLICY invitations_isolation_policy ON public.invitations
+    FOR ALL
+    USING (org_id IN (SELECT org_id FROM public.organization_members WHERE user_id = NULLIF(current_setting('app.current_user_id', true), '')::uuid));
 
 
 -- ==============================================================================

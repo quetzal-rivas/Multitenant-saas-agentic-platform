@@ -26,7 +26,7 @@ import {
   Layers,
   ArrowRight,
 } from 'lucide-react';
-import { ScheduledTask, TaskStatus, ReasoningStep } from '@/Backend/db';
+import { ScheduledTask, TaskStatus, ReasoningStep } from '@/Backend/legacy_ts_mocks/db';
 
 interface TaskCalendarViewProps {
   tenantId?: string;
@@ -59,6 +59,7 @@ export const TaskCalendarView: React.FC<TaskCalendarViewProps> = ({
     const future = new Date(Date.now() + 1000 * 60 * 30); // 30 mins ahead
     return future.toISOString().slice(0, 16);
   });
+  const [formSubscribedProfileIds, setFormSubscribedProfileIds] = useState<string>('');
   const [formAllowedTools, setFormAllowedTools] = useState<string[]>([
     'gmail_send_message',
     'elevenlabs_trigger_call',
@@ -212,6 +213,7 @@ export const TaskCalendarView: React.FC<TaskCalendarViewProps> = ({
         title: formTitle,
         instructions: formInstructions,
         scheduled_at: scheduledIso,
+        subscribed_profile_ids: formSubscribedProfileIds.split(',').map(s => s.trim()).filter(Boolean),
         allowed_tools: formAllowedTools,
         fallback_policy: {
           on_failure: 'escalate',
@@ -1049,7 +1051,7 @@ export const TaskCalendarView: React.FC<TaskCalendarViewProps> = ({
 
               {/* Instructions */}
               <div className="space-y-1">
-                <label className="font-mono text-[11px] text-zinc-400">WHAT TO DO (INSTRUCTIONS)</label>
+                <label className="font-mono text-[11px] text-zinc-400">WHAT TO DO (INSTRUCTIONS / GOAL)</label>
                 <textarea
                   required
                   rows={2}
@@ -1057,6 +1059,23 @@ export const TaskCalendarView: React.FC<TaskCalendarViewProps> = ({
                   onChange={(e) => setFormInstructions(e.target.value)}
                   className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-zinc-100 focus:outline-none focus:border-emerald-500 resize-none"
                 />
+              </div>
+
+              {/* Heartbeat Subscriptions */}
+              <div className="space-y-1">
+                <label className="font-mono text-[11px] text-zinc-400">
+                  AGENT HEARTBEAT SUBSCRIPTIONS (PROFILE IDs)
+                </label>
+                <input
+                  type="text"
+                  value={formSubscribedProfileIds}
+                  onChange={(e) => setFormSubscribedProfileIds(e.target.value)}
+                  placeholder="e.g. team_front_desk, team_sre_ops (comma separated)"
+                  className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-zinc-100 font-mono text-xs focus:outline-none focus:border-emerald-500"
+                />
+                <p className="text-[10px] text-zinc-500">
+                  Subscribed agents will be synchronously woken up and sent the task instructions when this timer triggers.
+                </p>
               </div>
 
               {/* Target Execution Time */}

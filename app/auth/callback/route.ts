@@ -1,7 +1,7 @@
 export const dynamic = 'force-static';
 import { NextRequest } from 'next/server';
-import { OAuthManager } from '@/Backend/oauth-manager';
-import { OAuthProvider } from '@/Backend/types';
+import { OAuthManager } from '@/Backend/legacy_ts_mocks/oauth-manager';
+import { OAuthProvider } from '@/Backend/legacy_ts_mocks/types';
 
 export async function GET(req: NextRequest) {
   let provider: OAuthProvider = 'google';

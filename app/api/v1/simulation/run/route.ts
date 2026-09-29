@@ -1,7 +1,7 @@
 export const dynamic = 'force-static';
 import { NextRequest, NextResponse } from 'next/server';
-import { SimulationRunPayloadSchema } from '@/Backend/simulation-schemas';
-import { simulationEngine } from '@/Backend/simulation-engine';
+import { SimulationRunPayloadSchema } from '@/Backend/legacy_ts_mocks/simulation-schemas';
+import { simulationEngine } from '@/Backend/legacy_ts_mocks/simulation-engine';
 
 /**
  * POST /api/v1/simulation/run

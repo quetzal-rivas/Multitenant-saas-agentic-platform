@@ -1,6 +1,6 @@
 export const dynamic = 'force-static';
 import { NextRequest, NextResponse } from 'next/server';
-import { PlatformControlMcpServer } from '@/Backend/platform-mcp-server';
+import { PlatformControlMcpServer } from '@/Backend/legacy_ts_mocks/platform-mcp-server';
 
 /**
  * Platform Control MCP Server Endpoint

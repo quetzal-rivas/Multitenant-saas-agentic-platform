@@ -1,7 +1,7 @@
 export const dynamic = 'force-static';
 import { NextRequest, NextResponse } from 'next/server';
-import { supabase } from '@/Backend/supabase';
-import { vaultManagerStore } from '@/Backend/vault-manager';
+import { supabase } from '@/Backend/legacy_ts_mocks/supabase';
+import { vaultManagerStore } from '@/Backend/legacy_ts_mocks/vault-manager';
 
 export async function POST(req: NextRequest) {
   try {

@@ -1,6 +1,6 @@
 export const dynamic = 'force-static';
 import { NextRequest, NextResponse } from 'next/server';
-import { McpProfileManager } from '@/Backend/profile-manager';
+import { McpProfileManager } from '@/Backend/legacy_ts_mocks/profile-manager';
 
 export async function GET() {
   const profiles = McpProfileManager.listProfiles();

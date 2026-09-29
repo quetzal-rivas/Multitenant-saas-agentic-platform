@@ -3,8 +3,8 @@ export function generateStaticParams() {
   return [{ id: 'default' }];
 }
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/Backend/db';
-import { handleCancelTask, handleTriggerNow } from '@/Backend/server';
+import { db } from '@/Backend/legacy_ts_mocks/db';
+import { handleCancelTask, handleTriggerNow } from '@/Backend/legacy_ts_mocks/server';
 
 export async function GET(
   req: NextRequest,

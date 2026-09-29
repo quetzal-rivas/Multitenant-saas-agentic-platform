@@ -3,7 +3,7 @@ export function generateStaticParams() {
   return [{ threadId: 'default' }];
 }
 import { NextRequest, NextResponse } from 'next/server';
-import { conversationsManager } from '@/Backend/conversations-manager';
+import { conversationsManager } from '@/Backend/legacy_ts_mocks/conversations-manager';
 
 export async function GET(
   req: NextRequest,

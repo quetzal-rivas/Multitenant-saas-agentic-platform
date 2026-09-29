@@ -1,8 +1,8 @@
 export const dynamic = 'force-static';
 import { NextRequest, NextResponse } from 'next/server';
-import { HOSTED_MCP_SERVERS } from '@/Backend/hosted-servers';
-import { OAuthManager } from '@/Backend/oauth-manager';
-import { OAuthProvider } from '@/Backend/types';
+import { HOSTED_MCP_SERVERS } from '@/Backend/legacy_ts_mocks/hosted-servers';
+import { OAuthManager } from '@/Backend/legacy_ts_mocks/oauth-manager';
+import { OAuthProvider } from '@/Backend/legacy_ts_mocks/types';
 
 export async function GET() {
   const connections = OAuthManager.getAllConnections();

@@ -1,7 +1,7 @@
 export const dynamic = 'force-static';
 import { NextRequest, NextResponse } from 'next/server';
-import { handleTaskIntake, handleListTasks } from '@/Backend/server';
-import { db } from '@/Backend/db';
+import { handleTaskIntake, handleListTasks } from '@/Backend/legacy_ts_mocks/server';
+import { db } from '@/Backend/legacy_ts_mocks/db';
 
 export async function GET(req: NextRequest) {
   try {

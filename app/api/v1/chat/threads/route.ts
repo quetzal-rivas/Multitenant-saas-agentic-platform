@@ -1,7 +1,7 @@
 export const dynamic = 'force-static';
 import { NextRequest, NextResponse } from 'next/server';
-import { checkpointManagerStore } from '@/Backend/checkpoint-manager';
-import { vaultManagerStore } from '@/Backend/vault-manager';
+import { checkpointManagerStore } from '@/Backend/legacy_ts_mocks/checkpoint-manager';
+import { vaultManagerStore } from '@/Backend/legacy_ts_mocks/vault-manager';
 
 export async function GET(req: NextRequest) {
   let threadId = 'session_enterprise_001';

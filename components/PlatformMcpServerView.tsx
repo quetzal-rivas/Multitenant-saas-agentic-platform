@@ -23,7 +23,7 @@ import {
   Send,
   SlidersHorizontal,
 } from 'lucide-react';
-import { PLATFORM_CONTROL_MCP_TOOLS } from '@/Backend/platform-mcp-tools';
+import { PLATFORM_CONTROL_MCP_TOOLS } from '@/Backend/legacy_ts_mocks/platform-mcp-tools';
 
 interface PlatformMcpServerViewProps {
   onOpenTeamBuilder?: () => void;

@@ -1,6 +1,6 @@
 export const dynamic = 'force-static';
 import { NextRequest, NextResponse } from 'next/server';
-import { teamBlueprintManager } from '@/Backend/team-blueprint-manager';
+import { teamBlueprintManager } from '@/Backend/legacy_ts_mocks/team-blueprint-manager';
 
 export async function POST(req: NextRequest) {
   try {

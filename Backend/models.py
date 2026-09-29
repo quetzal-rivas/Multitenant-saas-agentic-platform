@@ -137,3 +137,13 @@ class ThreadInstance(BaseModel):
     created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
     last_active_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
 
+
+class OrganizationCreateRequest(BaseModel):
+    name: str
+
+class InviteUserRequest(BaseModel):
+    email: str
+
+class AcceptInviteRequest(BaseModel):
+    token: str
+

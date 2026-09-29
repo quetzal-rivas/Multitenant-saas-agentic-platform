@@ -36,11 +36,11 @@ import {
   Square,
   Filter,
 } from 'lucide-react';
-import { McpServerProfile } from '@/Backend/types';
+import { McpServerProfile } from '@/Backend/legacy_ts_mocks/types';
 import { ContextProfile } from '@/lib/types';
-import { McpProfileManager } from '@/Backend/profile-manager';
+import { McpProfileManager } from '@/Backend/legacy_ts_mocks/profile-manager';
 import { INITIAL_PROFILES } from '@/lib/mock-data';
-import { AuthenticatedMcpTool, PLATFORM_MCP_TOOLS_CATALOG } from '@/Backend/team-blueprint-manager';
+import { AuthenticatedMcpTool, PLATFORM_MCP_TOOLS_CATALOG } from '@/Backend/legacy_ts_mocks/team-blueprint-manager';
 
 interface WorkerForm {
   id: string;
@@ -199,6 +199,11 @@ export const AgentTeamBuilder: React.FC<AgentTeamBuilderProps> = ({
     'slack.post_incident_alert',
   ]);
   const [routingStrategy, setRoutingStrategy] = useState<string>('supervisor_router');
+
+  // Heartbeat Config State
+  const [heartbeatEnabled, setHeartbeatEnabled] = useState<boolean>(false);
+  const [heartbeatRateMinutes, setHeartbeatRateMinutes] = useState<number>(15);
+  const [heartbeatGoal, setHeartbeatGoal] = useState<string>('Monitor the supervisor board and claim new tasks.');
 
   const [workers, setWorkers] = useState<WorkerForm[]>([
     {
@@ -382,12 +387,12 @@ export const AgentTeamBuilder: React.FC<AgentTeamBuilderProps> = ({
     setPublishSuccess(null);
     try {
       const payload = {
-        tenant_id: tenantId,
         name: teamName,
-        supervisor_mcp_profile_id: supervisorMcpProfileId,
-        supervisor_context_profile_slug: supervisorContextProfileSlug,
-        supervisor_skills: supervisorSkills,
+        supervisor_prompt: "You are the corporate front desk supervisor. Route caller identity verification and lead updates to the CRM Specialist first.",
         routing_strategy: routingStrategy,
+        heartbeat_enabled: heartbeatEnabled,
+        heartbeat_rate_minutes: heartbeatRateMinutes,
+        heartbeat_goal: heartbeatGoal,
         workers: workers.map((w) => ({
           name: w.name,
           role: w.role,
@@ -399,7 +404,7 @@ export const AgentTeamBuilder: React.FC<AgentTeamBuilderProps> = ({
         })),
       };
 
-      const res = await fetch('/api/v1/teams', {
+      const res = await fetch('/api/mcp/profiles', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -1363,6 +1368,53 @@ export const AgentTeamBuilder: React.FC<AgentTeamBuilderProps> = ({
                   </button>
                 </div>
               )}
+
+              {/* Proactive Heartbeat Config (Agent Toggle UI) */}
+              <div className="p-5 rounded-xl bg-zinc-950 border border-zinc-800 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Radio className="w-4 h-4 text-emerald-400" />
+                    <span className="text-sm font-semibold text-white">Enable Proactive Heartbeat Scheduler</span>
+                  </div>
+                  <button
+                    onClick={() => setHeartbeatEnabled(!heartbeatEnabled)}
+                    className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${
+                      heartbeatEnabled ? 'bg-emerald-500' : 'bg-zinc-700'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                        heartbeatEnabled ? 'translate-x-4' : 'translate-x-1'
+                      }`}
+                    />
+                  </button>
+                </div>
+                
+                {heartbeatEnabled && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-3 border-t border-zinc-800/80">
+                    <div className="space-y-2">
+                      <label className="text-xs font-semibold text-zinc-400">Heartbeat Rate (Minutes)</label>
+                      <input
+                        type="number"
+                        value={heartbeatRateMinutes}
+                        onChange={(e) => setHeartbeatRateMinutes(parseInt(e.target.value) || 15)}
+                        className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500"
+                        min={1}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-xs font-semibold text-zinc-400">Baseline Heartbeat Goal / Prompt</label>
+                      <input
+                        type="text"
+                        value={heartbeatGoal}
+                        onChange={(e) => setHeartbeatGoal(e.target.value)}
+                        className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500"
+                        placeholder="e.g. Check for open alerts and reply to emails"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
 
               {/* Summary Card */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

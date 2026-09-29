@@ -1,6 +1,6 @@
 export const dynamic = 'force-static';
 import { NextRequest, NextResponse } from 'next/server';
-import { handleTaskIntake } from '@/Backend/server';
+import { handleTaskIntake } from '@/Backend/legacy_ts_mocks/server';
 
 export async function POST(req: NextRequest) {
   try {

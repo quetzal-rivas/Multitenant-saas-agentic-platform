@@ -23,7 +23,7 @@ import {
   ChevronUp,
   Zap,
 } from 'lucide-react';
-import { LiveVoiceCall } from '@/Backend/twilio-conference-manager';
+import { LiveVoiceCall } from '@/Backend/legacy_ts_mocks/twilio-conference-manager';
 
 interface LiveVoiceConferenceSectionProps {
   onCallSelected?: (call: LiveVoiceCall) => void;

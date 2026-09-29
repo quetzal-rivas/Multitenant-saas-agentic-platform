@@ -16,11 +16,13 @@ import { LibraryView } from '@/components/LibraryView';
 import { AgentSessionStudio } from '@/components/AgentSessionStudio';
 import { AgentTeamBuilder } from '@/components/AgentTeamBuilder';
 import { TaskCalendarView } from '@/components/TaskCalendarView';
+import { SupervisorBoardView } from '@/components/SupervisorBoardView';
 import { Conversations } from '@/components/Conversations';
 import { SimulatorView } from '@/components/SimulatorView';
 import { PlatformMcpServerView } from '@/components/PlatformMcpServerView';
 import { GeminiTestModal } from '@/components/GeminiTestModal';
 import { CreateProfileModal } from '@/components/CreateProfileModal';
+import { AccountSettingsView } from '@/components/AccountSettingsView';
 import { INITIAL_PROFILES, INITIAL_SOURCES } from '@/lib/mock-data';
 import { ContextProfile, ContextSource } from '@/lib/types';
 
@@ -114,6 +116,14 @@ export default function DashboardPage() {
             <TaskCalendarView
               tenantId="00000000-0000-0000-0000-000000000001"
             />
+          )}
+
+          {activeTab === 'board' && (
+            <SupervisorBoardView />
+          )}
+
+          {activeTab === 'account' && (
+            <AccountSettingsView />
           )}
 
           {activeTab === 'conversations' && (

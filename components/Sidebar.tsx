@@ -19,6 +19,7 @@ import {
   Calendar,
   MessageSquare,
   Terminal,
+  UserCircle,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -110,6 +111,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </div>
               <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800/50">
                 BULLMQ
+              </span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('board')}
+              className={`w-full flex items-center justify-between px-3 py-2 rounded-md text-xs font-medium transition-all ${
+                activeTab === 'board'
+                  ? 'bg-zinc-800/90 text-white font-semibold border-l-2 border-emerald-500 pl-2.5'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40'
+              }`}
+            >
+              <div className="flex items-center gap-2.5">
+                <Layers className={`w-4 h-4 ${activeTab === 'board' ? 'text-amber-400' : 'text-zinc-400'}`} />
+                <span>Supervisor Board</span>
+              </div>
+              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-800/50">
+                SHARED
               </span>
             </button>
 
@@ -292,6 +310,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
             >
               <SlidersHorizontal className={`w-4 h-4 ${activeTab === 'settings' ? 'text-emerald-400' : 'text-zinc-400'}`} />
               <span>Compiler Policies</span>
+            </button>
+            
+            <button
+              onClick={() => setActiveTab('account')}
+              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-xs font-medium transition-all ${
+                activeTab === 'account'
+                  ? 'bg-zinc-800/90 text-white font-semibold border-l-2 border-emerald-500 pl-2.5'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40'
+              }`}
+            >
+              <UserCircle className={`w-4 h-4 ${activeTab === 'account' ? 'text-emerald-400' : 'text-zinc-400'}`} />
+              <span>Account & Billing</span>
             </button>
           </nav>
         </div>

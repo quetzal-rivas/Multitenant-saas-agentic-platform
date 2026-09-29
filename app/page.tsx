@@ -247,15 +247,15 @@ export default function LandingPage() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            {/* Developer Free Tier */}
+            {/* Tier 1 */}
             <div className="p-8 rounded-2xl bg-zinc-900/50 border border-zinc-800 flex flex-col hover:border-zinc-700 transition-all">
-              <h3 className="text-xl font-bold text-white mb-2">Developer Free</h3>
+              <h3 className="text-xl font-bold text-white mb-2">Tier 1</h3>
               <p className="text-zinc-400 text-sm mb-6">Ideal for testing and building custom agent teams.</p>
-              <div className="text-4xl font-extrabold text-white mb-6">$0 <span className="text-sm font-normal text-zinc-400">/mo</span></div>
+              <div className="text-4xl font-extrabold text-white mb-6">$250 <span className="text-sm font-normal text-zinc-400">/mo</span></div>
               <ul className="space-y-3 text-sm text-zinc-300 mb-8 flex-1 font-sans">
-                <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400" /> 1 Tenant Workspace</li>
+                <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400" /> Bring Your Own Key (BYOK)</li>
+                <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400" /> 1 Organization</li>
                 <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400" /> Agent Studio & Team Builder</li>
-                <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400" /> 100 Scheduled Deferred Tasks/mo</li>
                 <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400" /> Standard MCP Tool Connections</li>
               </ul>
               <Link href="/onboarding" className="w-full py-3 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-white font-medium text-center transition-colors">
@@ -263,17 +263,17 @@ export default function LandingPage() {
               </Link>
             </div>
 
-            {/* Growth SaaS Tier */}
+            {/* Tier 2 */}
             <div className="p-8 rounded-2xl bg-gradient-to-b from-emerald-950/40 to-zinc-900/80 border border-emerald-500/40 flex flex-col relative shadow-xl shadow-emerald-950/20">
               <div className="absolute -top-3 right-6 px-3 py-0.5 rounded-full bg-emerald-500 text-zinc-950 font-bold text-xs uppercase tracking-wider">
                 Popular
               </div>
-              <h3 className="text-xl font-bold text-white mb-2">Growth SaaS</h3>
-              <p className="text-zinc-400 text-sm mb-6">For growing teams needing automated voice calls & scheduling.</p>
-              <div className="text-4xl font-extrabold text-white mb-6">$49 <span className="text-sm font-normal text-zinc-400">/mo</span></div>
+              <h3 className="text-xl font-bold text-white mb-2">Tier 2</h3>
+              <p className="text-zinc-400 text-sm mb-6">For growing teams needing unlimited scale.</p>
+              <div className="text-4xl font-extrabold text-white mb-6">$500 <span className="text-sm font-normal text-zinc-400">/mo</span></div>
               <ul className="space-y-3 text-sm text-zinc-300 mb-8 flex-1 font-sans">
-                <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400" /> 5 Tenant Workspaces</li>
-                <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400" /> 10,000 Deferred Calendar Tasks/mo</li>
+                <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400" /> Bring Your Own Key (BYOK)</li>
+                <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400" /> Unlimited Organizations</li>
                 <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400" /> ElevenLabs Voice Calls & Twilio Lines</li>
                 <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400" /> Unlimited MCP Tool Hub Spokes</li>
               </ul>
@@ -286,12 +286,13 @@ export default function LandingPage() {
             <div className="p-8 rounded-2xl bg-zinc-900/50 border border-zinc-800 flex flex-col hover:border-zinc-700 transition-all">
               <h3 className="text-xl font-bold text-white mb-2">Enterprise</h3>
               <p className="text-zinc-400 text-sm mb-6">Dedicated SLA, custom MCP connectors & priority support.</p>
-              <div className="text-4xl font-extrabold text-white mb-6">Custom</div>
+              <div className="text-4xl font-extrabold text-white mb-2">$150 <span className="text-sm font-normal text-zinc-400">/mo</span></div>
+              <div className="text-sm text-amber-400/90 mb-4">+ $1500 Setup Fee</div>
               <ul className="space-y-3 text-sm text-zinc-300 mb-8 flex-1 font-sans">
-                <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400" /> Unlimited Tenant Workspaces</li>
-                <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400" /> Custom Stdio & SSE MCP Connectors</li>
-                <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400" /> 99.99% Guaranteed SLA</li>
+                <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400" /> We provide the API Keys</li>
+                <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400" /> Unlimited Organizations</li>
                 <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400" /> Dedicated Account Manager & Onboarding</li>
+                <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400" /> 99.99% Guaranteed SLA</li>
               </ul>
               <Link href="/onboarding" className="w-full py-3 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-white font-medium text-center transition-colors">
                 Contact Sales

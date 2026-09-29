@@ -1,6 +1,6 @@
 export const dynamic = 'force-static';
 import { NextRequest, NextResponse } from 'next/server';
-import { twilioConferenceManager } from '@/Backend/twilio-conference-manager';
+import { twilioConferenceManager } from '@/Backend/legacy_ts_mocks/twilio-conference-manager';
 
 export async function GET(req: NextRequest) {
   try {

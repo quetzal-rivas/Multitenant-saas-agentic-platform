@@ -1,9 +1,9 @@
 export const dynamic = 'force-static';
 import { NextRequest, NextResponse } from 'next/server';
-import { checkpointManagerStore, CheckpointRecord } from '@/Backend/checkpoint-manager';
-import { vaultManagerStore } from '@/Backend/vault-manager';
-import { teamBlueprintManager } from '@/Backend/team-blueprint-manager';
-import { McpProfileManager } from '@/Backend/profile-manager';
+import { checkpointManagerStore, CheckpointRecord } from '@/Backend/legacy_ts_mocks/checkpoint-manager';
+import { vaultManagerStore } from '@/Backend/legacy_ts_mocks/vault-manager';
+import { teamBlueprintManager } from '@/Backend/legacy_ts_mocks/team-blueprint-manager';
+import { McpProfileManager } from '@/Backend/legacy_ts_mocks/profile-manager';
 import { INITIAL_PROFILES } from '@/lib/mock-data';
 import { GoogleGenAI } from '@google/genai';
 

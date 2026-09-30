@@ -1,0 +1,16 @@
+# Documentation Index
+
+- **Platform Overview & Quickstart**: [`overview.md`](overview.md) (route: /docs?section=overview)
+- **Agent Session Studio (Single Agent)**: [`agent-studio.md`](agent-studio.md) (route: /docs?section=agent-studio)
+- **Team Builder (Multi-Agent Supervisor Graphs)**: [`team-builder.md`](team-builder.md) (route: /docs?section=team-builder)
+- **Persistent Threads & Audit Log**: [`conversations.md`](conversations.md) (route: /docs?section=conversations)
+- **ElevenLabs Voice & Twilio Telephony**: [`voice-agent.md`](voice-agent.md) (route: /docs?section=voice-agent)
+- **Task Calendar & BullMQ Deferred Queue**: [`task-calendar.md`](task-calendar.md) (route: /docs?section=task-calendar)
+- **Context Profiles & Token Budgeting**: [`context-profiles.md`](context-profiles.md) (route: /docs?section=context-profiles)
+- **Knowledge Base Ingestion & pgvector RAG**: [`knowledge-sources.md`](knowledge-sources.md) (route: /docs?section=knowledge-sources)
+- **MCP Hub & Tools Protocol (Hub-and-Spoke)**: [`mcp-hub.md`](mcp-hub.md) (route: /docs?section=mcp-hub)
+- **Skills Library Registry**: [`skills-library.md`](skills-library.md) (route: /docs?section=skills-library)
+- **Endpoints API & Live cURL Generator**: [`endpoints-api.md`](endpoints-api.md) (route: /docs?section=endpoints-api)
+- **Test Simulator & Time-Travel Sandbox**: [`test-simulator.md`](test-simulator.md) (route: /docs?section=test-simulator)
+- **Platform MCP Controller (Stdio/SSE)**: [`platform-mcp.md`](platform-mcp.md) (route: /docs?section=platform-mcp)
+- **API Keys & BYOK Security Vault**: [`security-vault.md`](security-vault.md) (route: /docs?section=security-vault)

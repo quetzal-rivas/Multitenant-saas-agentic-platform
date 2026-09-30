@@ -1,0 +1,241 @@
+Yes — I think I understand what you're asking. You’re wondering whether **Context Control is an open-ended “building blocks” platform**, where you can essentially create whatever AI automation you want, or whether you're constrained to the specific things the platform has designed.
+
+ From what I can verify, **it appears to be more of a framework/platform with predefined capabilities than a completely unrestricted AI development environment**. The site describes things like AI agents, agent teams, scheduled tasks, voice calls, and MCP connections, but I couldn't independently verify a full technical specification because the site isn't currently accessible to my web fetcher.
+
+(Error 404)
+
+ ### The important distinction
+
+ Think of it like this:
+
+ **More open-ended:**
+
+ > "Here are the building blocks. Build your own AI system."
+
+ versus
+
+ **More constrained:**
+
+ > "Here are 10 things our platform supports. Configure them in different ways."
+
+ Context Control seems to be **somewhere in between**.
+
+ The interesting part is the **MCP/tool connection capability**. MCP can let an agent interact with external tools and services, so you're not necessarily limited to a fixed set of workflows. If the platform lets you connect arbitrary MCP servers/tools, that substantially expands what you can build.
+
+ For example, conceptually you could have:
+
+```
+                    ┌── Gmail
+                    │
+AI Supervisor ──────┼── Google Calendar
+                    │
+                    ├── CRM
+                    │
+                    ├── Your own API
+                    │
+                    └── Custom database
+```
+
+ Then you could create your own agents around those capabilities.
+
+ ### But there are still layers of limitations
+
+ Even if the underlying AI agents are flexible, you're still dependent on what **Context Control itself exposes**:
+
+ - What kinds of agents can you create?
+- Can you write arbitrary agent logic, or only configure prompts?
+- Can agents execute arbitrary code?
+- Can you install/connect your own MCP servers?
+- Can an agent call an API you created yourself?
+- Can agents maintain persistent state/memory?
+- How are failures and retries handled?
+- Are there limits on execution frequency?
+- Are there limits on tokens, calls, voice minutes, etc.?
+- Can you self-host it?
+- Can you export what you've built and run it somewhere else?
+
+ Those answers determine whether it's genuinely a **general-purpose AI development platform** or primarily a **no/low-code automation product**.
+
+ ### And this is the part I'd investigate before committing
+
+ If your thought is:
+
+ > **"Could I use this as the foundation to build basically my own AI company/product, rather than just automate Gmail?"**
+
+ That's a much more interesting question.
+
+ I'd want to look specifically at **whether Context Control allows custom MCP servers, custom APIs, arbitrary code/tools, persistent databases/memory, webhooks, and programmatic access**. Those are the things that would tell us how "open" it really is.
+
+ If you want, I can dig into those technical aspects and give you a **"what you can actually build with Context Control" assessment**, including a few ambitious examples (AI employee, autonomous business system, customer-support agent, research agent, etc.) and where the platform would hit a wall.
+
+ I tried to go through the documentation itself, including the exact `/docs/` URL and searches for the individual documentation sections. The important issue is that **the site is currently returning a server-side error to my web reader**: the HTTP URL redirects to `https://www.contextcontrol.com.mx/docs/`, and that destination returns a 500/fetch failure.
+
+(Error 404)
+
+ So I don't want to repeat the mistake from my previous answer and pretend I've read pages that I currently can't access.
+
+ What I **can** do is give you a precise checklist of what we need to establish from the docs, because this is the distinction you're really interested in:
+
+ | Area | What we need to establish | Why it matters |
+| --- | --- | --- |
+| **Agent Session Studio** | How much of an agent can be customized? | Determines whether agents are programmable or just prompt configurations |
+| **Team Builder** | Can agents dynamically delegate, loop, branch, and communicate? | Determines how sophisticated your autonomous systems can become |
+| **MCP Hub** | Can you connect _any_ MCP server or only approved ones? | Potentially the biggest extensibility mechanism |
+| **Custom MCP** | Stdio/SSE/HTTP? Can you host the server yourself? | Determines whether you can create your own capabilities |
+| **Skills Library** | Can you create your own skills? | Determines whether the platform's capability set is extensible |
+| **Developer API** | What can the API create/control? | Determines whether you can build your own application around Context Control |
+| **Platform MCP Controller** | Can the AI itself manage agents/tasks/tools? | Potentially enables higher-level autonomous systems |
+| **Knowledge/RAG** | Can you bring arbitrary data sources and databases? | Determines how much custom knowledge your agents can use |
+| **Persistent state** | What can persist between executions? | Critical for long-running autonomous agents |
+| **Scheduler** | What can trigger an agent? | Determines whether you can create 24/7 autonomous processes |
+| **Security/permissions** | Can individual agents have restricted tools? | Extremely important if agents can take real-world actions |
+| **Voice/telephony** | Can calls be controlled programmatically? | Determines whether you can build actual voice-agent products |
+| **Sandbox/testing** | Can you test, replay and debug agents? | Critical for reliable production systems |
+| **Deployment** | Can you self-host/export, or is it SaaS-only? | Determines how dependent you are on Context Control |
+| **Limits** | Token, execution, tool, API, storage, concurrency limits | Determines where the platform actually hits its walls |
+
+### The question I'm trying to answer for you
+
+ There are really **three levels**:
+
+ **Level 1 — Automation platform**
+
+ > "Choose an agent → connect Gmail → give it a prompt → schedule it."
+
+ Useful, but relatively constrained.
+
+ **Level 2 — Agent development platform**
+
+ > "Create agents → create teams → give them arbitrary external tools → create custom MCP servers → build persistent workflows."
+
+ This is much closer to what you're imagining.
+
+ **Level 3 — AI infrastructure / operating layer**
+
+ > "I can create arbitrary software capabilities, expose them as tools, dynamically create agents, have agents create/modify other agents, maintain persistent state, interact with my databases/APIs, and build an entire application on top of it."
+
+ **This is the level I suspect you're trying to determine whether Context Control reaches.**
+
+ And MCP itself is important here: MCP is designed specifically as a standardized way for AI applications to connect to external tools and data sources. It can therefore make an agent platform much more extensible than a closed collection of integrations.  note（ノート）
+
+ ### I don't want to guess at the missing pieces
+
+ If you can **open `www.contextcontrol.com.mx/docs/` in your browser and either:**
+
+ - copy/paste the documentation index here, **or**
+- send me screenshots of the docs sidebar/pages,
+
+ I can go through **every section** and produce a proper architecture map:
+
+```
+                    CONTEXT CONTROL
+                          │
+             ┌────────────┴────────────┐
+             │                         │
+          AGENTS                    TOOLS
+             │                         │
+       ┌─────┴─────┐             ┌────┴────┐
+       │           │             │         │
+   Individual    Teams          MCP      APIs
+       │           │             │         │
+       └─────┬─────┘             └────┬────┘
+             │                         │
+             └──────────┬──────────────┘
+                        │
+                 YOUR APPLICATION
+                        │
+             ┌──────────┼──────────┐
+             ▼          ▼          ▼
+           Data       Actions    Users
+```
+
+ And I'll label each component **OPEN / CONFIGURABLE / LIMITED / NOT SUPPORTED**, including exactly what prevents you from going further.
+
+ That would answer your original question much more reliably than the marketing page.
+
+ Description
+
+Turn the documentation pages of this Next.js project into a routed skill (a short SKILL.md plus small topic files). Use when the user asks to create, generate, rebuild, or refresh a skill from the docs, or invokes /docs-to-skill.
+
+Docs to Skill
+
+Build a skill that lets an assistant answer questions about this project's documentation by loading only the pages a question needs, instead of the whole site.
+
+Inputs
+
+Ask the user only for what you cannot find yourself:
+
+Docs location. Look first in app/docs, pages/docs, content/docs, docs/, or any folder of .md / .mdx files or route files under a /docs path. If several candidates exist, ask which one is the documentation.
+Skill name. Default to <project-name>-docs in kebab-case (from package.json).
+Output folder. Default to .claude/skills/<skill-name>/. If it already exists, ask before overwriting.
+Steps
+1. Inventory the docs
+
+List every documentation page with its source file, its route (for example /docs/api/auth), its title, and its headings. If pages are React components (page.tsx) rather than markdown, read the rendered text content and code samples from the component, ignoring layout and styling code. Record any page you cannot read and report it at the end.
+
+2. Group into topics
+
+Group pages by what a user would ask about (getting started, authentication, endpoints, deployment, troubleshooting, and so on). Aim for one topic per file, roughly 50 to 300 lines each. Split a long page by its top-level headings; merge tiny related pages. Keep the original order inside each file.
+
+3. Convert to plain markdown
+
+For each topic file:
+
+Start with a title and a Source: line listing the original file path and route, so answers can point to the real page.
+Keep prose, tables, and code blocks exactly as written. Do not summarize, reword, or "improve" the content.
+Remove JSX imports, layout wrappers, and interactive components. Where a component carries meaning (a callout, a tabbed code sample), replace it with the equivalent plain markdown.
+Fix relative links so they point to other topic files or to the site route.
+Never copy secrets, tokens, or real environment values. Keep placeholder examples.
+4. Write the folder
+<skill-name>/
+  SKILL.md        # short router (see template below)
+  index.md        # every page: route, one-line summary, topic file
+  <topic>.md      # one file per topic, in subfolders if there are many
+
+If the docs are large (more than about 30 files), use subfolders that mirror the site sections.
+
+5. Write the generated SKILL.md
+
+Keep it under about 100 lines. Use this template:
+
+markdown
+---
+name: <skill-name>
+description: <One or two sentences on what the docs cover, plus concrete trigger phrases, e.g. "Use when the user asks about <Product> setup, API, authentication, deployment, or errors.">
+---
+
+# <Product> documentation
+
+Snapshot of the docs generated on <date> from <source path>. Live site: <base URL if known>.
+
+## How to use
+Read only the file that matches the question. Cite the `Source:` route when answering. If nothing matches, read `index.md`, then search this folder for keywords before saying the docs do not cover it.
+
+## Routing
+| Question is about | Read |
+|---|---|
+| <topic> | <topic>.md |
+...
+
+## Freshness
+This is a copy. If the answer could depend on recent changes, say the docs snapshot may be out of date and point to the live page.
+
+The description is what triggers the skill, so make it specific to this product and its topics.
+
+6. Optional sync script
+
+If the user wants to refresh the skill later, add scripts/sync-docs.mjs to the project that regenerates the topic files from the docs source and updates the date in the generated SKILL.md. Do not add it unless asked.
+
+7. Verify
+
+Before reporting done, check and fix:
+
+Every source page appears in index.md and in exactly one topic file.
+Every row in the routing table points to a file that exists.
+No topic file has broken relative links.
+The generated SKILL.md is short and its description names real topics.
+Test with three sample questions taken from the docs: confirm the routing table sends each one to the right file and that the file contains the answer.
+Rules
+Content comes only from the documentation. Do not add facts, examples, or explanations of your own.
+Do not modify the original docs or any application code.
+Report at the end: files created, pages skipped or unreadable, and anything ambiguous you decided (for example how you grouped topics).

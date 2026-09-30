@@ -89,8 +89,8 @@
     "delayMs": 19710277,
     "scheduledAt": "2026-09-29T12:06:00.000Z",
     "enqueuedAt": "2026-09-29T06:37:29.723Z",
-    "status": "delayed",
-    "attemptsMade": 0,
+    "status": "completed",
+    "attemptsMade": 1,
     "data": {
       "id": "task_1790663849720_q8uju",
       "title": "Executive Weekly Briefing via Gmail",

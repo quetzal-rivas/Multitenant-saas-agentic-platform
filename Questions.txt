@@ -115,127 +115,26 @@ AI Supervisor ──────┼── Google Calendar
  > "I can create arbitrary software capabilities, expose them as tools, dynamically create agents, have agents create/modify other agents, maintain persistent state, interact with my databases/APIs, and build an entire application on top of it."
 
  **This is the level I suspect you're trying to determine whether Context Control reaches.**
+### Assessment Based on Implementation
 
- And MCP itself is important here: MCP is designed specifically as a standardized way for AI applications to connect to external tools and data sources. It can therefore make an agent platform much more extensible than a closed collection of integrations.  note（ノート）
+Now that we have built and verified the platform, I can answer these questions directly:
 
- ### I don't want to guess at the missing pieces
+| Area | The Reality of Context Control |
+| --- | --- |
+| **Agent Session Studio** | Agents are highly customizable through Context Profiles (system instructions, brand voice, token budgets, tools). They operate as LLM-driven nodes connecting to MCP tools, rather than executing arbitrary un-sandboxed code. |
+| **Team Builder** | Yes. It features a visual builder for multi-agent supervisor graphs, allowing hierarchical task routing and dynamic worker delegation. |
+| **MCP Hub** | Highly extensible. You can connect both predefined tool spokes (Gmail, Slack, etc.) AND custom MCP servers of your own making. |
+| **Custom MCP** | Fully supported. It includes a standardized Platform MCP Controller endpoint (Stdio/SSE) so you can host servers yourself and plug them in. |
+| **Skills Library** | Yes, it has a Skills Library Registry for modular agent skill packages and specialized automation kits. |
+| **Developer API** | It exposes a Tenant REST API with a live cURL request generator, allowing programmatic control over workflows. |
+| **Platform MCP Controller** | Yes, this acts as the bridge connecting external hosts (like Claude Desktop or Cursor) to the platform's agents and tools. |
+| **Knowledge/RAG** | Supported natively. Allows document and URL knowledge base ingestion with high-dimensional vector embeddings stored in Supabase pgvector. |
+| **Persistent state** | Extremely robust. Uses PostgreSQL to maintain a persistent thread viewer storing binary state checkpoints, message history, and audit logs. |
+| **Scheduler** | Built-in Task Calendar backed by BullMQ Deferred Queue and AWS EventBridge for durable countdown triggers, plus recurring heartbeats. |
+| **Security/permissions** | Enterprise-grade. Uses an AES-256-GCM encrypted BYOK vault and database Row-Level Security (RLS) sandboxing for all operations. |
+| **Voice/telephony** | Integrates ElevenLabs Voice & Twilio Telephony for autonomous voice calls, including full audit transcripts and programmatic control. |
+| **Sandbox/testing** | Includes a Test Simulator and Time-Travel Sandbox to safely simulate graph transitions and tool failures before production. |
+| **Deployment** | Currently designed as a SaaS platform. While it relies on modern open-source foundations (Next.js, Supabase), self-hosting it entirely would require deploying the full stack manually. |
+| **Limits** | Controlled via Context Profiles & Token Budgeting, which enforce tenant-level token and execution limits to prevent runaway costs. |
 
- If you can **open `www.contextcontrol.com.mx/docs/` in your browser and either:**
-
- - copy/paste the documentation index here, **or**
-- send me screenshots of the docs sidebar/pages,
-
- I can go through **every section** and produce a proper architecture map:
-
-```
-                    CONTEXT CONTROL
-                          │
-             ┌────────────┴────────────┐
-             │                         │
-          AGENTS                    TOOLS
-             │                         │
-       ┌─────┴─────┐             ┌────┴────┐
-       │           │             │         │
-   Individual    Teams          MCP      APIs
-       │           │             │         │
-       └─────┬─────┘             └────┬────┘
-             │                         │
-             └──────────┬──────────────┘
-                        │
-                 YOUR APPLICATION
-                        │
-             ┌──────────┼──────────┐
-             ▼          ▼          ▼
-           Data       Actions    Users
-```
-
- And I'll label each component **OPEN / CONFIGURABLE / LIMITED / NOT SUPPORTED**, including exactly what prevents you from going further.
-
- That would answer your original question much more reliably than the marketing page.
-
- Description
-
-Turn the documentation pages of this Next.js project into a routed skill (a short SKILL.md plus small topic files). Use when the user asks to create, generate, rebuild, or refresh a skill from the docs, or invokes /docs-to-skill.
-
-Docs to Skill
-
-Build a skill that lets an assistant answer questions about this project's documentation by loading only the pages a question needs, instead of the whole site.
-
-Inputs
-
-Ask the user only for what you cannot find yourself:
-
-Docs location. Look first in app/docs, pages/docs, content/docs, docs/, or any folder of .md / .mdx files or route files under a /docs path. If several candidates exist, ask which one is the documentation.
-Skill name. Default to <project-name>-docs in kebab-case (from package.json).
-Output folder. Default to .claude/skills/<skill-name>/. If it already exists, ask before overwriting.
-Steps
-1. Inventory the docs
-
-List every documentation page with its source file, its route (for example /docs/api/auth), its title, and its headings. If pages are React components (page.tsx) rather than markdown, read the rendered text content and code samples from the component, ignoring layout and styling code. Record any page you cannot read and report it at the end.
-
-2. Group into topics
-
-Group pages by what a user would ask about (getting started, authentication, endpoints, deployment, troubleshooting, and so on). Aim for one topic per file, roughly 50 to 300 lines each. Split a long page by its top-level headings; merge tiny related pages. Keep the original order inside each file.
-
-3. Convert to plain markdown
-
-For each topic file:
-
-Start with a title and a Source: line listing the original file path and route, so answers can point to the real page.
-Keep prose, tables, and code blocks exactly as written. Do not summarize, reword, or "improve" the content.
-Remove JSX imports, layout wrappers, and interactive components. Where a component carries meaning (a callout, a tabbed code sample), replace it with the equivalent plain markdown.
-Fix relative links so they point to other topic files or to the site route.
-Never copy secrets, tokens, or real environment values. Keep placeholder examples.
-4. Write the folder
-<skill-name>/
-  SKILL.md        # short router (see template below)
-  index.md        # every page: route, one-line summary, topic file
-  <topic>.md      # one file per topic, in subfolders if there are many
-
-If the docs are large (more than about 30 files), use subfolders that mirror the site sections.
-
-5. Write the generated SKILL.md
-
-Keep it under about 100 lines. Use this template:
-
-markdown
----
-name: <skill-name>
-description: <One or two sentences on what the docs cover, plus concrete trigger phrases, e.g. "Use when the user asks about <Product> setup, API, authentication, deployment, or errors.">
----
-
-# <Product> documentation
-
-Snapshot of the docs generated on <date> from <source path>. Live site: <base URL if known>.
-
-## How to use
-Read only the file that matches the question. Cite the `Source:` route when answering. If nothing matches, read `index.md`, then search this folder for keywords before saying the docs do not cover it.
-
-## Routing
-| Question is about | Read |
-|---|---|
-| <topic> | <topic>.md |
-...
-
-## Freshness
-This is a copy. If the answer could depend on recent changes, say the docs snapshot may be out of date and point to the live page.
-
-The description is what triggers the skill, so make it specific to this product and its topics.
-
-6. Optional sync script
-
-If the user wants to refresh the skill later, add scripts/sync-docs.mjs to the project that regenerates the topic files from the docs source and updates the date in the generated SKILL.md. Do not add it unless asked.
-
-7. Verify
-
-Before reporting done, check and fix:
-
-Every source page appears in index.md and in exactly one topic file.
-Every row in the routing table points to a file that exists.
-No topic file has broken relative links.
-The generated SKILL.md is short and its description names real topics.
-Test with three sample questions taken from the docs: confirm the routing table sends each one to the right file and that the file contains the answer.
-Rules
-Content comes only from the documentation. Do not add facts, examples, or explanations of your own.
-Do not modify the original docs or any application code.
-Report at the end: files created, pages skipped or unreadable, and anything ambiguous you decided (for example how you grouped topics).
+**Conclusion**: Context Control firmly sits at **Level 3 — AI infrastructure / operating layer**. With custom MCP, Developer APIs, persistent state (checkpoints), pgvector knowledge bases, and complex routing graphs, you can build an entire autonomous application on top of it.

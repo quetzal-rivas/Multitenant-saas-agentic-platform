@@ -16,6 +16,10 @@ export default function OnboardingPage() {
     { name: 'GEMINI_API_TOKEN', value: '' }
   ]);
   const [selectedTwilioNumber, setSelectedTwilioNumber] = useState<string>('+1 (555) 839-2041');
+  const [showCustomPorting, setShowCustomPorting] = useState<boolean>(false);
+  const [customTwilioNumber, setCustomTwilioNumber] = useState<string>('');
+  const [customTwilioSid, setCustomTwilioSid] = useState<string>('');
+  const [customTwilioToken, setCustomTwilioToken] = useState<string>('');
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -36,7 +40,9 @@ export default function OnboardingPage() {
         body: JSON.stringify({
           orgName,
           apiKeys: apiKeys.filter(k => k.value.trim() !== ''),
-          twilioNumber: selectedTwilioNumber,
+          twilioNumber: showCustomPorting ? customTwilioNumber : selectedTwilioNumber,
+          twilioSid: showCustomPorting ? customTwilioSid : undefined,
+          twilioToken: showCustomPorting ? customTwilioToken : undefined,
         }),
       });
 
@@ -236,25 +242,77 @@ export default function OnboardingPage() {
               </p>
             </div>
 
-            <div>
-              <label className="block text-xs font-medium text-zinc-300 mb-2">Available System Twilio Phone Lines</label>
-              <select
-                value={selectedTwilioNumber}
-                onChange={(e) => setSelectedTwilioNumber(e.target.value)}
-                className="w-full px-4 py-3 rounded-xl bg-zinc-950 border border-zinc-800 text-white text-sm font-mono focus:outline-none focus:border-emerald-500"
-              >
-                {AVAILABLE_TWILIO_NUMBERS.map((item) => (
-                  <option key={item.number} value={item.number}>
-                    {item.number} — {item.label}
-                  </option>
-                ))}
-              </select>
-            </div>
+            {!showCustomPorting ? (
+              <>
+                <div>
+                  <label className="block text-xs font-medium text-zinc-300 mb-2">Available System Twilio Phone Lines</label>
+                  <select
+                    value={selectedTwilioNumber}
+                    onChange={(e) => setSelectedTwilioNumber(e.target.value)}
+                    className="w-full px-4 py-3 rounded-xl bg-zinc-950 border border-zinc-800 text-white text-sm font-mono focus:outline-none focus:border-emerald-500"
+                  >
+                    {AVAILABLE_TWILIO_NUMBERS.map((item) => (
+                      <option key={item.number} value={item.number}>
+                        {item.number} — {item.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <button
+                  onClick={() => setShowCustomPorting(true)}
+                  className="text-xs text-emerald-400 hover:text-emerald-300 font-mono flex items-center gap-1 mt-2 transition-colors"
+                >
+                  + Port custom Number
+                </button>
+              </>
+            ) : (
+              <div className="space-y-4 p-4 rounded-xl bg-zinc-900/50 border border-zinc-800">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-sm font-semibold text-white">Custom Twilio Credentials</h3>
+                  <button
+                    onClick={() => setShowCustomPorting(false)}
+                    className="text-xs text-zinc-400 hover:text-white transition-colors"
+                  >
+                    Use System Number
+                  </button>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-1">Phone Number</label>
+                  <input
+                    type="text"
+                    value={customTwilioNumber}
+                    onChange={(e) => setCustomTwilioNumber(e.target.value)}
+                    placeholder="+1 (555) 000-0000"
+                    className="w-full px-3 py-2 rounded-lg bg-zinc-950 border border-zinc-700 text-white text-xs font-mono focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-1">Twilio Account SID</label>
+                  <input
+                    type="text"
+                    value={customTwilioSid}
+                    onChange={(e) => setCustomTwilioSid(e.target.value)}
+                    placeholder="AC..."
+                    className="w-full px-3 py-2 rounded-lg bg-zinc-950 border border-zinc-700 text-white text-xs font-mono focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-1">Twilio Auth Token</label>
+                  <input
+                    type="password"
+                    value={customTwilioToken}
+                    onChange={(e) => setCustomTwilioToken(e.target.value)}
+                    placeholder="Secret token"
+                    className="w-full px-3 py-2 rounded-lg bg-zinc-950 border border-zinc-700 text-white text-xs font-mono focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+              </div>
+            )}
 
             <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-xs text-emerald-300 space-y-1 font-mono">
               <div className="font-bold flex items-center gap-1.5"><Sparkles className="w-4 h-4" /> Workspace Provisioning Ready:</div>
               <div>• Tenant: {orgName}</div>
-              <div>• Telephony: {selectedTwilioNumber}</div>
+              <div>• Telephony: {showCustomPorting ? (customTwilioNumber || 'Pending Configuration') : selectedTwilioNumber}</div>
               <div>• PostgresSaver RLS Boundary: Enabled</div>
             </div>
 

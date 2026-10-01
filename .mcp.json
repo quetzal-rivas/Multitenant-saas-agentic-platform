@@ -1,14 +1,14 @@
 {
   "mcpServers": {
     "platform-control": {
-      "url": "http://localhost:3000/api/mcp/platform?tenant_id=tenant_enterprise_corp",
+      "url": "http://localhost:3000/api/mcp/platform/?tenant_id=tenant_enterprise_corp",
       "headers": {
         "x-tenant-id": "tenant_enterprise_corp",
         "x-caller-agent": "workspace-agent"
       }
     },
     "platform-control-aws": {
-      "url": "https://d1ct23sivfa3uv.amplifyapp.com/api/mcp/platform?tenant_id=tenant_enterprise_corp",
+      "url": "https://www.contextcontrol.com.mx/api/mcp/platform/?tenant_id=tenant_enterprise_corp",
       "headers": {
         "x-tenant-id": "tenant_enterprise_corp",
         "x-caller-agent": "workspace-agent"

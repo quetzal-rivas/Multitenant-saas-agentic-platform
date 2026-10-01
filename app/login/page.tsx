@@ -10,6 +10,7 @@ export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [username, setUsername] = useState('');
   const [isSignUp, setIsSignUp] = useState(false);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -46,6 +47,7 @@ export default function LoginPage() {
           email,
           password,
           options: {
+            data: { full_name: username },
             emailRedirectTo: `${window.location.origin}/onboarding`,
           },
         });
@@ -146,6 +148,22 @@ export default function LoginPage() {
 
         {/* Email Auth Form */}
         <form onSubmit={handleEmailAuth} className="space-y-4">
+          {isSignUp && (
+            <div>
+              <label className="block text-xs font-medium text-zinc-400 mb-1.5">Full Name</label>
+              <div className="relative">
+                <input
+                  type="text"
+                  required
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  placeholder="e.g. Armando Rodriguez"
+                  className="w-full px-4 py-2.5 rounded-xl bg-zinc-950 border border-zinc-800 text-white text-sm focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                />
+              </div>
+            </div>
+          )}
+
           <div>
             <label className="block text-xs font-medium text-zinc-400 mb-1.5">Work Email Address</label>
             <div className="relative">

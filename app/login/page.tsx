@@ -9,6 +9,8 @@ import { createClient } from '@/utils/supabase/client';
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [isSignUp, setIsSignUp] = useState(false);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const supabase = createClient();
@@ -33,25 +35,34 @@ export default function LoginPage() {
     }
   };
 
-  const handleMagicLinkLogin = async (e: React.FormEvent) => {
+  const handleEmailAuth = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email) return;
+    if (!email || !password) return;
     setLoading(true);
     setMessage(null);
     try {
-      const { error } = await supabase.auth.signInWithOtp({
-        email,
-        options: {
-          emailRedirectTo: `${window.location.origin}/onboarding`,
-        },
-      });
-      if (error) {
-        setMessage(`Magic Link Error: ${error.message}`);
+      if (isSignUp) {
+        const { error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            emailRedirectTo: `${window.location.origin}/onboarding`,
+          },
+        });
+        if (error) throw error;
+        setMessage('✅ Account created! You can now log in.');
+        setIsSignUp(false);
       } else {
-        setMessage('✅ Magic login link sent! Please check your email inbox.');
+        const { error } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
+        if (error) throw error;
+        // Successful login, router should redirect or user clicks "Go to Dashboard"
+        router.push('/dashboard');
       }
     } catch (err: any) {
-      setMessage(`Auth Exception: ${err?.message || 'Unknown error'}`);
+      setMessage(`Auth Error: ${err?.message || 'Unknown error'}`);
     } finally {
       setLoading(false);
     }
@@ -129,12 +140,12 @@ export default function LoginPage() {
             <div className="w-full border-t border-zinc-800"></div>
           </div>
           <span className="relative px-3 bg-[#090b10] text-xs text-zinc-500 uppercase tracking-wider font-mono">
-            or passwordless email
+            or email & password
           </span>
         </div>
 
-        {/* Email Magic Link Form */}
-        <form onSubmit={handleMagicLinkLogin} className="space-y-4">
+        {/* Email Auth Form */}
+        <form onSubmit={handleEmailAuth} className="space-y-4">
           <div>
             <label className="block text-xs font-medium text-zinc-400 mb-1.5">Work Email Address</label>
             <div className="relative">
@@ -150,14 +161,37 @@ export default function LoginPage() {
             </div>
           </div>
 
+          <div>
+            <label className="block text-xs font-medium text-zinc-400 mb-1.5">Password</label>
+            <div className="relative">
+              <input
+                type="password"
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••"
+                className="w-full px-4 py-2.5 rounded-xl bg-zinc-950 border border-zinc-800 text-white text-sm focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+              />
+            </div>
+          </div>
+
           <button
             type="submit"
             disabled={loading}
             className="w-full py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-semibold text-sm transition-all shadow-lg shadow-emerald-500/20 flex items-center justify-center gap-2"
           >
-            Send Magic Login Link <ArrowRight className="w-4 h-4" />
+            {isSignUp ? 'Create Account' : 'Sign In'} <ArrowRight className="w-4 h-4" />
           </button>
         </form>
+
+        <div className="mt-4 text-center">
+          <button
+            onClick={() => setIsSignUp(!isSignUp)}
+            className="text-xs text-zinc-400 hover:text-white transition-colors"
+          >
+            {isSignUp ? 'Already have an account? Sign In' : 'Need an account? Sign Up'}
+          </button>
+        </div>
 
 
       </div>

@@ -14,3 +14,5 @@
 - **Test Simulator & Time-Travel Sandbox**: [`test-simulator.md`](test-simulator.md) (route: /docs?section=test-simulator)
 - **Platform MCP Controller (Stdio/SSE)**: [`platform-mcp.md`](platform-mcp.md) (route: /docs?section=platform-mcp)
 - **API Keys & BYOK Security Vault**: [`security-vault.md`](security-vault.md) (route: /docs?section=security-vault)
+- **Features**: [`docfunctionstudio.md`](docfunctionstudio.md) (route: /docs?section=docfunctionstudio)
+- **Key Capabilities**: [`docsupervisorboard.md`](docsupervisorboard.md) (route: /docs?section=docsupervisorboard)

@@ -27,6 +27,8 @@ Read only the file that matches the question. Cite the `Source:` route when answ
 | Test Simulator & Time-Travel Sandbox | test-simulator.md |
 | Platform MCP Controller (Stdio/SSE) | platform-mcp.md |
 | API Keys & BYOK Security Vault | security-vault.md |
+| Features | docfunctionstudio.md |
+| Key Capabilities | docsupervisorboard.md |
 
 ## Freshness
 This is a copy. If the answer could depend on recent changes, say the docs snapshot may be out of date and point to the live page.

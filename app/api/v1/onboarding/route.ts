@@ -1,12 +1,18 @@
-export const dynamic = 'force-static';
+export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
-import { supabase } from '@/Backend/legacy_ts_mocks/supabase';
-import { vaultManagerStore } from '@/Backend/legacy_ts_mocks/vault-manager';
+import { createClient } from '@/utils/supabase/server';
 
 export async function POST(req: NextRequest) {
   try {
+    const supabase = await createClient();
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     const body = await req.json();
-    const { orgName, openaiKey, anthropicKey, twilioNumber } = body;
+    const { orgName, apiKeys, twilioNumber } = body;
 
     if (!orgName || !orgName.trim()) {
       return NextResponse.json({ error: 'Organization name is required' }, { status: 400 });
@@ -14,47 +20,36 @@ export async function POST(req: NextRequest) {
 
     const slug = orgName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || `tenant-${Date.now()}`;
 
-    // 1. Upsert tenant in Supabase public.tenants table
-    const { data: tenant, error: tenantErr } = await supabase
-      .from('tenants')
-      .upsert({ slug, name: orgName, tier: 'enterprise' }, { onConflict: 'slug' })
+    // 1. Insert organization
+    const { data: organization, error: orgError } = await supabase
+      .from('organizations')
+      .insert({ slug, name: orgName })
       .select('id, slug, name')
       .single();
 
-    const tenantId = tenant?.id || '00000000-0000-0000-0000-000000000001';
-
-    // 2. Register BYOK credentials into Vault
-    if (openaiKey) {
-      vaultManagerStore.connectSpoke(
-        tenantId,
-        'google_workspace',
-        'OpenAI API Provider (BYOK)',
-        `key_fingerprint_${openaiKey.slice(0, 8)}`,
-        ['llm.generate']
-      );
+    if (orgError) {
+      return NextResponse.json({ error: `Failed to create organization: ${orgError.message}` }, { status: 500 });
     }
 
-    if (anthropicKey) {
-      vaultManagerStore.connectSpoke(
-        tenantId,
-        'google_workspace',
-        'Anthropic Claude Provider (BYOK)',
-        `key_fingerprint_${anthropicKey.slice(0, 8)}`,
-        ['llm.generate']
-      );
+    const tenantId = organization.id;
+
+    // 2. Insert organization member
+    const { error: memberError } = await supabase
+      .from('organization_members')
+      .insert({
+        organization_id: tenantId,
+        user_id: user.id,
+        role: 'owner'
+      });
+
+    if (memberError) {
+      // Rollback org would be ideal here if in a real transaction
+      return NextResponse.json({ error: `Failed to assign organization owner: ${memberError.message}` }, { status: 500 });
     }
 
-    // 3. Register Twilio phone line for tenant
-    if (twilioNumber) {
-      vaultManagerStore.connectSpoke(
-        tenantId,
-        'google_workspace',
-        `Twilio Telephony Spoke (${twilioNumber})`,
-        twilioNumber,
-        ['voice.call']
-      );
-    }
-
+    // 3. (Mocked for now) Register BYOK credentials into a Vault or similar.
+    // Real implementation would use supabase-vault or encrypted column.
+    
     return NextResponse.json({
       success: true,
       message: `Organization '${orgName}' successfully onboarded and workspace provisioned.`,

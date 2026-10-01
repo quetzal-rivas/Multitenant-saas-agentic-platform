@@ -1,5 +1,6 @@
 import React from 'react';
 import Link from 'next/link';
+import { createClient } from '@/utils/supabase/server';
 import {
   Bot,
   ShieldCheck,
@@ -19,7 +20,10 @@ import {
   Volume2,
 } from 'lucide-react';
 
-export default function LandingPage() {
+export default async function LandingPage() {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+
   return (
     <div className="min-h-screen bg-[#07090e] text-zinc-100 font-sans selection:bg-emerald-900 selection:text-emerald-200">
       {/* Top Marketing Navigation */}
@@ -47,18 +51,29 @@ export default function LandingPage() {
           </nav>
 
           <div className="flex items-center gap-4">
-            <Link
-              href="/login"
-              className="text-sm font-medium text-zinc-300 hover:text-white transition-colors px-3 py-2"
-            >
-              Sign In
-            </Link>
-            <Link
-              href="/onboarding"
-              className="text-sm font-medium bg-emerald-500 hover:bg-emerald-400 text-zinc-950 px-4 py-2 rounded-lg transition-all shadow-lg shadow-emerald-500/20 flex items-center gap-2 font-semibold"
-            >
-              Get Started Free <ArrowRight className="w-4 h-4" />
-            </Link>
+            {user ? (
+              <Link
+                href="/dashboard"
+                className="text-sm font-medium bg-emerald-500 hover:bg-emerald-400 text-zinc-950 px-4 py-2 rounded-lg transition-all shadow-lg shadow-emerald-500/20 flex items-center gap-2 font-semibold"
+              >
+                Go to Dashboard <ArrowRight className="w-4 h-4" />
+              </Link>
+            ) : (
+              <>
+                <Link
+                  href="/login"
+                  className="text-sm font-medium text-zinc-300 hover:text-white transition-colors px-3 py-2"
+                >
+                  Sign In
+                </Link>
+                <Link
+                  href="/onboarding"
+                  className="text-sm font-medium bg-emerald-500 hover:bg-emerald-400 text-zinc-950 px-4 py-2 rounded-lg transition-all shadow-lg shadow-emerald-500/20 flex items-center gap-2 font-semibold"
+                >
+                  Get Started Free <ArrowRight className="w-4 h-4" />
+                </Link>
+              </>
+            )}
           </div>
         </div>
       </header>
@@ -81,18 +96,29 @@ export default function LandingPage() {
           </p>
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-            <Link
-              href="/onboarding"
-              className="w-full sm:w-auto px-8 py-3.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-semibold text-base transition-all shadow-xl shadow-emerald-500/25 flex items-center justify-center gap-2"
-            >
-              Create Workspace Free <ArrowRight className="w-5 h-5" />
-            </Link>
-            <Link
-              href="/login"
-              className="w-full sm:w-auto px-8 py-3.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-200 border border-zinc-800 font-semibold text-base transition-all flex items-center justify-center gap-2"
-            >
-              Login to Dashboard
-            </Link>
+            {user ? (
+              <Link
+                href="/dashboard"
+                className="w-full sm:w-auto px-8 py-3.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-semibold text-base transition-all shadow-xl shadow-emerald-500/25 flex items-center justify-center gap-2"
+              >
+                Enter Workspace <ArrowRight className="w-5 h-5" />
+              </Link>
+            ) : (
+              <>
+                <Link
+                  href="/onboarding"
+                  className="w-full sm:w-auto px-8 py-3.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-semibold text-base transition-all shadow-xl shadow-emerald-500/25 flex items-center justify-center gap-2"
+                >
+                  Create Workspace Free <ArrowRight className="w-5 h-5" />
+                </Link>
+                <Link
+                  href="/login"
+                  className="w-full sm:w-auto px-8 py-3.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-200 border border-zinc-800 font-semibold text-base transition-all flex items-center justify-center gap-2"
+                >
+                  Login to Dashboard
+                </Link>
+              </>
+            )}
           </div>
         </div>
 

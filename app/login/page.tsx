@@ -4,13 +4,14 @@ import React, { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Bot, Github, Mail, ArrowRight, ShieldCheck, CheckCircle2 } from 'lucide-react';
-import { supabase } from '@/Backend/legacy_ts_mocks/supabase';
+import { createClient } from '@/utils/supabase/client';
 
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const supabase = createClient();
 
   const handleOAuthLogin = async (provider: 'github' | 'google') => {
     setLoading(true);
@@ -56,10 +57,7 @@ export default function LoginPage() {
     }
   };
 
-  // Demo direct login shortcut
-  const handleDemoBypass = () => {
-    router.push('/onboarding');
-  };
+
 
   return (
     <div className="min-h-screen bg-[#07090e] text-zinc-100 font-sans flex flex-col justify-center items-center px-4 selection:bg-emerald-900 selection:text-emerald-200">
@@ -161,15 +159,7 @@ export default function LoginPage() {
           </button>
         </form>
 
-        {/* Demo Fast-Track Bypass */}
-        <div className="mt-6 pt-6 border-t border-zinc-800/80 text-center">
-          <button
-            onClick={handleDemoBypass}
-            className="text-xs text-emerald-400 hover:text-emerald-300 font-mono underline underline-offset-4"
-          >
-            ⚡ Fast-Track Demo: Continue to Onboarding Wizard ➔
-          </button>
-        </div>
+
       </div>
 
       <p className="mt-8 text-xs text-zinc-500 text-center flex items-center gap-1.5">

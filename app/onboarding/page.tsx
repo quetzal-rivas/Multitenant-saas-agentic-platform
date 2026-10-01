@@ -58,11 +58,7 @@ export default function OnboardingPage() {
         router.push('/dashboard');
       }
     } catch (err: any) {
-      // Fallback redirect to dashboard
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('ctx_onboarded', 'true');
-      }
-      router.push('/dashboard');
+      setErrorMsg(err?.message || 'Network error occurred during onboarding');
     } finally {
       setSubmitting(false);
     }

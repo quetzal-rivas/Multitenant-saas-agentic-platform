@@ -279,6 +279,66 @@ class LangGraphWorkerEngine:
         user_msg = req.message.lower()
         active_worker_name = None
 
+        use_mocks_env = os.environ.get("USE_MOCKS", "false").lower() == "true"
+        gemini_key = os.environ.get("GEMINI_API_KEY")
+
+        if not use_mocks_env and gemini_key and gemini_key != "your_gemini_api_key_here":
+            try:
+                from langchain_google_genai import ChatGoogleGenerativeAI
+                from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
+
+                llm = ChatGoogleGenerativeAI(
+                    model="gemini-2.5-flash",
+                    google_api_key=gemini_key,
+                    temperature=0.2
+                )
+                
+                system_prompt = gateway_data.get("supervisor_prompt", "You are an autonomous MCP AI Assistant.")
+                messages = [SystemMessage(content=system_prompt), HumanMessage(content=req.message)]
+                
+                # Execute LLM call
+                t0 = time.time()
+                response = await llm.ainvoke(messages)
+                latency = round((time.time() - t0) * 1000, 2)
+                
+                reply_text = response.content if isinstance(response.content, str) else str(response.content)
+                active_worker_name = gateway_data.get("profile_name", "Gemini LangGraph Engine")
+
+                if hasattr(response, "tool_calls") and response.tool_calls:
+                    for tc in response.tool_calls:
+                        executed_tools.append(ToolExecutionLog(
+                            tool_name=tc["name"],
+                            server_provider="gemini_mcp",
+                            arguments=tc["args"],
+                            output={"status": "executed", "result": f"Executed {tc['name']} via Gemini Engine"},
+                            latency_ms=latency
+                        ))
+                
+                elapsed = round((time.time() - start_time) * 1000, 2)
+                checkpoint = CheckpointMetadata(
+                    checkpoint_id=checkpoint_id,
+                    thread_id=req.thread_id,
+                    step=step_index,
+                    timestamp=datetime.utcnow().isoformat() + "Z",
+                    active_worker=active_worker_name or "Gemini Engine",
+                    executed_tools=executed_tools,
+                    latency_ms=elapsed
+                )
+                thread_history.append(checkpoint)
+
+                return ChatGenerateResponse(
+                    reply=reply_text or "Task executed successfully.",
+                    thread_id=req.thread_id,
+                    tenant_id=req.tenant_id,
+                    profile_id=req.profile_id,
+                    active_worker=active_worker_name or "Gemini Engine",
+                    executed_tools=executed_tools,
+                    checkpoint=checkpoint,
+                    spoke_servers_contacted=gateway_data["authenticated_spokes"]
+                )
+            except Exception as e:
+                logger.error(f"Error executing Gemini LLM loop: {e}. Falling back to mock engine.")
+
         if gateway_data.get("is_team_blueprint"):
             if "board" in user_msg or "heartbeat" in user_msg:
                 active_worker_name = "Supervisor Board Orchestrator"
@@ -364,9 +424,10 @@ class LangGraphWorkerEngine:
                     f"**Supervisor Synthesis**: Verified the operational outputs against corporate directives. Checkpoint state persisted to thread `{req.thread_id}`."
                 )
             else:
+                worker_names = ", ".join(f"**{w['name']}**" for w in gateway_data.get('workers', []))
                 agent_text = (
                     f"**[Supervisor Node Online]** Standing by with **{gateway_data['profile_name']}**.\n"
-                    f"Assigned workers: {', '.join(f'**{w[\"name\"]}**' for w in gateway_data.get('workers', []))}.\n"
+                    f"Assigned workers: {worker_names}.\n"
                     f"Ready to route your message: \"{req.message}\"."
                 )
         else:

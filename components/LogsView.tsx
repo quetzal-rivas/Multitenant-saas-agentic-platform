@@ -1,7 +1,8 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { RequestLog, ExecutionStep } from '@/lib/types';
+import { getLogs } from '@/lib/data-service';
 import { INITIAL_LOGS } from '@/lib/mock-data';
 import {
   ScrollText,
@@ -43,6 +44,18 @@ export const LogsView: React.FC = () => {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [expandedStepId, setExpandedStepId] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+
+  useEffect(() => {
+    async function loadLogs() {
+      const data = await getLogs();
+      if (data && data.length > 0) {
+        setLogs(data);
+        setSelectedLog(data[0]);
+      }
+    }
+    loadLogs();
+  }, []);
+
 
   // Copy helper
   const handleCopy = (id: string, text: string) => {

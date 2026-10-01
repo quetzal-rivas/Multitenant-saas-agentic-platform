@@ -247,3 +247,45 @@ export interface RequestLog {
   nodeCascade?: ExecutionStep[];
   edgeCaseTrace?: EdgeCasePolicyTrace;
 }
+
+export interface ServerlessFunction {
+  id: string;
+  name: string;
+  collection: string;
+  organizationId: string;
+  language: 'python' | 'typescript';
+  description: string;
+  inputSchema: Record<string, any>;
+  outputSchema: Record<string, any>;
+  code: string;
+  envVars: Record<string, string>;
+  dependencies: string[];
+  timeoutSeconds: number;
+  memoryMb: number;
+  version: string;
+  endpoint: string;
+  mcpToolName: string;
+  deployed: boolean;
+  lastDeployedAt?: string;
+  testInputJson?: string;
+}
+
+export interface FunctionExecutionResult {
+  success: boolean;
+  output?: any;
+  error?: string;
+  stdout?: string;
+  stderr?: string;
+  durationMs: number;
+  executionId: string;
+  timestamp: string;
+}
+
+export interface OrganizationTenant {
+  id: string;
+  name: string;
+  slug: string;
+  tier: string;
+  awsRegion: string;
+}
+

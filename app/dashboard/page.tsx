@@ -23,6 +23,7 @@ import { PlatformMcpServerView } from '@/components/PlatformMcpServerView';
 import { GeminiTestModal } from '@/components/GeminiTestModal';
 import { CreateProfileModal } from '@/components/CreateProfileModal';
 import { AccountSettingsView } from '@/components/AccountSettingsView';
+import { FunctionStudio } from '@/components/FunctionStudio';
 import { INITIAL_PROFILES, INITIAL_SOURCES } from '@/lib/mock-data';
 import { ContextProfile, ContextSource } from '@/lib/types';
 
@@ -124,6 +125,10 @@ export default function DashboardPage() {
 
           {activeTab === 'account' && (
             <AccountSettingsView />
+          )}
+
+          {activeTab === 'function-studio' && (
+            <FunctionStudio />
           )}
 
           {activeTab === 'conversations' && (

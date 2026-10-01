@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   CreditCard,
   User,
@@ -29,12 +29,31 @@ export const AccountSettingsView: React.FC = () => {
   // Danger zone state
   const [transferEmail, setTransferEmail] = useState('');
   const [deleteConfirm, setDeleteConfirm] = useState('');
-
-  const invoices = [
+  const [invoices, setInvoices] = useState([
     { id: 'INV-2026-09', date: 'Sep 01, 2026', amount: '$500.00', status: 'Paid' },
     { id: 'INV-2026-08', date: 'Aug 01, 2026', amount: '$500.00', status: 'Paid' },
     { id: 'INV-2026-07', date: 'Jul 01, 2026', amount: '$500.00', status: 'Paid' },
-  ];
+  ]);
+
+  useEffect(() => {
+    async function loadInvoices() {
+      try {
+        const { supabase } = await import('@/lib/supabase');
+        const { data, error } = await supabase.from('invoices').select('*').limit(10);
+        if (!error && data && data.length > 0) {
+          setInvoices(data.map((i: any) => ({
+            id: i.invoice_id || i.id,
+            date: i.created_at ? new Date(i.created_at).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }) : i.date,
+            amount: `$${((i.amount_cents || 50000) / 100).toFixed(2)}`,
+            status: i.status || 'Paid'
+          })));
+        }
+      } catch (err) {
+        console.warn('Failed to fetch dynamic invoices from Supabase, using standard tier fallback:', err);
+      }
+    }
+    loadInvoices();
+  }, []);
 
   const handleUpdateProfile = (e: React.FormEvent) => {
     e.preventDefault();

@@ -81,6 +81,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </button>
 
             <button
+              onClick={() => setActiveTab('function-studio')}
+              className={`w-full flex items-center justify-between px-3 py-2 rounded-md text-xs font-medium transition-all ${
+                activeTab === 'function-studio'
+                  ? 'bg-zinc-800/90 text-white font-semibold border-l-2 border-emerald-500 pl-2.5'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40'
+              }`}
+            >
+              <div className="flex items-center gap-2.5">
+                <Code2 className={`w-4 h-4 ${activeTab === 'function-studio' ? 'text-amber-400' : 'text-zinc-400'}`} />
+                <span>AI Function Studio</span>
+              </div>
+              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-800/50">
+                LAMBDA
+              </span>
+            </button>
+
+            <button
               onClick={() => setActiveTab('conversations')}
               className={`w-full flex items-center justify-between px-3 py-2 rounded-md text-xs font-medium transition-all ${
                 activeTab === 'conversations'

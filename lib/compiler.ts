@@ -4,7 +4,7 @@ import {
   ResolveResponse,
   SourceResolutionBreakdown,
 } from './types';
-import { supabase } from '../Backend/supabase';
+import { supabase } from './supabase';
 
 // Rough token estimation helper (1 token ~= 3.8 characters of formatted English text/markdown)
 export function estimateTokens(text: string): number {

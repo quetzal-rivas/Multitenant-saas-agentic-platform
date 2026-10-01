@@ -1,7 +1,8 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ContextSource, IngestionEngineType } from '@/lib/types';
+import { getSources } from '@/lib/data-service';
 import { INITIAL_SOURCES } from '@/lib/mock-data';
 import {
   Database,
@@ -47,6 +48,16 @@ export const SourcesView: React.FC<SourcesViewProps> = ({
   sources: initialSources = INITIAL_SOURCES,
 }) => {
   const [sources, setSources] = useState<ContextSource[]>(initialSources);
+
+  useEffect(() => {
+    async function loadSources() {
+      const data = await getSources();
+      if (data && data.length > 0) {
+        setSources(data);
+      }
+    }
+    loadSources();
+  }, []);
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [filterEngine, setFilterEngine] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');

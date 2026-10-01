@@ -9,8 +9,8 @@ import {
 import { HOSTED_MCP_SERVERS, MCP_SKILLS } from './hosted-servers';
 import { McpProfileManager } from './profile-manager';
 import { OAuthManager } from './oauth-manager';
-import { compileContext } from '../lib/compiler';
-import { INITIAL_PROFILES } from '../lib/mock-data';
+import { compileContext } from '../../lib/compiler';
+import { INITIAL_PROFILES } from '../../lib/mock-data';
 import { PlatformControlMcpServer } from './platform-mcp-server';
 
 export class ProprietaryMcpServer {

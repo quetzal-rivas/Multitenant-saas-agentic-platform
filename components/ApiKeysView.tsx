@@ -1,7 +1,8 @@
 'use client';
 
-import React, { useState } from 'react';
-import { ApiKey } from '@/lib/types';
+import React, { useState, useEffect } from 'react';
+import { ApiKey, ContextProfile } from '@/lib/types';
+import { getProfiles } from '@/lib/data-service';
 import { INITIAL_API_KEYS, INITIAL_PROFILES } from '@/lib/mock-data';
 import {
   KeyRound,
@@ -181,7 +182,37 @@ const TTL_STEPS = [
 
 export const ApiKeysView: React.FC = () => {
   const [keys, setKeys] = useState<ApiKey[]>(INITIAL_API_KEYS);
+  const [profilesList, setProfilesList] = useState<ContextProfile[]>(INITIAL_PROFILES);
+  const [dynamicToolsCatalog, setDynamicToolsCatalog] = useState<McpToolScopeDefinition[]>(PLATFORM_MCP_SCOPES_CATALOG);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  useEffect(() => {
+    async function loadData() {
+      const data = await getProfiles();
+      if (data && data.length > 0) {
+        setProfilesList(data);
+      }
+      try {
+        const toolsRes = await fetch('/api/mcp/tools');
+        if (toolsRes.ok) {
+          const toolsData = await toolsRes.json();
+          if (toolsData.tools && toolsData.tools.length > 0) {
+            const mapped = toolsData.tools.map((t: any) => ({
+              id: t.name || t.id,
+              name: t.name || t.id,
+              spoke: t.server || t.spoke || 'postgres',
+              category: t.category || 'MCP Server Tools',
+              description: t.description || 'Registered MCP tool capability.'
+            }));
+            setDynamicToolsCatalog(mapped);
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to fetch dynamic MCP tools list, using catalog fallback:', err);
+      }
+    }
+    loadData();
+  }, []);
 
   // Key creation state
   const [showCreateModal, setShowCreateModal] = useState(false);

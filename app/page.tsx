@@ -284,9 +284,9 @@ export default async function LandingPage() {
                 <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400" /> Agent Studio & Team Builder</li>
                 <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400" /> Standard MCP Tool Connections</li>
               </ul>
-              <Link href="/onboarding" className="w-full py-3 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-white font-medium text-center transition-colors">
-                Start Free
-              </Link>
+              <a href="https://buy.stripe.com/5kQ5kw78h5OWfrkcprdjO04" target="_blank" rel="noopener noreferrer" className="w-full py-3 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-white font-medium text-center transition-colors block">
+                Subscribe to Tier 1
+              </a>
             </div>
 
             {/* Tier 2 */}
@@ -303,9 +303,9 @@ export default async function LandingPage() {
                 <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400" /> ElevenLabs Voice Calls & Twilio Lines</li>
                 <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400" /> Unlimited MCP Tool Hub Spokes</li>
               </ul>
-              <Link href="/onboarding" className="w-full py-3 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-semibold text-center transition-colors">
-                Get Started
-              </Link>
+              <a href="https://buy.stripe.com/3cIeV61NXcdk0wqexzdjO05" target="_blank" rel="noopener noreferrer" className="w-full py-3 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-semibold text-center transition-colors block">
+                Subscribe to Tier 2
+              </a>
             </div>
 
             {/* Enterprise Tier */}
@@ -320,9 +320,9 @@ export default async function LandingPage() {
                 <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400" /> Dedicated Account Manager & Onboarding</li>
                 <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400" /> 99.99% Guaranteed SLA</li>
               </ul>
-              <Link href="/onboarding" className="w-full py-3 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-white font-medium text-center transition-colors">
-                Contact Sales
-              </Link>
+              <a href="https://buy.stripe.com/eVq6oA5095OW1Au4WZdjO06" target="_blank" rel="noopener noreferrer" className="w-full py-3 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-white font-medium text-center transition-colors block">
+                Subscribe to Enterprise
+              </a>
             </div>
           </div>
         </div>

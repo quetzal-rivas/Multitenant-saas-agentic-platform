@@ -17,7 +17,16 @@ You are an expert developer specialized in the "Landing Page" component (typical
 - **Scope Restriction:** You can reference other components to understand context, but you CANNOT modify out-of-scope components. Only modify the Landing Page and this skill file when tasked with it.
 
 ## Component Overview
-*(This section should be updated with the specific details of the Landing Page as we build/modify it, including its UI elements, core dynamics, animations, and why it works).*
+The Landing Page (`app/page.tsx`) serves as the main marketing and entry point for Context Control. It features a modern, dark-themed UI with glassmorphism elements and responsive layouts.
+Key sections include:
+- **Top Navigation**: Contains brand logo, marketing links, and contextual auth buttons (Go to Dashboard vs Sign In/Get Started Free).
+- **Hero Section**: Highlights core value proposition with an animated radial gradient background and 4 core value metric cards (Agent & Team Studio, Voice Telephony Engine, Task Calendar Queue, MCP Hub & Tools).
+- **Features Grid**: Details the 4 core platform capabilities with descriptive icons.
+- **Visual Workspace Showcase**: Displays a preview image of the SaaS dashboard (`/docs/images/agent_studio.png`).
+- **Pricing Section**: Displays 3 multitenant pricing tiers (Tier 1, Tier 2, Enterprise). The call-to-action buttons for these tiers are integrated with Stripe Checkout, redirecting users to Stripe Hosted Payment Links:
+  - **Tier 1 ($250/mo)**: Redirects to Stripe Checkout for subscription.
+  - **Tier 2 ($500/mo)**: Redirects to Stripe Checkout for subscription.
+  - **Enterprise ($150/mo + $1500 Setup)**: Redirects to Stripe Checkout for subscription + setup fee.
 
 ## Best Practices
 - Always use modern UI/UX design principles (especially crucial for a landing page!).

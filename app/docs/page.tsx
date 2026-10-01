@@ -1075,6 +1075,15 @@ function DocFunctionStudio() {
         </ul>
       </div>
 
+      <div className="rounded-xl border border-amber-900/50 bg-amber-950/20 p-4 space-y-2 mb-6 text-amber-200/80 text-sm">
+        <div className="flex items-start gap-2">
+          <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0" />
+          <p>
+            <strong className="text-amber-400">Note:</strong> We need to add this component into the main UI and push it to production, but because we might add more components, we will wait. Otherwise, we would have to take new pictures of the dashboard every time.
+          </p>
+        </div>
+      </div>
+
       <div className="rounded-xl overflow-hidden border border-zinc-800 shadow-2xl relative">
         <img src="/docs/images/function_studio.png" alt="Function Studio Interface" className="w-full object-cover" />
       </div>
@@ -1109,6 +1118,15 @@ function DocSupervisorBoard() {
             <span>Transactional visualization for multi-agent workflows.</span>
           </li>
         </ul>
+      </div>
+
+      <div className="rounded-xl border border-amber-900/50 bg-amber-950/20 p-4 space-y-2 mb-6 text-amber-200/80 text-sm">
+        <div className="flex items-start gap-2">
+          <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0" />
+          <p>
+            <strong className="text-amber-400">Note:</strong> We need to add this component into the main UI and push it to production, but because we might add more components, we will wait. Otherwise, we would have to take new pictures of the dashboard every time.
+          </p>
+        </div>
       </div>
 
       <div className="rounded-xl overflow-hidden border border-zinc-800 shadow-2xl relative">

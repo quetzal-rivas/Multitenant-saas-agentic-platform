@@ -1,8 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { spawn } from 'child_process';
-import * as fs from 'fs';
-import * as path from 'path';
-import * as os from 'os';
+import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda';
+
+// Initialize AWS Lambda Client
+// Will default to process.env.AWS_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+const lambdaClient = new LambdaClient({
+  region: process.env.AWS_REGION || 'us-east-1',
+});
+
+// The ARN of the universal stateless wrapper Lambda function
+const EXECUTOR_LAMBDA_ARN = process.env.AWS_STATELESS_EXECUTOR_ARN || 'arn:aws:lambda:us-east-1:123456789012:function:context-control-executor';
 
 export async function POST(req: NextRequest) {
   const startTime = Date.now();
@@ -18,8 +24,6 @@ export async function POST(req: NextRequest) {
       timeoutSeconds = 15,
     } = body;
 
-    const timeoutMs = Math.min(Math.max(timeoutSeconds, 1), 30) * 1000;
-
     if (!code.trim()) {
       return NextResponse.json({
         success: false,
@@ -27,270 +31,65 @@ export async function POST(req: NextRequest) {
         durationMs: 0,
         executionId,
         timestamp: new Date().toISOString(),
-      });
+      }, { status: 400 });
     }
 
-    // 1. Python execution sandbox
-    if (language === 'python') {
-      const runnerCode = `
-import json
-import os
-import sys
-
-# Inject environment secrets
-for k, v in ${JSON.stringify(envVars)}.items():
-    os.environ[k] = str(v)
-
-${code}
-
-if __name__ == '__main__':
-    args = ${JSON.stringify(input)}
-    try:
-        if 'main' in globals():
-            result = main(**args) if isinstance(args, dict) else main(args)
-        else:
-            result = {"message": "Execution finished (no main function declared)"}
-        print("___RESULT_JSON___" + json.dumps(result))
-    except Exception as e:
-        print("___ERROR_JSON___" + json.dumps({"error": str(e), "type": type(e).__name__}), file=sys.stderr)
-        sys.exit(1)
-`;
-
-      const tmpDir = os.tmpdir();
-      const tmpFilePath = path.join(tmpDir, `${executionId}.py`);
-      fs.writeFileSync(tmpFilePath, runnerCode, 'utf8');
-
-      return new Promise<NextResponse>((resolve) => {
-        const proc = spawn('python3', [tmpFilePath], {
-          env: { ...process.env, ...envVars },
-        });
-
-        let stdout = '';
-        let stderr = '';
-        let killed = false;
-
-        const timer = setTimeout(() => {
-          killed = true;
-          proc.kill('SIGTERM');
-        }, timeoutMs);
-
-        proc.stdout.on('data', (d) => {
-          stdout += d.toString();
-        });
-
-        proc.stderr.on('data', (d) => {
-          stderr += d.toString();
-        });
-
-        proc.on('close', (code) => {
-          clearTimeout(timer);
-          try {
-            if (fs.existsSync(tmpFilePath)) {
-              fs.unlinkSync(tmpFilePath);
-            }
-          } catch {
-            // ignore
-          }
-
-          const durationMs = Date.now() - startTime;
-
-          if (killed) {
-            resolve(
-              NextResponse.json({
-                success: false,
-                error: `Execution timed out after ${timeoutSeconds}s`,
-                stdout,
-                stderr,
-                durationMs,
-                executionId,
-                timestamp: new Date().toISOString(),
-              })
-            );
-            return;
-          }
-
-          if (code !== 0) {
-            let errorDetail = stderr.trim();
-            if (stderr.includes('___ERROR_JSON___')) {
-              try {
-                const parsed = JSON.parse(stderr.split('___ERROR_JSON___')[1]);
-                errorDetail = `${parsed.type}: ${parsed.error}`;
-              } catch {
-                // fallback
-              }
-            }
-            resolve(
-              NextResponse.json({
-                success: false,
-                error: errorDetail || `Process exited with code ${code}`,
-                stdout,
-                stderr,
-                durationMs,
-                executionId,
-                timestamp: new Date().toISOString(),
-              })
-            );
-            return;
-          }
-
-          let output: any = stdout.trim();
-          let cleanStdout = stdout;
-
-          if (stdout.includes('___RESULT_JSON___')) {
-            const parts = stdout.split('___RESULT_JSON___');
-            cleanStdout = parts[0].trim();
-            try {
-              output = JSON.parse(parts[1].trim());
-            } catch {
-              output = parts[1].trim();
-            }
-          }
-
-          resolve(
-            NextResponse.json({
-              success: true,
-              output,
-              stdout: cleanStdout,
-              stderr: stderr.trim(),
-              durationMs,
-              executionId,
-              timestamp: new Date().toISOString(),
-            })
-          );
-        });
-      });
-    }
-
-    // 2. JavaScript / TypeScript / Node execution sandbox
-    const runnerCode = `
-const input = ${JSON.stringify(input)};
-
-${code}
-
-(async () => {
-  try {
-    let result;
-    if (typeof main === 'function') {
-      result = await main(input);
-    } else {
-      result = { message: "Execution finished (no main function declared)" };
-    }
-    console.log("___RESULT_JSON___" + JSON.stringify(result));
-  } catch (err) {
-    console.error("___ERROR_JSON___" + JSON.stringify({ error: err.message, stack: err.stack }));
-    process.exit(1);
-  }
-})();
-`;
-
-    const tmpDir = os.tmpdir();
-    const tmpFilePath = path.join(tmpDir, `${executionId}.js`);
-    fs.writeFileSync(tmpFilePath, runnerCode, 'utf8');
-
-    return new Promise<NextResponse>((resolve) => {
-      const proc = spawn('node', [tmpFilePath], {
-        env: { ...process.env, ...envVars },
-      });
-
-      let stdout = '';
-      let stderr = '';
-      let killed = false;
-
-      const timer = setTimeout(() => {
-        killed = true;
-        proc.kill('SIGTERM');
-      }, timeoutMs);
-
-      proc.stdout.on('data', (d) => {
-        stdout += d.toString();
-      });
-
-      proc.stderr.on('data', (d) => {
-        stderr += d.toString();
-      });
-
-      proc.on('close', (code) => {
-        clearTimeout(timer);
-        try {
-          if (fs.existsSync(tmpFilePath)) {
-            fs.unlinkSync(tmpFilePath);
-          }
-        } catch {
-          // ignore
-        }
-
-        const durationMs = Date.now() - startTime;
-
-        if (killed) {
-          resolve(
-            NextResponse.json({
-              success: false,
-              error: `Execution timed out after ${timeoutSeconds}s`,
-              stdout,
-              stderr,
-              durationMs,
-              executionId,
-              timestamp: new Date().toISOString(),
-            })
-          );
-          return;
-        }
-
-        if (code !== 0) {
-          let errorDetail = stderr.trim();
-          if (stderr.includes('___ERROR_JSON___')) {
-            try {
-              const parsed = JSON.parse(stderr.split('___ERROR_JSON___')[1]);
-              errorDetail = parsed.error;
-            } catch {
-              // fallback
-            }
-          }
-          resolve(
-            NextResponse.json({
-              success: false,
-              error: errorDetail || `Process exited with code ${code}`,
-              stdout,
-              stderr,
-              durationMs,
-              executionId,
-              timestamp: new Date().toISOString(),
-            })
-          );
-          return;
-        }
-
-        let output: any = stdout.trim();
-        let cleanStdout = stdout;
-
-        if (stdout.includes('___RESULT_JSON___')) {
-          const parts = stdout.split('___RESULT_JSON___');
-          cleanStdout = parts[0].trim();
-          try {
-            output = JSON.parse(parts[1].trim());
-          } catch {
-            output = parts[1].trim();
-          }
-        }
-
-        resolve(
-          NextResponse.json({
-            success: true,
-            output,
-            stdout: cleanStdout,
-            stderr: stderr.trim(),
-            durationMs,
-            executionId,
-            timestamp: new Date().toISOString(),
-          })
-        );
-      });
+    const payloadStr = JSON.stringify({
+      language,
+      code,
+      input,
+      envVars,
+      timeoutSeconds
     });
+
+    // Invoke the Lambda function
+    const command = new InvokeCommand({
+      FunctionName: EXECUTOR_LAMBDA_ARN,
+      InvocationType: 'RequestResponse', // Synchronous execution
+      Payload: Buffer.from(payloadStr),
+    });
+
+    const response = await lambdaClient.send(command);
+    const durationMs = Date.now() - startTime;
+
+    // Decode the response payload
+    const responsePayloadStr = response.Payload ? Buffer.from(response.Payload).toString('utf-8') : '{}';
+    
+    let responseData;
+    try {
+      responseData = JSON.parse(responsePayloadStr);
+    } catch {
+      responseData = responsePayloadStr;
+    }
+
+    if (response.FunctionError) {
+      // Unhandled error in the lambda container
+      return NextResponse.json({
+        success: false,
+        error: `Lambda Execution Error: ${response.FunctionError}`,
+        details: responseData,
+        durationMs,
+        executionId,
+        timestamp: new Date().toISOString(),
+      }, { status: 500 });
+    }
+
+    // Assuming the wrapper returns { output: ..., stdout: ..., stderr: ... }
+    return NextResponse.json({
+      success: true,
+      output: responseData.output || responseData,
+      stdout: responseData.stdout || '',
+      stderr: responseData.stderr || '',
+      durationMs,
+      executionId,
+      timestamp: new Date().toISOString(),
+    });
+
   } catch (err: any) {
     return NextResponse.json(
       {
         success: false,
-        error: err.message,
+        error: err.message || 'Failed to invoke AWS Lambda',
         durationMs: Date.now() - startTime,
         executionId,
         timestamp: new Date().toISOString(),

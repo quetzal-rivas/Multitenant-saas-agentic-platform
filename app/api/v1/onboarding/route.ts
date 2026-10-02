@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
     // 1. Insert organization
     const { data: organization, error: orgError } = await supabase
       .from('organizations')
-      .insert({ slug, name: orgName })
+      .insert({ slug, name: orgName, subscription_status: 'active' })
       .select('id, slug, name')
       .single();
 
@@ -47,9 +47,27 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: `Failed to assign organization owner: ${memberError.message}` }, { status: 500 });
     }
 
-    // 3. (Mocked for now) Register BYOK credentials into a Vault or similar.
-    // Real implementation would use supabase-vault or encrypted column.
-    
+    // 3. Register BYOK credentials into tenant_api_keys table
+    if (Array.isArray(apiKeys) && apiKeys.length > 0) {
+      const keysToInsert = apiKeys
+        .filter((k: any) => k.name && k.value && k.value.trim() !== '')
+        .map((k: any) => ({
+          organization_id: tenantId,
+          key_name: k.name,
+          key_value: k.value,
+        }));
+
+      if (keysToInsert.length > 0) {
+        const { error: keysError } = await supabase
+          .from('tenant_api_keys')
+          .insert(keysToInsert);
+
+        if (keysError) {
+          console.error('Failed to store BYOK keys:', keysError.message);
+        }
+      }
+    }
+
     return NextResponse.json({
       success: true,
       message: `Organization '${orgName}' successfully onboarded and workspace provisioned.`,

@@ -2,12 +2,14 @@
 
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Building2, Plus, ArrowRight, Settings, Users, LogOut, CheckCircle2 } from 'lucide-react';
+import { Building2, Plus, ArrowRight, Settings, Users, LogOut, CheckCircle2, Lock } from 'lucide-react';
+import PricingSection from '@/components/PricingSection';
 
 interface Organization {
   id: string;
   name: string;
   role: string;
+  subscription_status?: string;
 }
 
 export default function OrganizationsPage() {
@@ -17,6 +19,9 @@ export default function OrganizationsPage() {
   const [isCreating, setIsCreating] = useState(false);
   const [newOrgName, setNewOrgName] = useState('');
   
+  // Paywall Modal State
+  const [selectedLockedOrgId, setSelectedLockedOrgId] = useState<string | null>(null);
+
   // Settings view for active org
   const [managingOrg, setManagingOrg] = useState<Organization | null>(null);
   const [inviteEmail, setInviteEmail] = useState('');
@@ -81,7 +86,11 @@ export default function OrganizationsPage() {
     }
   };
 
-  const selectOrg = (orgId: string) => {
+  const selectOrg = (orgId: string, subscription_status?: string) => {
+    if (subscription_status !== 'active') {
+      setSelectedLockedOrgId(orgId);
+      return;
+    }
     // In a real app we'd set a cookie or global context for tenant_id/org_id here
     router.push('/dashboard');
   };
@@ -121,12 +130,25 @@ export default function OrganizationsPage() {
               </p>
             </div>
           ) : (
-            orgs.map((org) => (
+            orgs.map((org) => {
+              const isLocked = org.subscription_status !== 'active';
+              return (
               <div 
                 key={org.id}
-                className="group relative bg-[#0d1017] border border-zinc-800 hover:border-emerald-500/50 rounded-xl p-5 cursor-pointer transition-all hover:-translate-y-1 hover:shadow-xl hover:shadow-emerald-900/10"
-                onClick={() => selectOrg(org.id)}
+                className={`group relative bg-[#0d1017] border border-zinc-800 rounded-xl p-5 cursor-pointer transition-all ${
+                  isLocked 
+                    ? 'opacity-70 grayscale hover:opacity-100 hover:grayscale-0 hover:border-zinc-500' 
+                    : 'hover:border-emerald-500/50 hover:-translate-y-1 hover:shadow-xl hover:shadow-emerald-900/10'
+                }`}
+                onClick={() => selectOrg(org.id, org.subscription_status)}
               >
+                {isLocked && (
+                  <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/40 backdrop-blur-[1px] rounded-xl opacity-0 group-hover:opacity-100 transition-opacity">
+                    <div className="flex items-center gap-2 px-3 py-1.5 bg-zinc-900 rounded-lg text-sm font-semibold text-white shadow-xl">
+                      <Lock className="w-4 h-4 text-emerald-400" /> Unlock Workspace
+                    </div>
+                  </div>
+                )}
                 <div className="flex justify-between items-start mb-4">
                   <div className="w-10 h-10 rounded-lg bg-emerald-950 flex items-center justify-center text-emerald-400 border border-emerald-900/50">
                     <Building2 className="w-5 h-5" />
@@ -161,7 +183,7 @@ export default function OrganizationsPage() {
                   </button>
                 )}
               </div>
-            ))
+            )})
           )}
         </div>
       </div>
@@ -252,6 +274,21 @@ export default function OrganizationsPage() {
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Paywall Modal */}
+      {selectedLockedOrgId && (
+        <div className="fixed inset-0 z-[60] bg-black/90 backdrop-blur-sm flex items-center justify-center overflow-y-auto">
+          <div className="relative w-full py-12">
+            <button 
+              onClick={() => setSelectedLockedOrgId(null)}
+              className="absolute top-6 right-6 p-2 bg-zinc-900 rounded-full text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors z-10"
+            >
+              <Plus className="w-6 h-6 rotate-45" />
+            </button>
+            <PricingSection orgId={selectedLockedOrgId} />
           </div>
         </div>
       )}

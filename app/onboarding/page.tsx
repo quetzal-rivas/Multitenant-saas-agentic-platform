@@ -55,7 +55,7 @@ export default function OnboardingPage() {
           localStorage.setItem('ctx_tenant_id', data.tenantId || '00000000-0000-0000-0000-000000000001');
           localStorage.setItem('ctx_onboarded', 'true');
         }
-        router.push('/dashboard');
+        router.push('/organizations');
       }
     } catch (err: any) {
       setErrorMsg(err?.message || 'Network error occurred during onboarding');

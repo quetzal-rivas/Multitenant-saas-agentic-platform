@@ -1,10 +1,25 @@
-export const dynamic = 'force-static';
+export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
-import { handleTaskIntake } from '@/Backend/legacy_ts_mocks/server';
+import { createClient } from '@/utils/supabase/server';
 
 export async function POST(req: NextRequest) {
   try {
+    const supabase = await createClient();
     const raw = await req.json();
+
+    let actualTenantId = raw.tenant_id || raw.tenant;
+    if (!actualTenantId || actualTenantId.length !== 36) {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+         const { data: orgMember } = await supabase.from('organization_members').select('organization_id').eq('user_id', user.id).limit(1).single();
+         if (orgMember) {
+           actualTenantId = orgMember.organization_id;
+         }
+      }
+    }
+    if (!actualTenantId) {
+      actualTenantId = '00000000-0000-0000-0000-000000000001'; // fallback UUID
+    }
 
     const scheduledAt = raw.targetTime || raw.scheduled_at || new Date(Date.now() + 1000 * 60 * 15).toISOString();
     const allowedTools = raw.toolsWhitelist || raw.allowed_tools || ['gmail_send_message', 'elevenlabs_trigger_call'];
@@ -37,11 +52,25 @@ export async function POST(req: NextRequest) {
       tenant_id: raw.tenant_id || raw.tenant || '00000000-0000-0000-0000-000000000001',
     };
 
-    const result = await handleTaskIntake(payload);
+    const { data: insertedTask, error: insertError } = await supabase.from('supervisor_tasks').insert({
+       title: payload.title,
+       description: payload.instructions,
+       status: 'scheduled',
+       target_time: payload.scheduled_at,
+       tenant_id: actualTenantId,
+       metadata: {
+           allowed_tools: payload.allowed_tools,
+           fallback_policy: payload.fallback_policy,
+           category: payload.category,
+           simulate_failure: payload.simulate_failure,
+           is_simulation: payload.is_simulation,
+           original_id: payload.id
+       }
+    }).select().single();
 
-    if (!result.success) {
+    if (insertError) {
       return NextResponse.json(
-        { error: result.error, validationErrors: result.validationErrors },
+        { error: insertError.message, validationErrors: [] },
         { status: 400 }
       );
     }
@@ -49,12 +78,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       success: true,
       message: 'Task successfully enqueued for target-time execution via AWS EventBridge Scheduler / Supabase',
-      taskId: result.task?.id,
-      jobId: result.jobId,
+      taskId: insertedTask?.id,
+      jobId: `job_${insertedTask?.id}`,
       status: 'QUEUED',
-      scheduled_at: result.task?.scheduled_at,
-      delayMs: Math.max(0, new Date(result.task!.scheduled_at).getTime() - Date.now()),
-      task: result.task,
+      scheduled_at: insertedTask?.target_time,
+      delayMs: Math.max(0, new Date(insertedTask?.target_time || Date.now()).getTime() - Date.now()),
+      task: insertedTask,
       telemetry: {
         scheduler: 'aws_eventbridge_scheduler',
         ingestion_latency_ms: 12,

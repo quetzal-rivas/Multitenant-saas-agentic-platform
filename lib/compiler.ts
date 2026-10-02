@@ -324,11 +324,11 @@ ${JSON.stringify(trigger, null, 2)}
       if (runningTokens + section.tokens > maxBudget) {
         const allowedTokens = Math.max(0, maxBudget - runningTokens);
         if (allowedTokens < 50) {
-          section.content = `*[Section omitted to stay within token budget of ${maxBudget} tokens]*`;
+          section.content = `<omitted_section reason="token_budget_exceeded" budget="${maxBudget}" />`;
           section.tokens = 20;
         } else {
           const charLimit = Math.floor(allowedTokens * 3.8);
-          section.content = section.content.slice(0, charLimit) + `\n\n*[Truncated to fit ${maxBudget} token budget]*`;
+          section.content = section.content.slice(0, charLimit) + `...\n\n<truncation_notice>Content truncated to fit ${maxBudget} token budget constraint. Use available agent memory or search tools to retrieve deeper context if necessary.</truncation_notice>`;
           section.tokens = allowedTokens;
         }
         const itemInBreakdown = breakdown.find((b) => b.name === section.title);
@@ -342,8 +342,12 @@ ${JSON.stringify(trigger, null, 2)}
   let finalContent = '';
   let structuredOutput: Record<string, any> | undefined = undefined;
 
-  if (requestedFormat === 'markdown') {
-    finalContent = renderedSections.map((s) => `# ${s.title}\n\n${s.content}`).join('\n\n---\n\n');
+  if (requestedFormat === 'markdown' || requestedFormat === 'xml') {
+    finalContent = renderedSections.map((s) => {
+      const tag = (s.stepType || 'section').replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase();
+      const safeTitle = s.title.replace(/"/g, '&quot;');
+      return `<${tag} title="${safeTitle}">\n${s.content}\n</${tag}>`;
+    }).join('\n\n');
   } else {
     structuredOutput = {
       profile: profile.slug,

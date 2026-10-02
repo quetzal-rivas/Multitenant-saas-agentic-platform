@@ -94,6 +94,44 @@ export const HOSTED_MCP_SERVERS: HostedMcpServer[] = [
           properties: {},
         },
       },
+      {
+        name: 'agent_memory_read',
+        description: 'Read structured notes or state from the agentic memory layer. Essential for long-horizon tasks when context gets compacted.',
+        category: 'context-control',
+        serverId: 'server-context-control',
+        serverName: 'Context Control Core MCP',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            topic: {
+              type: 'string',
+              description: 'The topic or key to retrieve from memory (e.g. "user_preferences", "current_plan")',
+            },
+          },
+          required: ['topic'],
+        },
+      },
+      {
+        name: 'agent_memory_write',
+        description: 'Write structured notes or state to the agentic memory layer to preserve data across context truncations.',
+        category: 'context-control',
+        serverId: 'server-context-control',
+        serverName: 'Context Control Core MCP',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            topic: {
+              type: 'string',
+              description: 'The topic or key to save under',
+            },
+            content: {
+              type: 'string',
+              description: 'The information to remember',
+            },
+          },
+          required: ['topic', 'content'],
+        },
+      },
     ],
   },
   {

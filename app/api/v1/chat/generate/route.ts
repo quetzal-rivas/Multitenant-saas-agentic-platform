@@ -1,6 +1,6 @@
-export const dynamic = 'force-static';
+export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
-import { checkpointManagerStore, CheckpointRecord } from '@/Backend/legacy_ts_mocks/checkpoint-manager';
+import { createClient } from '@/utils/supabase/server';
 import { vaultManagerStore } from '@/Backend/legacy_ts_mocks/vault-manager';
 import { teamBlueprintManager } from '@/Backend/legacy_ts_mocks/team-blueprint-manager';
 import { McpProfileManager } from '@/Backend/legacy_ts_mocks/profile-manager';
@@ -97,6 +97,7 @@ const PERSONAS_CONFIG: Record<string, {
 export async function POST(req: NextRequest) {
   const startTime = Date.now();
   try {
+    const supabase = await createClient();
     const body = await req.json();
     const { thread_id, tenant_id = 'tenant_enterprise_corp', profile_id = 'sales_persona', message } = body;
 
@@ -107,8 +108,20 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Resolve tenant UUID if dummy is provided
+    let actualTenantId = tenant_id;
+    if (!actualTenantId || actualTenantId.length !== 36) {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+         const { data: orgMember } = await supabase.from('organization_members').select('organization_id').eq('user_id', user.id).limit(1).single();
+         if (orgMember) {
+           actualTenantId = orgMember.organization_id;
+         }
+      }
+    }
+
     // 1. Upstream Auth Vault: Check connected spokes for tenant
-    const credentials = vaultManagerStore.getCredentials(tenant_id);
+    const credentials = vaultManagerStore.getCredentials(actualTenantId);
     const activeSpokes = credentials.filter((c) => c.isActive).map((c) => c.provider);
 
     // 2. Gateway Handshake: Dynamically compile tools based on Team Blueprint OR legacy persona
@@ -136,7 +149,7 @@ export async function POST(req: NextRequest) {
       }
 
       // Compile tools across all assigned team workers that are pre-authenticated
-      const allTenantTools = teamBlueprintManager.getTenantAuthenticatedTools(tenant_id);
+      const allTenantTools = teamBlueprintManager.getTenantAuthenticatedTools(actualTenantId);
       const workerToolsMap = new Map<string, any>();
 
       // Also include supervisor skills/tools if assigned
@@ -198,8 +211,13 @@ export async function POST(req: NextRequest) {
     const toolNames = compiledTools.map((t) => t.name);
 
     // 3. Hydrate state from PostgresSaver checkpoints
-    const existingCheckpoints = checkpointManagerStore.getThreadCheckpoints(thread_id);
-    const stepIndex = existingCheckpoints.length + 1;
+    const { data: existingCheckpoints } = await supabase
+      .from('checkpoints')
+      .select('*')
+      .eq('thread_id', thread_id)
+      .order('step_index', { ascending: true });
+
+    const stepIndex = (existingCheckpoints?.length || 0) + 1;
     const checkpointId = `chk_${Date.now()}_${stepIndex}`;
 
     // Record activity in thread instance manager
@@ -227,7 +245,7 @@ export async function POST(req: NextRequest) {
           toolName: 'stripe.get_invoice',
           serverProvider: 'stripe',
           assignedWorker: billingWorker.name,
-          arguments: { invoice_id: 'inv_corp_8921', tenant_id },
+          arguments: { invoice_id: 'inv_corp_8921', tenant_id: actualTenantId },
           output: {
             invoice_id: 'inv_corp_8921',
             customer: 'Acme Corp / Marcus Vance',
@@ -378,8 +396,8 @@ Reference tool outputs if present. DO NOT reveal API keys or raw credentials.
 `.trim();
 
         // Build brief history context from checkpoints
-        const historySnippets = existingCheckpoints.slice(-4).map((c) => 
-          `[Profile: ${c.profileName}]\nUser: ${c.userMessage}\nAssistant: ${c.assistantMessage}`
+        const historySnippets = (existingCheckpoints || []).slice(-4).map((c: any) => 
+          `[Profile: ${c.profile_name}]\nUser: ${c.user_message}\nAssistant: ${c.assistant_message}`
         ).join('\n\n');
 
         const fullPrompt = `${systemPrompt}\n\n=== Conversation History ===\n${historySnippets}\n\nCurrent User Query: "${message}"\n\nResponse:`;
@@ -408,44 +426,46 @@ Reference tool outputs if present. DO NOT reveal API keys or raw credentials.
       } else {
         if (executedTools.length > 0) {
           const tool = executedTools[0];
-          assistantMessage = `Operating as **${profileDisplayName}**, I executed the gateway tool **\`${tool.toolName}\`** on **${tool.serverProvider}** with zero credential exposure. \n\n**Tool Output:**\n\`\`\`json\n${JSON.stringify(tool.output, null, 2)}\n\`\`\`\n\nThis action has been indexed in LangGraph's **PostgresSaver** memory thread \`${thread_id}\` under tenant \`${tenant_id}\`.`;
+          assistantMessage = `Operating as **${profileDisplayName}**, I executed the gateway tool **\`${tool.toolName}\`** on **${tool.serverProvider}** with zero credential exposure. \n\n**Tool Output:**\n\`\`\`json\n${JSON.stringify(tool.output, null, 2)}\n\`\`\`\n\nThis action has been indexed in LangGraph's **PostgresSaver** memory thread \`${thread_id}\` under tenant \`${actualTenantId}\`.`;
         } else {
-          assistantMessage = `I am active as **${profileDisplayName}** for tenant \`${tenant_id}\`. I have access to ${compiledTools.length} pre-authenticated tools from the MCP Gateway: ${toolNames.map((t) => `\`${t}\``).join(', ')}.\n\nRegarding: "${message}", let me know if you would like me to query live CRM data, search database schemas, inspect repositories, or draft communications!`;
+          assistantMessage = `I am active as **${profileDisplayName}** for tenant \`${actualTenantId}\`. I have access to ${compiledTools.length} pre-authenticated tools from the MCP Gateway: ${toolNames.map((t) => `\`${t}\``).join(', ')}.\n\nRegarding: "${message}", let me know if you would like me to query live CRM data, search database schemas, inspect repositories, or draft communications!`;
         }
       }
     }
 
-    // 6. Save Checkpoint to PostgresSaver state manager
-    const newCheckpoint: CheckpointRecord = {
-      checkpointId,
-      threadId: thread_id,
-      tenantId: tenant_id,
-      profileId: profile_id,
-      profileName: profileDisplayName,
-      stepIndex,
-      userMessage: message,
-      assistantMessage,
-      toolsExecuted: executedTools,
-      compiledToolsCount: compiledTools.length,
-      compiledToolsNames: toolNames,
+    // 6. Save Checkpoint to PostgresSaver state manager (Supabase)
+    const newCheckpoint = {
+      checkpoint_id: checkpointId,
+      thread_id: thread_id,
+      tenant_id: actualTenantId,
+      profile_id: profile_id,
+      profile_name: profileDisplayName,
+      step_index: stepIndex,
+      user_message: message,
+      assistant_message: assistantMessage,
+      tools_executed: executedTools,
+      compiled_tools_count: compiledTools.length,
+      compiled_tools_names: toolNames,
       metadata: {
         checkpointNs: '',
-        parentCheckpointId: existingCheckpoints[existingCheckpoints.length - 1]?.checkpointId,
+        parentCheckpointId: existingCheckpoints && existingCheckpoints.length > 0 ? existingCheckpoints[existingCheckpoints.length - 1].checkpoint_id : null,
         executionTimeMs: Date.now() - startTime,
-        slidingWindowCount: existingCheckpoints.length + 1,
+        slidingWindowCount: (existingCheckpoints?.length || 0) + 1,
         hubVersion: 'mcp-gateway-v2.4',
         isTeamBlueprint: isTeam,
         activeWorker: activeWorker?.name,
       },
-      timestamp: new Date().toISOString(),
     };
 
-    checkpointManagerStore.appendCheckpoint(newCheckpoint);
+    const { error: insertError } = await supabase.from('checkpoints').insert(newCheckpoint);
+    if (insertError) {
+      console.error('Failed to save checkpoint to Supabase:', insertError);
+    }
 
     // 7. Return unified response to frontend
     return NextResponse.json({
       thread_id,
-      tenant_id,
+      tenant_id: actualTenantId,
       profile_id,
       profile_name: profileDisplayName,
       is_team_blueprint: isTeam,
@@ -458,11 +478,11 @@ Reference tool outputs if present. DO NOT reveal API keys or raw credentials.
       tool_executions: executedTools,
       metadata: {
         step: stepIndex,
-        total_checkpoints: existingCheckpoints.length + 1,
+        total_checkpoints: (existingCheckpoints?.length || 0) + 1,
         execution_time_ms: Date.now() - startTime,
         checkpointer: 'PostgresSaver (Supabase :5432)',
       },
-      timestamp: newCheckpoint.timestamp,
+      timestamp: new Date().toISOString(),
     });
   } catch (error: any) {
     console.error('Error generating chat turn:', error);

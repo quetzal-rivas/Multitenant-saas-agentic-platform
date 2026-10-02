@@ -14,6 +14,7 @@ import { INITIAL_PROFILES } from '../../lib/mock-data';
 import { PlatformControlMcpServer } from './platform-mcp-server';
 
 export class ProprietaryMcpServer {
+  private static agentMemoryStore: Record<string, string> = {};
   /**
    * Main entrypoint for processing incoming MCP JSON-RPC 2.0 requests
    */
@@ -402,6 +403,33 @@ export class ProprietaryMcpServer {
         tokenBudget: p.budget.maxTokens,
         stepsCount: p.pipeline.length,
       }));
+    }
+
+    if (toolName === 'agent_memory_write') {
+      const { topic, content } = args;
+      ProprietaryMcpServer.agentMemoryStore[topic] = content;
+      return {
+        status: 'success',
+        topic,
+        message: `Successfully wrote to memory under topic '${topic}'.`,
+      };
+    }
+
+    if (toolName === 'agent_memory_read') {
+      const { topic } = args;
+      const content = ProprietaryMcpServer.agentMemoryStore[topic];
+      if (!content) {
+        return {
+          status: 'not_found',
+          topic,
+          message: `No memory found for topic '${topic}'.`,
+        };
+      }
+      return {
+        status: 'success',
+        topic,
+        content,
+      };
     }
 
     // 2. Google Workspace tools (OAuth-connected)

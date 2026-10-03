@@ -1,7 +1,7 @@
 export const dynamic = 'force-dynamic';
 
 import { NextRequest, NextResponse } from 'next/server';
-import { handlePlatformMCPRPC, generateClientConfigSnippets } from '@/lib/mcp/platform-mcp-server';
+import { handlePlatformMCPRPC } from '@/lib/mcp/platform-mcp-server';
 
 export async function POST(req: NextRequest) {
   try {
@@ -10,6 +10,9 @@ export async function POST(req: NextRequest) {
 
     const { statusCode, body: responseBody } = await handlePlatformMCPRPC(authHeader, body);
 
+    if (responseBody === null) {
+      return new NextResponse(null, { status: statusCode });
+    }
     return NextResponse.json(responseBody, { status: statusCode });
   } catch (err: any) {
     return NextResponse.json(
@@ -24,15 +27,12 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
-  const authHeader = req.headers.get('authorization') || '';
   const url = new URL(req.url);
-  const rawKey = authHeader.replace(/^Bearer\s+/i, '').trim() || url.searchParams.get('key') || 'sk_live_demo_key';
-
-  const snippets = generateClientConfigSnippets(rawKey, url.origin);
 
   return NextResponse.json({
     status: 'online',
     transport: 'Streamable HTTP',
-    snippets,
+    protocolVersion: '2024-11-05',
+    endpoint: `${url.origin}/api/mcp/platform`,
   });
 }

@@ -128,16 +128,25 @@ jobs:
             --environment-variables \
               "NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL,NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY,SUPABASE_SERVICE_ROLE_KEY=$SUPABASE_SERVICE_ROLE_KEY,STRIPE_SECRET_KEY=$STRIPE_SECRET_KEY,STRIPE_WEBHOOK_SECRET=$STRIPE_WEBHOOK_SECRET,KMS_KEY_ID=$KMS_KEY_ID,DEMO_MODE=$DEMO_MODE,NEXT_PUBLIC_DEMO_MODE=$NEXT_PUBLIC_DEMO_MODE,ENABLE_VOICE_CALLS=$ENABLE_VOICE_CALLS"
 
-          echo "2. Zipping build deployment package..."
+          echo "2. Cancelling any active or pending Amplify jobs..."
+          ACTIVE_JOBS=$(aws amplify list-jobs --app-id "$AMPLIFY_ID" --branch-name main --region "$AWS_REGION" --query "jobSummaries[?status=='PENDING' || status=='RUNNING'].jobId" --output text || true)
+          if [ -n "$ACTIVE_JOBS" ] && [ "$ACTIVE_JOBS" != "None" ]; then
+            for jid in $ACTIVE_JOBS; do
+              echo "Stopping pending Amplify job ID: $jid"
+              aws amplify stop-job --app-id "$AMPLIFY_ID" --branch-name main --job-id "$jid" --region "$AWS_REGION" || true
+            done
+          fi
+
+          echo "3. Zipping build deployment package..."
           zip -q -r deploy.zip . -x "node_modules/*" ".git/*" ".aws-sam/*"
 
-          echo "3. Creating AWS Amplify Deployment..."
+          echo "4. Creating AWS Amplify Deployment..."
           DEPLOYMENT_JSON=$(aws amplify create-deployment --app-id "$AMPLIFY_ID" --branch-name main --region "$AWS_REGION")
           JOB_ID=$(echo "$DEPLOYMENT_JSON" | node -e 'console.log(JSON.parse(require("fs").readFileSync(0, "utf-8")).jobId)')
           UPLOAD_URL=$(echo "$DEPLOYMENT_JSON" | node -e 'console.log(JSON.parse(require("fs").readFileSync(0, "utf-8")).zipUploadUrl)')
 
-          echo "4. Uploading deployment package to Amplify S3 storage (Job ID: $JOB_ID)..."
+          echo "5. Uploading deployment package to Amplify S3 storage (Job ID: $JOB_ID)..."
           curl -H "Content-Type: application/zip" --upload-file deploy.zip "$UPLOAD_URL"
 
-          echo "5. Starting AWS Amplify Deployment for Job ID: $JOB_ID..."
+          echo "6. Starting AWS Amplify Deployment for Job ID: $JOB_ID..."
           aws amplify start-deployment --app-id "$AMPLIFY_ID" --branch-name main --job-id "$JOB_ID" --region "$AWS_REGION"

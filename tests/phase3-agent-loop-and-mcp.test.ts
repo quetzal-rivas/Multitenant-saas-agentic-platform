@@ -44,6 +44,26 @@ describe('Phase 3 Real Agent Loop & MCP Gateway Verification', () => {
     assert.ok(res.error?.includes('not permitted under the active Context Control profile whitelist'));
   });
 
+  test('MCP Gateway denies empty whitelists and missing endpoints instead of simulating success', async () => {
+    const emptyWhitelist = await executeMCPToolCall({
+      tenantId: mockTenantId,
+      toolName: 'gmail_send_message',
+      arguments: {},
+      whitelist: [],
+    });
+    assert.equal(emptyWhitelist.success, false);
+    assert.ok(emptyWhitelist.error?.includes('not permitted'));
+
+    const missingEndpoint = await executeMCPToolCall({
+      tenantId: mockTenantId,
+      toolName: 'gmail_send_message',
+      arguments: {},
+      whitelist: ['gmail_send_message'],
+    });
+    assert.equal(missingEndpoint.success, false);
+    assert.ok(missingEndpoint.error?.includes('No MCP server endpoint is configured'));
+  });
+
   test('Platform MCP Server: generates valid Claude Desktop & Cursor config snippets', () => {
     const rawKey = 'ctx_live_testkey_1234567890_demo';
     const origin = 'https://app.contextcontrol.io';

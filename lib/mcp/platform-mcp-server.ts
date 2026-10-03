@@ -7,23 +7,39 @@ export interface ClientConfigSnippets {
   cursor: Record<string, any>;
 }
 
-/**
- * Handle incoming Streamable HTTP MCP JSON-RPC requests for Claude Desktop / Cursor administration.
- */
+const SUPPORTED_PROTOCOL_VERSION = '2024-11-05';
+
+function rpcError(id: unknown, code: number, message: string) {
+  return { jsonrpc: '2.0', error: { code, message }, id: id ?? null };
+}
+
+function toolError(id: unknown, message: string) {
+  return {
+    jsonrpc: '2.0',
+    result: { content: [{ type: 'text', text: message }], isError: true },
+    id,
+  };
+}
+
+/** Handle authenticated MCP JSON-RPC requests for the platform endpoint. */
 export async function handlePlatformMCPRPC(
   rawApiKey: string,
   rpcBody: any
 ): Promise<{ statusCode: number; body: any }> {
+  const id = rpcBody?.id ?? null;
+  if (!rpcBody || rpcBody.jsonrpc !== '2.0' || typeof rpcBody.method !== 'string') {
+    return { statusCode: 200, body: rpcError(id, -32600, 'Invalid JSON-RPC request') };
+  }
+
   if (!rawApiKey) {
     return {
       statusCode: 401,
-      body: { jsonrpc: '2.0', error: { code: -32001, message: 'Missing Authorization header with Platform API Key' }, id: rpcBody?.id || null },
+      body: { jsonrpc: '2.0', error: { code: -32001, message: 'Missing Authorization header with Platform API Key' }, id },
     };
   }
 
   const keyHash = hashApiKey(rawApiKey.replace(/^Bearer\s+/i, '').trim());
   const supabase = getSupabaseAdminClient();
-
   const { data: keyRecord, error: keyErr } = await supabase
     .from('mcp_api_keys')
     .select('id, tenant_id, name, scopes, tools_whitelist, revoked_at, expires_at')
@@ -33,22 +49,38 @@ export async function handlePlatformMCPRPC(
   if (keyErr || !keyRecord || keyRecord.revoked_at) {
     return {
       statusCode: 401,
-      body: { jsonrpc: '2.0', error: { code: -32001, message: 'Invalid or revoked Platform API Key' }, id: rpcBody?.id || null },
+      body: { jsonrpc: '2.0', error: { code: -32001, message: 'Invalid or revoked Platform API Key' }, id },
     };
   }
 
   if (keyRecord.expires_at && new Date(keyRecord.expires_at) < new Date()) {
     return {
       statusCode: 401,
-      body: { jsonrpc: '2.0', error: { code: -32001, message: 'Platform API Key has expired' }, id: rpcBody?.id || null },
+      body: { jsonrpc: '2.0', error: { code: -32001, message: 'Platform API Key has expired' }, id },
     };
   }
 
-  const { method, params, id } = rpcBody || {};
-
+  const { method, params } = rpcBody;
   switch (method) {
+    case 'initialize':
+      return {
+        statusCode: 200,
+        body: {
+          jsonrpc: '2.0',
+          id,
+          result: {
+            protocolVersion: SUPPORTED_PROTOCOL_VERSION,
+            capabilities: { tools: {} },
+            serverInfo: { name: 'context-control', version: '1.0.0' },
+          },
+        },
+      };
+    case 'notifications/initialized':
+      return { statusCode: 202, body: null };
+    case 'ping':
+      return { statusCode: 200, body: { jsonrpc: '2.0', id, result: {} } };
     case 'tools/list': {
-      const whitelist = keyRecord.tools_whitelist || [];
+      const whitelist: string[] = keyRecord.tools_whitelist || [];
       const tools = [
         {
           name: 'gmail_send_message',
@@ -80,77 +112,43 @@ export async function handlePlatformMCPRPC(
           description: 'Execute a read-only SQL query against the tenant database',
           inputSchema: {
             type: 'object',
-            properties: {
-              query: { type: 'string', description: 'SQL SELECT query string' },
-            },
+            properties: { query: { type: 'string', description: 'SQL SELECT query string' } },
             required: ['query'],
           },
         },
-      ].filter((t) => whitelist.length === 0 || whitelist.includes(t.name) || whitelist.includes('*'));
-
-      return {
-        statusCode: 200,
-        body: { jsonrpc: '2.0', result: { tools }, id },
-      };
+      ].filter((tool) => whitelist.includes(tool.name) || whitelist.includes('*'));
+      return { statusCode: 200, body: { jsonrpc: '2.0', result: { tools }, id } };
     }
-
     case 'tools/call': {
       const { name, arguments: toolArgs } = params || {};
-      const res = await executeMCPToolCall({
+      const response = await executeMCPToolCall({
         tenantId: keyRecord.tenant_id,
         toolName: name,
         arguments: toolArgs || {},
         whitelist: keyRecord.tools_whitelist,
       });
-
-      if (!res.success) {
-        return {
-          statusCode: 400,
-          body: { jsonrpc: '2.0', error: { code: -32603, message: res.error }, id },
-        };
-      }
-
       return {
         statusCode: 200,
-        body: { jsonrpc: '2.0', result: res.result, id },
+        body: response.success
+          ? { jsonrpc: '2.0', result: response.result, id }
+          : toolError(id, response.error || 'MCP tool execution failed'),
       };
     }
-
     default:
-      return {
-        statusCode: 400,
-        body: { jsonrpc: '2.0', error: { code: -32601, message: `Method '${method}' not found` }, id },
-      };
+      return { statusCode: 200, body: rpcError(id, -32601, `Method '${method}' not found`) };
   }
 }
 
-/**
- * Generate Claude Desktop & Cursor configuration JSON snippets for an API Key / Profile.
- */
+/** Generate Claude Desktop & Cursor configuration JSON snippets for an API key. */
 export function generateClientConfigSnippets(rawApiKey: string, origin: string): ClientConfigSnippets {
   const mcpEndpointUrl = `${origin.replace(/\/$/, '')}/api/mcp/platform`;
-
-  const claudeDesktop = {
-    mcpServers: {
-      "context-control": {
-        url: mcpEndpointUrl,
-        headers: {
-          Authorization: `Bearer ${rawApiKey}`,
-        },
-      },
-    },
+  const serverConfig = {
+    url: mcpEndpointUrl,
+    headers: { Authorization: `Bearer ${rawApiKey}` },
   };
 
-  const cursor = {
-    mcpServers: {
-      "context-control": {
-        url: mcpEndpointUrl,
-        headers: {
-          Authorization: `Bearer ${rawApiKey}`,
-        },
-      },
-    },
+  return {
+    claudeDesktop: { mcpServers: { 'context-control': serverConfig } },
+    cursor: { mcpServers: { 'context-control': serverConfig } },
   };
-
-  return { claudeDesktop, cursor };
 }

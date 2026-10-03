@@ -62,10 +62,18 @@ export async function executeMCPToolCall(request: MCPToolCallRequest): Promise<M
   const { tenantId, serverUrl, toolName, arguments: toolArgs, whitelist, timeoutMs = 15000 } = request;
 
   // 1. Check profile whitelist
-  if (whitelist && whitelist.length > 0 && !whitelist.includes(toolName) && !whitelist.includes('*')) {
+  if (!whitelist?.length || (!whitelist.includes(toolName) && !whitelist.includes('*'))) {
     return {
       success: false,
       error: `Tool '${toolName}' is not permitted under the active Context Control profile whitelist.`,
+      executionTimeMs: Date.now() - startTime,
+    };
+  }
+
+  if (!serverUrl) {
+    return {
+      success: false,
+      error: `No MCP server endpoint is configured for tool '${toolName}'.`,
       executionTimeMs: Date.now() - startTime,
     };
   }
@@ -84,42 +92,33 @@ export async function executeMCPToolCall(request: MCPToolCallRequest): Promise<M
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    let resultPayload: any;
-
-    if (serverUrl) {
-      // Remote Streamable HTTP MCP server call
-      const res = await fetch(serverUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-ContextControl-TenantId': tenantId,
+    const res = await fetch(serverUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-ContextControl-TenantId': tenantId,
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: `mcprpc_${Date.now()}`,
+        method: 'tools/call',
+        params: {
+          name: toolName,
+          arguments: toolArgs,
         },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: `mcprpc_${Date.now()}`,
-          method: 'tools/call',
-          params: {
-            name: toolName,
-            arguments: toolArgs,
-          },
-        }),
-        signal: controller.signal,
-      });
+      }),
+      signal: controller.signal,
+    });
 
-      if (!res.ok) {
-        throw new Error(`Remote MCP server returned HTTP ${res.status}`);
-      }
-
-      const rpcResponse = await res.json();
-      resultPayload = rpcResponse.result || rpcResponse;
-    } else {
-      // Platform-hosted native spoke execution stub
-      resultPayload = {
-        output: `Executed native spoke tool '${toolName}' for tenant '${tenantId}'`,
-        params: toolArgs,
-        status: 'success',
-      };
+    if (!res.ok) {
+      throw new Error(`Remote MCP server returned HTTP ${res.status}`);
     }
+
+    const rpcResponse = await res.json();
+    if (rpcResponse.error) {
+      throw new Error(rpcResponse.error.message || 'Remote MCP tool call failed');
+    }
+    const resultPayload = rpcResponse.result || rpcResponse;
 
     clearTimeout(timeoutId);
 

@@ -12,7 +12,8 @@ export default defineConfig([
     ignores: [
       "components/**",
       "app/demo/**",
-      "lib/demo/**"
+      "lib/demo/**",
+      "app/api/**"
     ],
     rules: {
       "react/no-unescaped-entities": "off",

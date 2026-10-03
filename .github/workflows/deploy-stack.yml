@@ -47,8 +47,10 @@ jobs:
 
       - uses: aws-actions/configure-aws-credentials@v4
         with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
-          aws-region: ${{ vars.AWS_REGION || 'us-east-2' }}
+          aws-region: ${{ secrets.AWS_REGION || vars.AWS_REGION || 'us-east-2' }}
 
       - uses: aws-actions/setup-sam@v2
 
@@ -59,7 +61,7 @@ jobs:
             --no-confirm-changeset \
             --no-fail-on-empty-changeset \
             --resolve-s3 \
-            --region "${{ vars.AWS_REGION || 'us-east-2' }}" \
+            --region "${{ secrets.AWS_REGION || vars.AWS_REGION || 'us-east-2' }}" \
             --parameter-overrides \
               SupabaseUrl="${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}" \
               SupabaseServiceRoleKey="${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}"
@@ -71,19 +73,21 @@ jobs:
     steps:
       - uses: aws-actions/configure-aws-credentials@v4
         with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
-          aws-region: ${{ vars.AWS_REGION || 'us-east-2' }}
+          aws-region: ${{ secrets.AWS_REGION || vars.AWS_REGION || 'us-east-2' }}
 
       - name: Sync Environment Variables & Trigger Amplify Build
         env:
           APP_ID: ${{ secrets.AMPLIFY_APP_ID }}
-          AWS_REGION: ${{ vars.AWS_REGION || 'us-east-2' }}
+          AWS_REGION: ${{ secrets.AWS_REGION || vars.AWS_REGION || 'us-east-2' }}
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
-          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
-          AWS_KMS_KEY_ID: ${{ secrets.AWS_KMS_KEY_ID }}
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY || 'sk_test_placeholder_for_build' }}
+          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET || 'whsec_placeholder' }}
+          AWS_KMS_KEY_ID: ${{ secrets.AWS_KMS_KEY_ID || 'alias/context-control-tenant-secrets' }}
           DEMO_MODE: "false"
           NEXT_PUBLIC_DEMO_MODE: "false"
           ENABLE_VOICE_CALLS: ${{ vars.ENABLE_VOICE_CALLS || 'false' }}

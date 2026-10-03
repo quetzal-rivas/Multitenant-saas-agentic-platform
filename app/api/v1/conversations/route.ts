@@ -1,6 +1,6 @@
 export const dynamic = 'force-static';
 import { NextRequest, NextResponse } from 'next/server';
-import { conversationsManager } from '@/Backend/legacy_ts_mocks/conversations-manager';
+import { conversationsManager } from '@/lib/demo/legacy_mocks/conversations-manager';
 
 export async function GET(req: NextRequest) {
   try {

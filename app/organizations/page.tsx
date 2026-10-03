@@ -27,10 +27,6 @@ export default function OrganizationsPage() {
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteStatus, setInviteStatus] = useState('');
 
-  useEffect(() => {
-    fetchMyOrgs();
-  }, []);
-
   const fetchMyOrgs = async () => {
     setIsLoading(true);
     try {
@@ -45,6 +41,10 @@ export default function OrganizationsPage() {
       setIsLoading(false);
     }
   };
+
+  useEffect(() => {
+    fetchMyOrgs();
+  }, []);
 
   const handleCreateOrg = async (e: React.FormEvent) => {
     e.preventDefault();

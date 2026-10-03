@@ -527,7 +527,7 @@ payload = json.dumps({
 headers = {
   'Content-Type': 'application/json',
   'x-tenant-id': 'tenant_enterprise_corp',
-  'Authorization': 'Bearer sec_live_981273981273912'
+      'Authorization': 'Bearer sk_live_YOUR_PLATFORM_API_KEY_HERE'
 }
 
 response = requests.request("POST", url, headers=headers, data=payload)
@@ -540,12 +540,12 @@ print(response.json())
 ![Test Simulator](public/docs/images/test_simulator.png)
 
 #### 🎯 Overview & Strategic Purpose
-The **Test Simulator** is an isolated developer playground designed specifically to evaluate complex multi-agent graph state transitions, test fallback escalation matrices, and debug BullMQ scheduled tasks safely without mutating production database tables or firing real API requests.
+The **Test Simulator** is an isolated developer playground designed specifically to evaluate complex multi-agent graph state transitions, test fallback escalation matrices, and debug scheduled tasks safely without mutating production database tables or firing real API requests.
 
 Because the Context Control platform relies heavily on autonomous, delayed background jobs (e.g., executing a billing audit 24 hours from now), waiting for actual time to pass to observe a bug is not feasible. The Simulator solves this with a "Time-Travel" clock overriding architecture, coupled with synthetic fault injection.
 
 #### ⚡ Comprehensive Feature Breakdown & Deep-Dive Architecture
-- **Time-Travel Clock Fast-Forwarding:** Developers can input a virtual target time, allowing the simulator engine to immediately flush and execute deferred BullMQ and EventBridge scheduled tasks as if the target date had arrived. This executes the entire LangGraph supervisor-to-worker tree in seconds instead of days.
+- **Time-Travel Clock Fast-Forwarding:** Developers can input a virtual target time, allowing the simulator engine to immediately flush and execute deferred EventBridge and SQS scheduled tasks as if the target date had arrived. This executes the entire LangGraph supervisor-to-worker tree in seconds instead of days.
 - **Synthetic Fault Injection & Chaos Testing:** The single biggest risk in autonomous systems is how they handle tool execution failures (e.g., Gmail rate limits, Stripe API timeouts). The Sandbox allows administrators to toggle synthetic failures:
   - Mock `HTTP 429 Too Many Requests` on Gmail spoke calls.
   - Mock `HTTP 500 Internal Server Error` on Salesforce updates.
@@ -594,37 +594,33 @@ curl -X POST "https://d1ct23sivfa3uv.amplifyapp.com/api/v1/simulation/run" \
 
 ---
 
-### 11. Platform MCP Controller (Stdio/SSE)
+### 11. Platform MCP Controller (Streamable HTTP)
 
 ![Platform MCP Controller](public/docs/images/platform_mcp.png)
 
 #### 🎯 Overview & Strategic Purpose
 The **Platform MCP Controller** flips the standard Hub-and-Spoke model inside out. Rather than the platform connecting outward to third-party tools, the Platform MCP allows external developer environments—such as Claude Desktop, Cursor IDE, Windsurf IDE, and local CLI agents—to connect *inward* to the tenant workspace.
 
-By exposing a standardized Model Context Protocol (MCP 2024-11-05 JSON-RPC 2.0) server endpoint (`/api/mcp/platform`), your local desktop AI assistants instantly gain administrative control over the cloud platform. They can schedule deferred jobs, manage multi-agent topologies, and query secure cloud databases directly from your local IDE prompt.
+By exposing a standardized Model Context Protocol (MCP Streamable HTTP JSON-RPC 2.0) server endpoint (`/api/mcp/platform`), your local desktop AI assistants instantly gain administrative control over the cloud platform. They can schedule deferred jobs, manage multi-agent topologies, and query secure cloud databases directly from your local IDE prompt.
 
 #### ⚡ Comprehensive Feature Breakdown & Deep-Dive Architecture
-- **11 Direct Administrative Controllers:** The server exposes the following highly privileged platform tools:
+- **Direct Administrative Controllers:** The server exposes platform tools including:
   1. `create_agent_profile`: Mints a new Team Blueprint in the PostgreSQL profiles store.
   2. `attach_worker_to_profile`: Inserts specialized worker nodes with scoped MCP tool whitelists.
   3. `list_team_blueprints`: Queries all active agent topologies and routing rules.
-  4. `schedule_deferred_task`: Pushes an asynchronous background task directly into the BullMQ queue.
+  4. `schedule_deferred_task`: Pushes an asynchronous background task into EventBridge & SQS queues.
   5. `cancel_deferred_task`: Removes a pending execution from the target-time schedule.
   6. `list_scheduled_tasks`: Retrieves active countdowns and queue statuses.
   7. `trigger_task_now`: Fast-forwards and executes a scheduled job immediately.
   8. `inspect_database_schema`: Retrieves live PostgreSQL table definitions and RLS policies.
   9. `query_database_table`: Executes safe read-only SQL commands against the tenant's isolated data rows.
-  10. `view_tenant_vault_status`: Audits the health of active encrypted OAuth spoke connections.
-  11. `update_tenant_spoke_auth`: Programmatically injects new encrypted tokens into the secure vault.
-- **Dual Transport Adapters:** 
-  - **SSE (Server-Sent Events) HTTP Transport:** Connects remote web-based clients over persistent HTTP streams.
-  - **Stdio Transport:** A lightweight wrapper script allows local desktop apps (like Claude Desktop) to invoke the API over standard input/output pipes.
+- **Streamable HTTP Transport:** Modern HTTP Streamable transport replacing deprecated HTTP+SSE streams as per latest MCP specification.
 - **Automated Client Configuration Generator:** Manually mapping MCP server JSON configurations is error-prone. The UI automatically generates copy-and-paste configurations tailored specifically for popular clients (Cursor, Claude Desktop), pre-injected with the tenant's workspace ID and API tokens.
 
 #### 📖 Step-by-Step UI How-To-Use Guide
 1. Navigate to **Platform MCP** in the workspace sidebar under the *Developer* section.
 2. Select your target client application tab (*Claude Desktop*, *Cursor*, *Windsurf*, or *cURL*).
-3. Review the list of the 11 exposed direct controller tools.
+3. Review the list of exposed controller tools.
 4. Click **Copy Config JSON**.
 5. Paste the generated configuration snippet into your local client's MCP configuration file:
    - For Claude Desktop: `~/Library/Application Support/Claude/claude_desktop_config.json`
@@ -638,12 +634,10 @@ By exposing a standardized Model Context Protocol (MCP 2024-11-05 JSON-RPC 2.0) 
 {
   "mcpServers": {
     "context-control-platform": {
-      "command": "node",
-      "args": [
-        "./node_modules/@modelcontextprotocol/server-platform/dist/index.js",
-        "--tenant-id=tenant_enterprise_corp",
-        "--api-key=sec_live_981273981273912"
-      ]
+      "url": "https://app.contextcontrol.io/api/mcp/platform",
+      "headers": {
+        "Authorization": "Bearer sk_live_YOUR_PLATFORM_API_KEY_HERE"
+      }
     }
   }
 }

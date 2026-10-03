@@ -32,8 +32,17 @@ export class DurableTaskQueue {
   private isCrashed: boolean = false;
   private isProcessing: boolean = false;
 
+  private initialized: boolean = false;
+
   constructor() {
-    this.init();
+    // Lazy initialization on demand
+  }
+
+  private ensureInitialized() {
+    if (!this.initialized) {
+      this.initialized = true;
+      this.init();
+    }
   }
 
   private init() {
@@ -77,6 +86,7 @@ export class DurableTaskQueue {
    * Schedules a task to run at its target timestamp
    */
   public async scheduleTask(task: ScheduledTask): Promise<QueueJob> {
+    this.ensureInitialized();
     if (this.isCrashed) {
       throw new Error('Durable queue is in crashed state. Restart worker to accept new jobs.');
     }

@@ -1,7 +1,7 @@
 export const dynamic = 'force-static';
 import { NextRequest, NextResponse } from 'next/server';
-import { teamBlueprintManager } from '@/Backend/legacy_ts_mocks/team-blueprint-manager';
-import { vaultManagerStore } from '@/Backend/legacy_ts_mocks/vault-manager';
+import { teamBlueprintManager } from '@/lib/demo/legacy_mocks/team-blueprint-manager';
+import { vaultManagerStore } from '@/lib/demo/legacy_mocks/vault-manager';
 
 export async function GET(req: NextRequest) {
   let tenantId = 'tenant_enterprise_corp';

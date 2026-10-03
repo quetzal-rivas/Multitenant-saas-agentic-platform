@@ -1,0 +1,76 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Context Control SaaS Platform API",
+    "version": "1.0.0",
+    "description": "Multi-tenant SaaS control plane for AI agent teams featuring BYOK credential management, KMS envelope encryption, Model Context Protocol (MCP) Streamable HTTP gateways, and LangGraph TS supervisor loops."
+  },
+  "servers": [
+    {
+      "url": "https://app.contextcontrol.io",
+      "description": "Production Platform API"
+    }
+  ],
+  "paths": {
+    "/api/v1/secrets": {
+      "get": {
+        "summary": "List BYOK Provider Secrets Metadata",
+        "description": "Returns configured secret providers for the authenticated tenant without exposing ciphertexts.",
+        "responses": {
+          "200": { "description": "List of configured secret metadata" },
+          "401": { "description": "RFC 9457 Unauthorized error" }
+        }
+      },
+      "post": {
+        "summary": "Store Envelope-Encrypted BYOK Secret",
+        "description": "Encrypts and stores provider key using KMS AES-256-GCM envelope encryption.",
+        "responses": {
+          "200": { "description": "Secret stored successfully" },
+          "400": { "description": "Connection test failed or invalid request" }
+        }
+      }
+    },
+    "/api/v1/api-keys": {
+      "get": {
+        "summary": "List Hashed Platform API Keys",
+        "responses": {
+          "200": { "description": "List of API key metadata (key_hash excluded)" }
+        }
+      },
+      "post": {
+        "summary": "Create Platform API Key",
+        "description": "Generates a CSPRNG platform API key with SHA-256 hash storage. Returns raw key ONCE.",
+        "responses": {
+          "200": { "description": "Key created successfully with raw key" }
+        }
+      }
+    },
+    "/api/mcp/platform": {
+      "post": {
+        "summary": "Platform MCP Server Streamable HTTP Endpoint",
+        "description": "JSON-RPC endpoint for Claude Desktop and Cursor administration.",
+        "responses": {
+          "200": { "description": "JSON-RPC response result" }
+        }
+      }
+    },
+    "/api/v1/schedule_task": {
+      "post": {
+        "summary": "Schedule Outbox Task",
+        "description": "Enqueues a task for target-time execution via AWS EventBridge Scheduler and SQS.",
+        "responses": {
+          "201": { "description": "Task successfully enqueued" }
+        }
+      }
+    },
+    "/api/webhooks/stripe": {
+      "post": {
+        "summary": "Stripe Webhook Listener",
+        "description": "Verifies signature and processes subscription lifecycle events with event id deduping.",
+        "responses": {
+          "200": { "description": "Event processed or deduped" }
+        }
+      }
+    }
+  }
+}

@@ -1,11 +1,12 @@
 export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/utils/supabase/server';
-import { vaultManagerStore } from '@/Backend/legacy_ts_mocks/vault-manager';
-import { teamBlueprintManager } from '@/Backend/legacy_ts_mocks/team-blueprint-manager';
-import { McpProfileManager } from '@/Backend/legacy_ts_mocks/profile-manager';
-import { INITIAL_PROFILES } from '@/lib/mock-data';
+import { vaultManagerStore } from '@/lib/demo/legacy_mocks/vault-manager';
+import { teamBlueprintManager } from '@/lib/demo/legacy_mocks/team-blueprint-manager';
+import { McpProfileManager } from '@/lib/demo/legacy_mocks/profile-manager';
+import { INITIAL_PROFILES } from '@/lib/demo';
 import { GoogleGenAI } from '@google/genai';
+
 
 // Pre-defined gateway persona configurations (legacy single personas)
 const PERSONAS_CONFIG: Record<string, {
@@ -141,7 +142,8 @@ export async function POST(req: NextRequest) {
       if (teamBlueprint.supervisorContextProfileSlug) {
         const supCtx = INITIAL_PROFILES.find((p) => p.slug === teamBlueprint.supervisorContextProfileSlug || p.id === teamBlueprint.supervisorContextProfileSlug);
         if (supCtx) {
-          const sysStep = supCtx.pipeline.find((s) => s.type === 'system_instructions' || s.type === 'policy');
+          const sysStep = supCtx.pipeline.find((s: any) => s.type === 'system_instructions' || s.type === 'policy');
+
           if (sysStep?.config.staticContent) {
             supervisorDirectives += `\n[Context Profile Directives: ${supCtx.name}]\n${sysStep.config.staticContent}`;
           }

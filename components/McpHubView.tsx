@@ -39,9 +39,9 @@ import {
   McpTool,
   OAuthProvider,
   McpSkill,
-} from '@/Backend/legacy_ts_mocks/types';
-import { HOSTED_MCP_SERVERS, MCP_SKILLS } from '@/Backend/legacy_ts_mocks/hosted-servers';
-import { McpProfileManager } from '@/Backend/legacy_ts_mocks/profile-manager';
+} from '@/lib/demo/legacy_mocks/types';
+import { HOSTED_MCP_SERVERS, MCP_SKILLS } from '@/lib/demo/legacy_mocks/hosted-servers';
+import { McpProfileManager } from '@/lib/demo/legacy_mocks/profile-manager';
 import { ContextProfile } from '@/lib/types';
 import { PlatformMcpServerView } from './PlatformMcpServerView';
 

@@ -26,7 +26,7 @@ import {
   Layers,
   ArrowRight,
 } from 'lucide-react';
-import { ScheduledTask, TaskStatus, ReasoningStep } from '@/Backend/legacy_ts_mocks/db';
+import { ScheduledTask, TaskStatus, ReasoningStep } from '@/lib/demo/legacy_mocks/db';
 
 interface TaskCalendarViewProps {
   tenantId?: string;

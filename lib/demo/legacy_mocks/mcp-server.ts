@@ -9,9 +9,10 @@ import {
 import { HOSTED_MCP_SERVERS, MCP_SKILLS } from './hosted-servers';
 import { McpProfileManager } from './profile-manager';
 import { OAuthManager } from './oauth-manager';
-import { compileContext } from '../../lib/compiler';
-import { INITIAL_PROFILES } from '../../lib/mock-data';
+import { compileContext } from '../../compiler';
+import { INITIAL_PROFILES } from '../demo-data';
 import { PlatformControlMcpServer } from './platform-mcp-server';
+
 
 export class ProprietaryMcpServer {
   private static agentMemoryStore: Record<string, string> = {};
@@ -219,10 +220,10 @@ export class ProprietaryMcpServer {
   private static getPromptsForProfile(profile?: McpServerProfile): McpPrompt[] {
     const boundSlugs = profile?.boundContextProfileSlugs || [];
     const profiles = INITIAL_PROFILES.filter(
-      (p) => boundSlugs.length === 0 || boundSlugs.includes(p.slug)
+      (p: any) => boundSlugs.length === 0 || boundSlugs.includes(p.slug)
     );
 
-    return profiles.map((p) => ({
+    return profiles.map((p: any) => ({
       name: `context-prompt-${p.slug}`,
       description: `Resolves dynamic context, instructions, memory, and CRM data for ${p.name}`,
       arguments: [
@@ -235,7 +236,7 @@ export class ProprietaryMcpServer {
 
   private static getPromptContent(name: string, args: Record<string, any>, profile?: McpServerProfile) {
     const slug = name.replace('context-prompt-', '');
-    const contextProfile = INITIAL_PROFILES.find((p) => p.slug === slug);
+    const contextProfile = INITIAL_PROFILES.find((p: any) => p.slug === slug);
 
     if (!contextProfile) return null;
 
@@ -274,10 +275,10 @@ export class ProprietaryMcpServer {
   private static getResourcesForProfile(profile?: McpServerProfile): McpResource[] {
     const boundSlugs = profile?.boundContextProfileSlugs || [];
     const profiles = INITIAL_PROFILES.filter(
-      (p) => boundSlugs.length === 0 || boundSlugs.includes(p.slug)
+      (p: any) => boundSlugs.length === 0 || boundSlugs.includes(p.slug)
     );
 
-    const resources: McpResource[] = profiles.map((p) => ({
+    const resources: McpResource[] = profiles.map((p: any) => ({
       uri: `context://profiles/${p.slug}`,
       name: `${p.name} Blueprint`,
       description: `Contract schema and active pipeline step configuration for ${p.name}`,
@@ -297,7 +298,7 @@ export class ProprietaryMcpServer {
   private static readResource(uri: string, profile?: McpServerProfile) {
     if (uri.startsWith('context://profiles/')) {
       const slug = uri.replace('context://profiles/', '');
-      const p = INITIAL_PROFILES.find((item) => item.slug === slug);
+      const p = INITIAL_PROFILES.find((item: any) => item.slug === slug);
       if (p) {
         return {
           uri,
@@ -308,9 +309,9 @@ export class ProprietaryMcpServer {
     }
 
     if (uri === 'context://account/skills') {
-      const activeSkills = MCP_SKILLS.filter((s) => profile?.selectedSkillNames.includes(s.id));
+      const activeSkills = MCP_SKILLS.filter((s: any) => profile?.selectedSkillNames.includes(s.id));
       const markdown = activeSkills
-        .map((s) => `### Skill: ${s.name}\n- Category: ${s.category}\n- Directive: ${s.systemPromptAddendum}`)
+        .map((s: any) => `### Skill: ${s.name}\n- Category: ${s.category}\n- Directive: ${s.systemPromptAddendum}`)
         .join('\n\n');
       return {
         uri,
@@ -337,7 +338,7 @@ export class ProprietaryMcpServer {
     // 1. Context Control proprietary tools
     if (toolName === 'context_resolve_profile') {
       const profileSlug = args.profile_slug || activeProfile?.boundContextProfileSlugs[0] || 'sales-agent';
-      const targetProfile = INITIAL_PROFILES.find((p) => p.slug === profileSlug) || INITIAL_PROFILES[0];
+      const targetProfile = INITIAL_PROFILES.find((p: any) => p.slug === profileSlug) || INITIAL_PROFILES[0];
 
       const result = compileContext(targetProfile, {
         profile: targetProfile.slug,
@@ -363,7 +364,7 @@ export class ProprietaryMcpServer {
           budgetPercent: Math.round((result.metadata.token_count / targetProfile.budget.maxTokens) * 100),
         },
         compiledContext: result.context.content,
-        sourcesResolved: result.metadata.source_breakdown.map((s) => ({
+        sourcesResolved: result.metadata.source_breakdown.map((s: any) => ({
           title: s.name,
           type: s.step_type,
           tokens: s.tokens,
@@ -375,7 +376,7 @@ export class ProprietaryMcpServer {
 
     if (toolName === 'context_get_contract') {
       const slug = args.profile_slug;
-      const targetProfile = INITIAL_PROFILES.find((p) => p.slug === slug);
+      const targetProfile = INITIAL_PROFILES.find((p: any) => p.slug === slug);
       if (!targetProfile) {
         throw new Error(`Context profile "${slug}" not found`);
       }
@@ -384,7 +385,7 @@ export class ProprietaryMcpServer {
         slug: targetProfile.slug,
         contract: targetProfile.contract,
         tokenBudget: targetProfile.budget.maxTokens,
-        pipelineSteps: targetProfile.pipeline.map((s) => ({
+        pipelineSteps: targetProfile.pipeline.map((s: any) => ({
           title: s.title,
           type: s.type,
           priority: s.priority,
@@ -394,7 +395,7 @@ export class ProprietaryMcpServer {
     }
 
     if (toolName === 'context_list_profiles') {
-      return INITIAL_PROFILES.map((p) => ({
+      return INITIAL_PROFILES.map((p: any) => ({
         id: p.id,
         name: p.name,
         slug: p.slug,
@@ -402,6 +403,7 @@ export class ProprietaryMcpServer {
         environment: p.environment,
         tokenBudget: p.budget.maxTokens,
         stepsCount: p.pipeline.length,
+
       }));
     }
 

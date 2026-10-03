@@ -1,4 +1,5 @@
-import { ContextProfile, ContextSource, ApiKey, RequestLog } from './types';
+import { ContextProfile, ContextSource, ApiKey, RequestLog } from '../types';
+
 
 export const INITIAL_SOURCES: ContextSource[] = [
   {
@@ -273,7 +274,7 @@ export const INITIAL_SOURCES: ContextSource[] = [
       encryptedInVault: true,
       vaultKeyId: 'vault_oauth_salesforce_stripe',
       headers: {
-        'X-Stripe-Live': 'sk_live_51M••••••••',
+        'X-Stripe-Live': 'sk_demo_51M••••••••',
       },
     },
     testPingRecords: [

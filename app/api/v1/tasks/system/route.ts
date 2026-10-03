@@ -1,6 +1,6 @@
 export const dynamic = 'force-static';
 import { NextRequest, NextResponse } from 'next/server';
-import { handleSimulateCrash, handleSimulateRestart } from '@/Backend/legacy_ts_mocks/server';
+import { handleSimulateCrash, handleSimulateRestart } from '@/lib/demo/legacy_mocks/server';
 
 export async function POST(req: NextRequest) {
   try {

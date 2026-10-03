@@ -50,7 +50,7 @@ import {
   VoiceCallMetadata,
   ConversationType,
   ConversationStatus,
-} from '@/Backend/legacy_ts_mocks/conversations-manager';
+} from '@/lib/demo/legacy_mocks/conversations-manager';
 import { LiveVoiceConferenceSection } from '@/components/LiveVoiceConferenceSection';
 
 interface ConversationsProps {

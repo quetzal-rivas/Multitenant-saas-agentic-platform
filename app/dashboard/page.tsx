@@ -24,7 +24,8 @@ import { GeminiTestModal } from '@/components/GeminiTestModal';
 import { CreateProfileModal } from '@/components/CreateProfileModal';
 import { AccountSettingsView } from '@/components/AccountSettingsView';
 import { FunctionStudio } from '@/components/FunctionStudio';
-import { INITIAL_PROFILES, INITIAL_SOURCES } from '@/lib/mock-data';
+import { DemoBanner } from '@/components/DemoBanner';
+import { INITIAL_PROFILES, INITIAL_SOURCES } from '@/lib/demo';
 import { ContextProfile, ContextSource } from '@/lib/types';
 
 export default function DashboardPage() {
@@ -77,8 +78,10 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-[#07090e] text-zinc-100 flex flex-col font-sans selection:bg-emerald-900 selection:text-emerald-200">
+      <DemoBanner />
       {/* Top Universal Navbar */}
       <Navbar
+
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         onOpenSimulator={() => setActiveTab('simulator')}

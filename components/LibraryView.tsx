@@ -29,7 +29,7 @@ import {
   Zap,
   ArrowRight,
 } from 'lucide-react';
-import { SkillItem, SkillCategory, SkillSource } from '@/Backend/legacy_ts_mocks/types';
+import { SkillItem, SkillCategory, SkillSource } from '@/lib/demo/legacy_mocks/types';
 
 interface LibraryViewProps {
   onOpenSimulatorWithSkill?: (skillPrompt: string) => void;

@@ -37,7 +37,7 @@ import {
   QueueOperationalBadge,
   SimulationTelemetryEvent,
   SimulationRunResult,
-} from '@/Backend/legacy_ts_mocks/simulation-schemas';
+} from '@/lib/demo/legacy_mocks/simulation-schemas';
 
 interface SimulatorViewProps {
   profiles?: ContextProfile[];

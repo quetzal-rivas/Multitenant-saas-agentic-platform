@@ -1,28 +1,33 @@
-export const dynamic = 'force-static';
+export const dynamic = 'force-dynamic';
+
 import { NextRequest, NextResponse } from 'next/server';
-import { OAuthManager } from '@/Backend/legacy_ts_mocks/oauth-manager';
-import { OAuthProvider } from '@/Backend/legacy_ts_mocks/types';
+import { requireAuth, isAuthError } from '@/lib/auth/require-auth';
+import { generateOAuthAuthorizationUrl, OAuthProviderType } from '@/lib/auth/oauth-pkce';
 
 export async function GET(req: NextRequest) {
-  let provider: OAuthProvider = 'google';
-  let origin = process.env.APP_URL || 'https://main.d1ct23sivfa3uv.amplifyapp.com';
   try {
-    if (req && req.url) {
-      const url = new URL(req.url);
-      provider = (url.searchParams.get('provider') || 'google') as OAuthProvider;
-      origin = process.env.APP_URL || url.origin;
+    const auth = await requireAuth(req, 'session');
+
+    const url = new URL(req.url);
+    const provider = (url.searchParams.get('provider') || 'google') as OAuthProviderType;
+    const origin = process.env.APP_URL || url.origin;
+
+    const { url: authUrl, state } = await generateOAuthAuthorizationUrl(
+      auth.tenantId,
+      auth.userId,
+      provider,
+      origin
+    );
+
+    return NextResponse.json({
+      provider,
+      url: authUrl,
+      state,
+    });
+  } catch (err: any) {
+    if (isAuthError(err)) {
+      return NextResponse.json({ error: err.message, code: err.code }, { status: err.statusCode });
     }
-  } catch (e) {
-    // Ignore static prerender evaluation error
+    return NextResponse.json({ error: err.message || 'Internal server error' }, { status: 500 });
   }
-  const redirectUri = `${origin.replace(/\/$/, '')}/auth/callback`;
-
-  const authData = OAuthManager.getAuthorizationUrl(provider, redirectUri);
-
-  return NextResponse.json({
-    provider,
-    url: authData.url,
-    redirectUri,
-    mode: authData.mode,
-  });
 }

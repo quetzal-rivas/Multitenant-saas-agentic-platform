@@ -1,8 +1,9 @@
-export const dynamic = 'force-static';
+export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
-import { McpProfileManager } from '@/Backend/legacy_ts_mocks/profile-manager';
-import { INITIAL_PROFILES } from '@/lib/mock-data';
-import { PLATFORM_MCP_TOOLS_CATALOG } from '@/Backend/legacy_ts_mocks/team-blueprint-manager';
+import { McpProfileManager } from '@/lib/demo/legacy_mocks/profile-manager';
+import { INITIAL_PROFILES } from '@/lib/demo';
+import { PLATFORM_MCP_TOOLS_CATALOG } from '@/lib/demo/legacy_mocks/team-blueprint-manager';
+
 
 export async function GET(req: NextRequest) {
   try {

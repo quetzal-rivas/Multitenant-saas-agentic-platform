@@ -1,8 +1,9 @@
-export const dynamic = 'force-static';
+export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
 import { compileContext } from '@/lib/compiler';
-import { INITIAL_PROFILES } from '@/lib/mock-data';
+import { INITIAL_PROFILES } from '@/lib/demo';
 import { ResolveRequest } from '@/lib/types';
+
 
 export async function POST(req: NextRequest) {
   try {

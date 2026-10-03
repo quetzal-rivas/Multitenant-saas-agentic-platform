@@ -36,11 +36,12 @@ import {
   Square,
   Filter,
 } from 'lucide-react';
-import { McpServerProfile } from '@/Backend/legacy_ts_mocks/types';
+import { McpServerProfile } from '@/lib/demo/legacy_mocks/types';
 import { ContextProfile } from '@/lib/types';
-import { McpProfileManager } from '@/Backend/legacy_ts_mocks/profile-manager';
-import { INITIAL_PROFILES } from '@/lib/mock-data';
-import { AuthenticatedMcpTool, PLATFORM_MCP_TOOLS_CATALOG } from '@/Backend/legacy_ts_mocks/team-blueprint-manager';
+import { McpProfileManager } from '@/lib/demo/legacy_mocks/profile-manager';
+import { INITIAL_PROFILES } from '@/lib/demo';
+import { AuthenticatedMcpTool, PLATFORM_MCP_TOOLS_CATALOG } from '@/lib/demo/legacy_mocks/team-blueprint-manager';
+
 
 interface WorkerForm {
   id: string;

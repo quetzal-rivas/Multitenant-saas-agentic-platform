@@ -1,7 +1,7 @@
 export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/utils/supabase/server';
-import { vaultManagerStore } from '@/Backend/legacy_ts_mocks/vault-manager';
+import { vaultManagerStore } from '@/lib/demo/legacy_mocks/vault-manager';
 
 export async function GET(req: NextRequest) {
   const supabase = await createClient();

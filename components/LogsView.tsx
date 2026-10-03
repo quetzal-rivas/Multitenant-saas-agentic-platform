@@ -3,7 +3,8 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { RequestLog, ExecutionStep } from '@/lib/types';
 import { getLogs } from '@/lib/data-service';
-import { INITIAL_LOGS } from '@/lib/mock-data';
+import { INITIAL_LOGS } from '@/lib/demo';
+
 import {
   ScrollText,
   Search,

@@ -32,7 +32,8 @@ import {
   Flame,
   ExternalLink,
 } from 'lucide-react';
-import { INITIAL_PROFILES, INITIAL_API_KEYS } from '@/lib/mock-data';
+import { INITIAL_PROFILES, INITIAL_API_KEYS } from '@/lib/demo';
+
 
 type EndpointId = 'schedule_task' | 'context_resolve' | 'context_token' | 'chat_generate' | 'simulation_run';
 

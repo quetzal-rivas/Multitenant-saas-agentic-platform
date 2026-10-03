@@ -1,6 +1,6 @@
 export const dynamic = 'force-static';
 import { NextRequest, NextResponse } from 'next/server';
-import { SkillManager } from '@/Backend/legacy_ts_mocks/skill-manager';
+import { SkillManager } from '@/lib/demo/legacy_mocks/skill-manager';
 
 export async function GET(req: NextRequest) {
   try {

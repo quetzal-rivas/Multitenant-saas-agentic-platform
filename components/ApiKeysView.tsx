@@ -3,7 +3,8 @@
 import React, { useState, useEffect } from 'react';
 import { ApiKey, ContextProfile } from '@/lib/types';
 import { getProfiles } from '@/lib/data-service';
-import { INITIAL_API_KEYS, INITIAL_PROFILES } from '@/lib/mock-data';
+import { INITIAL_API_KEYS, INITIAL_PROFILES } from '@/lib/demo';
+
 import {
   KeyRound,
   Plus,

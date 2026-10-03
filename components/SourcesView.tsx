@@ -3,7 +3,8 @@
 import React, { useState, useEffect } from 'react';
 import { ContextSource, IngestionEngineType } from '@/lib/types';
 import { getSources } from '@/lib/data-service';
-import { INITIAL_SOURCES } from '@/lib/mock-data';
+import { INITIAL_SOURCES } from '@/lib/demo';
+
 import {
   Database,
   Brain,

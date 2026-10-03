@@ -342,7 +342,8 @@ ${JSON.stringify(trigger, null, 2)}
   let finalContent = '';
   let structuredOutput: Record<string, any> | undefined = undefined;
 
-  if (requestedFormat === 'markdown' || requestedFormat === 'xml') {
+  if (requestedFormat === 'markdown' || (requestedFormat as string) === 'xml') {
+
     finalContent = renderedSections.map((s) => {
       const tag = (s.stepType || 'section').replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase();
       const safeTitle = s.title.replace(/"/g, '&quot;');

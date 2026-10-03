@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { ProprietaryMcpServer } from '@/Backend/legacy_ts_mocks/mcp-server';
-import { PLATFORM_MCP_TOOLS_CATALOG } from '@/Backend/legacy_ts_mocks/team-blueprint-manager';
+import { ProprietaryMcpServer } from '@/lib/demo/legacy_mocks/mcp-server';
+import { PLATFORM_MCP_TOOLS_CATALOG } from '@/lib/demo/legacy_mocks/team-blueprint-manager';
 
 export async function GET(req: NextRequest) {
   try {

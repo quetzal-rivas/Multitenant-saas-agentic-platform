@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
-import { ProprietaryMcpServer } from '@/Backend/legacy_ts_mocks/mcp-server';
+import { ProprietaryMcpServer } from '@/lib/demo/legacy_mocks/mcp-server';
 import { createClient } from '@/utils/supabase/server';
 import crypto from 'crypto';
 

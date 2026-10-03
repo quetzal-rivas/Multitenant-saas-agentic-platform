@@ -16,7 +16,6 @@ Resources:
   BackendContainerRepo:
     Type: AWS::ECR::Repository
     Properties:
-      RepositoryName: context-control-backend
       ImageScanningConfiguration:
         ScanOnPush: true
       ImageTagMutability: MUTABLE
@@ -27,9 +26,7 @@ Resources:
   FastAPILambdaFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: multitenant-agent-backend
       PackageType: Image
-      ImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/context-control-backend:latest"
       Architectures:
         - x86_64
       Environment:
@@ -59,7 +56,6 @@ Resources:
   EventBridgeSchedulerRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: multitenant-eventbridge-scheduler-role
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:

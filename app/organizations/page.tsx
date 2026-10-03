@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { Building2, Plus, ArrowRight, Settings, Users, LogOut, CheckCircle2, Lock } from 'lucide-react';
 import PricingSection from '@/components/PricingSection';
@@ -27,23 +27,24 @@ export default function OrganizationsPage() {
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteStatus, setInviteStatus] = useState('');
 
-  useEffect(() => {
-    const fetchMyOrgs = async () => {
-      setIsLoading(true);
-      try {
-        const res = await fetch('/api/v1/organizations/me');
-        if (res.ok) {
-          const data = await res.json();
-          setOrgs(data.organizations || []);
-        }
-      } catch (err) {
-        console.error(err);
-      } finally {
-        setIsLoading(false);
+  const fetchMyOrgs = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const res = await fetch('/api/v1/organizations/me');
+      if (res.ok) {
+        const data = await res.json();
+        setOrgs(data.organizations || []);
       }
-    };
-    fetchMyOrgs();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    fetchMyOrgs();
+  }, [fetchMyOrgs]);
 
   const handleCreateOrg = async (e: React.FormEvent) => {
     e.preventDefault();

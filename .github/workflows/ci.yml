@@ -65,7 +65,7 @@ jobs:
           fetch-depth: 0
 
       - name: Trufflehog Secret Scan
-        uses: trufflesecurity/trufflehog-actions-verify@main
+        uses: trufflesecurity/trufflehog@main
         with:
           path: ./
           base: ${{ github.event.repository.default_branch }}

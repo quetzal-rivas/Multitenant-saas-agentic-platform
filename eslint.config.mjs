@@ -15,6 +15,7 @@ export default defineConfig([
       "lib/demo/**"
     ],
     rules: {
+      "react/no-unescaped-entities": "off",
       "no-restricted-imports": [
         "error",
         {
@@ -29,4 +30,3 @@ export default defineConfig([
     }
   }
 ]);
-

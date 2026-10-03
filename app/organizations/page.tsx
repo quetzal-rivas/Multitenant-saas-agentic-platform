@@ -27,22 +27,21 @@ export default function OrganizationsPage() {
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteStatus, setInviteStatus] = useState('');
 
-  const fetchMyOrgs = async () => {
-    setIsLoading(true);
-    try {
-      const res = await fetch('/api/v1/organizations/me');
-      if (res.ok) {
-        const data = await res.json();
-        setOrgs(data.organizations || []);
-      }
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
   useEffect(() => {
+    const fetchMyOrgs = async () => {
+      setIsLoading(true);
+      try {
+        const res = await fetch('/api/v1/organizations/me');
+        if (res.ok) {
+          const data = await res.json();
+          setOrgs(data.organizations || []);
+        }
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setIsLoading(false);
+      }
+    };
     fetchMyOrgs();
   }, []);
 

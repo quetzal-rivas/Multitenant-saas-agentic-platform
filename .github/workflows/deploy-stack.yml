@@ -28,14 +28,14 @@ jobs:
         run: |
           if [ -n "$SUPABASE_ACCESS_TOKEN" ] && [ -n "$SUPABASE_PROJECT_ID" ]; then
             echo "Linking Supabase project..."
-            supabase link --project-ref "$SUPABASE_PROJECT_ID" || true
-            supabase db push || true
+            supabase link --project-ref "$SUPABASE_PROJECT_ID"
+            supabase db push
           else
             echo "Supabase secrets not configured, skipping migration."
           fi
 
   backend-aws-sam-deploy:
-    name: AWS SAM Backend Deployment
+    name: AWS SAM Backend Infrastructure Deployment
     runs-on: ubuntu-latest
     needs: supabase-db-sync
     steps:
@@ -48,41 +48,61 @@ jobs:
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
-          aws-region: us-east-2
+          aws-region: ${{ vars.AWS_REGION || 'us-east-2' }}
 
       - uses: aws-actions/setup-sam@v2
 
-      - uses: aws-actions/amazon-ecr-login@v2
-
-      - name: SAM Build and Deploy
+      - name: SAM Build and Deploy Stack
         run: |
           sam build
-          sam deploy --no-confirm-changeset --no-fail-on-empty-changeset --resolve-image-repos --region us-east-2
-
+          sam deploy \
+            --no-confirm-changeset \
+            --no-fail-on-empty-changeset \
+            --resolve-s3 \
+            --region "${{ vars.AWS_REGION || 'us-east-2' }}" \
+            --parameter-overrides \
+              SupabaseUrl="${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}" \
+              SupabaseServiceRoleKey="${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}"
 
   frontend-aws-amplify-deploy:
-    name: AWS Amplify Frontend Deployment
+    name: AWS Amplify Frontend Deployment & Environment Sync
     runs-on: ubuntu-latest
     needs: backend-aws-sam-deploy
     steps:
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
-          aws-region: us-east-2
+          aws-region: ${{ vars.AWS_REGION || 'us-east-2' }}
 
-      - name: Trigger Amplify Next.js release build
+      - name: Sync Environment Variables & Trigger Amplify Build
         env:
-          AMPLIFY_APP_ID: ${{ secrets.AMPLIFY_APP_ID }}
-          AWS_REGION: us-east-2
+          APP_ID: ${{ secrets.AMPLIFY_APP_ID }}
+          AWS_REGION: ${{ vars.AWS_REGION || 'us-east-2' }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          AWS_KMS_KEY_ID: ${{ secrets.AWS_KMS_KEY_ID }}
+          DEMO_MODE: "false"
+          NEXT_PUBLIC_DEMO_MODE: "false"
+          ENABLE_VOICE_CALLS: ${{ vars.ENABLE_VOICE_CALLS || 'false' }}
         run: |
-          APP_ID="${{ secrets.AMPLIFY_APP_ID }}"
-          if [ -z "$APP_ID" ]; then
-            APP_ID="d1ct23sivfa3uv"
+          AMPLIFY_ID="$APP_ID"
+          if [ -z "$AMPLIFY_ID" ]; then
+            AMPLIFY_ID="d1ct23sivfa3uv"
           fi
+          
+          echo "Updating AWS Amplify environment variables for App ID: $AMPLIFY_ID"
+          aws amplify update-app \
+            --app-id "$AMPLIFY_ID" \
+            --region "$AWS_REGION" \
+            --environment-variables \
+              "NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL,NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY,SUPABASE_SERVICE_ROLE_KEY=$SUPABASE_SERVICE_ROLE_KEY,STRIPE_SECRET_KEY=$STRIPE_SECRET_KEY,STRIPE_WEBHOOK_SECRET=$STRIPE_WEBHOOK_SECRET,AWS_KMS_KEY_ID=$AWS_KMS_KEY_ID,DEMO_MODE=$DEMO_MODE,NEXT_PUBLIC_DEMO_MODE=$NEXT_PUBLIC_DEMO_MODE,ENABLE_VOICE_CALLS=$ENABLE_VOICE_CALLS"
+
+          echo "Triggering Amplify RELEASE build on branch main..."
           aws amplify start-job \
-            --app-id "$APP_ID" \
+            --app-id "$AMPLIFY_ID" \
             --branch-name main \
             --job-type RELEASE \
             --region "$AWS_REGION"
-
-

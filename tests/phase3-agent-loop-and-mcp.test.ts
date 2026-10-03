@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import { compileAgentContext, estimateTokenCount } from '../lib/agent/context-compiler';
 import { isSSRFSafeUrl, executeMCPToolCall } from '../lib/mcp/mcp-gateway';
-import { generateClientConfigSnippets } from '../lib/mcp/platform-mcp-server';
+import { generateClientConfigSnippets, getAuthorizedPlatformTools } from '../lib/mcp/platform-mcp-server';
 
 describe('Phase 3 Real Agent Loop & MCP Gateway Verification', () => {
   const mockTenantId = '22222222-2222-4222-a222-222222222222';
@@ -77,5 +77,15 @@ describe('Phase 3 Real Agent Loop & MCP Gateway Verification', () => {
       'Authorization header must contain Bearer key'
     );
     assert.ok(snippets.cursor.mcpServers['context-control'], 'Cursor config must contain context-control entry');
+  });
+
+  test('Platform MCP Server: filters tools by both explicit whitelist and required scope', () => {
+    assert.deepEqual(getAuthorizedPlatformTools([], ['*']), []);
+    assert.deepEqual(getAuthorizedPlatformTools(['*'], ['mcp:tasks:read']), [
+      getAuthorizedPlatformTools(['*'], ['mcp:tasks:read']).find((tool) => tool.name === 'list_scheduled_tasks'),
+    ]);
+    assert.deepEqual(getAuthorizedPlatformTools(['schedule_deferred_task'], ['*']).map((tool) => tool.name), [
+      'schedule_deferred_task',
+    ]);
   });
 });

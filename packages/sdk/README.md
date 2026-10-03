@@ -18,17 +18,22 @@ const client = new ContextControl({
   baseUrl: process.env.CONTEXT_CONTROL_BASE_URL!,
 });
 
-const server = await client.mcp.initialize();
-const tools = await client.mcp.listTools();
-console.log(server.name, tools.map((tool) => tool.name));
+const profiles = await client.profiles.list();
+console.log(profiles.map((profile) => profile.name));
 
-const result = await client.mcp.callTool('tool_name', { example: true });
-console.log(result.content);
+const task = await client.tasks.schedule({
+  title: 'Quarterly account review',
+  instructions: 'Review the account and prepare a summary.',
+  targetTime: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+});
+console.log(task.id, task.status, task.target_time);
 ```
 
 `baseUrl` is the application origin (for example, `https://your-domain.example`) or the full `/api/mcp/platform` endpoint. The SDK appends the endpoint path when needed and sends the key only in the `Authorization` header.
 
-The server denies calls for tools not explicitly present in the API key's whitelist. Tool execution requires a configured remote MCP endpoint; it returns an MCP error instead of fabricating success when no endpoint is configured.
+API keys must explicitly allow the requested MCP tool and its scope. The current platform tools are `list_mcp_profiles` (`mcp:profiles:read`), `list_scheduled_tasks` (`mcp:tasks:read`), and `schedule_deferred_task` (`mcp:tasks:write`). Empty tool whitelists deny all tools. Task scheduling creates a tenant-owned `supervisor_tasks` record; downstream execution depends on the platform scheduler being configured.
+
+The lower-level `client.mcp` interface also exposes `initialize()`, `listTools()`, `callTool()`, and `ping()` for direct MCP use.
 
 ## Build and test from this repository
 

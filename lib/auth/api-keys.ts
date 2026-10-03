@@ -33,13 +33,14 @@ export async function createPlatformApiKey(
   const randomBytes = crypto.randomBytes(24).toString('hex');
   const rawKey = `sk_${environment}_${randomBytes}`;
   const keyPrefix = rawKey.slice(0, 14);
-  const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex');
+  const keyHash = `\\x${crypto.createHash('sha256').update(rawKey).digest('hex')}`;
 
   const supabase = getSupabaseAdminClient();
 
   const { data, error } = await supabase
     .from('mcp_api_keys')
     .insert({
+      org_id: tenantId,
       tenant_id: tenantId,
       name,
       key_prefix: keyPrefix,

@@ -20,6 +20,28 @@ export interface McpServerInfo {
     name: string;
     version: string;
 }
+export interface McpProfile {
+    id: string;
+    name: string;
+    description: string | null;
+    token_budget: number;
+    settings: Record<string, unknown>;
+    is_active: boolean;
+}
+export interface ScheduledTask {
+    id: string;
+    title: string;
+    description: string | null;
+    status: string;
+    target_time: string;
+    created_at: string;
+}
+export interface ScheduleTaskInput {
+    title: string;
+    instructions: string;
+    targetTime: string;
+    profileId?: string;
+}
 export declare class ContextControlError extends Error {
     readonly statusCode?: number | undefined;
     readonly rpcCode?: number | undefined;
@@ -44,5 +66,17 @@ export declare class ContextControlMcpClient {
 }
 export declare class ContextControl {
     readonly mcp: ContextControlMcpClient;
+    readonly profiles: {
+        list: (options?: {
+            limit?: number;
+        }) => Promise<McpProfile[]>;
+    };
+    readonly tasks: {
+        list: (options?: {
+            status?: 'scheduled' | 'active' | 'completed' | 'escalated';
+            limit?: number;
+        }) => Promise<ScheduledTask[]>;
+        schedule: (input: ScheduleTaskInput) => Promise<ScheduledTask>;
+    };
     constructor(options: ContextControlOptions);
 }

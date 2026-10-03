@@ -110,7 +110,30 @@ export class ContextControlMcpClient {
 }
 export class ContextControl {
     mcp;
+    profiles;
+    tasks;
     constructor(options) {
         this.mcp = new ContextControlMcpClient(options);
+        this.profiles = {
+            list: async (args = {}) => {
+                const result = await this.mcp.callTool('list_mcp_profiles', args);
+                return result.structuredContent.profiles;
+            },
+        };
+        this.tasks = {
+            list: async (args = {}) => {
+                const result = await this.mcp.callTool('list_scheduled_tasks', args);
+                return result.structuredContent.tasks;
+            },
+            schedule: async (input) => {
+                const result = await this.mcp.callTool('schedule_deferred_task', {
+                    title: input.title,
+                    instructions: input.instructions,
+                    target_time: input.targetTime,
+                    ...(input.profileId ? { profile_id: input.profileId } : {}),
+                });
+                return result.structuredContent.task;
+            },
+        };
     }
 }

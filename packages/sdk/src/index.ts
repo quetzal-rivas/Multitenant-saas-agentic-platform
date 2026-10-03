@@ -21,6 +21,31 @@ export interface McpServerInfo {
   version: string;
 }
 
+export interface McpProfile {
+  id: string;
+  name: string;
+  description: string | null;
+  token_budget: number;
+  settings: Record<string, unknown>;
+  is_active: boolean;
+}
+
+export interface ScheduledTask {
+  id: string;
+  title: string;
+  description: string | null;
+  status: string;
+  target_time: string;
+  created_at: string;
+}
+
+export interface ScheduleTaskInput {
+  title: string;
+  instructions: string;
+  targetTime: string;
+  profileId?: string;
+}
+
 interface RpcError {
   code: number;
   message: string;
@@ -165,8 +190,36 @@ export class ContextControlMcpClient {
 
 export class ContextControl {
   readonly mcp: ContextControlMcpClient;
+  readonly profiles: {
+    list: (options?: { limit?: number }) => Promise<McpProfile[]>;
+  };
+  readonly tasks: {
+    list: (options?: { status?: 'scheduled' | 'active' | 'completed' | 'escalated'; limit?: number }) => Promise<ScheduledTask[]>;
+    schedule: (input: ScheduleTaskInput) => Promise<ScheduledTask>;
+  };
 
   constructor(options: ContextControlOptions) {
     this.mcp = new ContextControlMcpClient(options);
+    this.profiles = {
+      list: async (args = {}) => {
+        const result = await this.mcp.callTool('list_mcp_profiles', args);
+        return (result.structuredContent as { profiles: McpProfile[] }).profiles;
+      },
+    };
+    this.tasks = {
+      list: async (args = {}) => {
+        const result = await this.mcp.callTool('list_scheduled_tasks', args);
+        return (result.structuredContent as { tasks: ScheduledTask[] }).tasks;
+      },
+      schedule: async (input) => {
+        const result = await this.mcp.callTool('schedule_deferred_task', {
+          title: input.title,
+          instructions: input.instructions,
+          target_time: input.targetTime,
+          ...(input.profileId ? { profile_id: input.profileId } : {}),
+        });
+        return (result.structuredContent as { task: ScheduledTask }).task;
+      },
+    };
   }
 }

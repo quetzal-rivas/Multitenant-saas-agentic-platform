@@ -78,3 +78,50 @@ test('SDK surfaces MCP tool failures as typed errors', async () => {
     return true;
   });
 });
+
+test('SDK maps profile and task helpers to platform MCP tools', async () => {
+  const calls: any[] = [];
+  const client = new ContextControl({
+    apiKey: 'sk_test_example',
+    baseUrl: 'https://platform.example',
+    fetcher: async (_input, init) => {
+      const body = JSON.parse(String(init?.body || '{}'));
+      if (body.method === 'initialize') {
+        return Response.json({
+          jsonrpc: '2.0',
+          id: body.id,
+          result: { serverInfo: { name: 'context-control', version: '1.0.0' } },
+        });
+      }
+      if (body.method === 'notifications/initialized') return new Response(null, { status: 202 });
+      calls.push(body.params);
+      if (body.params.name === 'list_mcp_profiles') {
+        return Response.json({
+          jsonrpc: '2.0',
+          id: body.id,
+          result: { content: [], structuredContent: { profiles: [{ id: 'profile-1', name: 'Support' }] } },
+        });
+      }
+      return Response.json({
+        jsonrpc: '2.0',
+        id: body.id,
+        result: { content: [], structuredContent: { task: { id: 'task-1', title: 'Follow up' } } },
+      });
+    },
+  });
+
+  const profiles = await client.profiles.list({ limit: 5 });
+  const task = await client.tasks.schedule({
+    title: 'Follow up',
+    instructions: 'Send the follow-up after review.',
+    targetTime: '2030-01-01T10:00:00.000Z',
+  });
+
+  assert.equal(profiles[0].name, 'Support');
+  assert.equal(task.id, 'task-1');
+  assert.equal(calls[0].name, 'list_mcp_profiles');
+  assert.equal(calls[0].arguments.limit, 5);
+  assert.equal(calls[1].name, 'schedule_deferred_task');
+  assert.equal(calls[1].arguments.target_time, '2030-01-01T10:00:00.000Z');
+  assert.equal('tenant_id' in calls[1].arguments, false);
+});

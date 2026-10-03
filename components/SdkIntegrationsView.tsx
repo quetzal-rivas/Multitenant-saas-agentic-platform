@@ -122,8 +122,7 @@ export const SdkIntegrationsView: React.FC<SdkIntegrationsViewProps> = ({ profil
     if (activeTab === 'deferred_tasks') {
       if (deferredLang === 'typescript') {
         return `// ===================================================================
-// Context Control - BullMQ Async Deferred Task Engine
-// Schedule crash-proof background tasks running days or weeks in the future.
+// Context Control - Schedule a tenant-scoped platform task over MCP.
 // ===================================================================
 
 import { ContextControl } from "@contextcontrol/sdk";
@@ -131,136 +130,82 @@ import { ContextControl } from "@contextcontrol/sdk";
 // Initialize client with your Live Tenant API key
 const client = new ContextControl({
   apiKey: process.env.CONTEXT_CONTROL_API_KEY!,
+  baseUrl: process.env.CONTEXT_CONTROL_BASE_URL!,
 });
 
 // 1. Calculate future execution timestamp (e.g. 3 days from now)
 const targetDate = new Date();
 targetDate.setDate(targetDate.getDate() + 3);
 
-// 2. The Async BullMQ Handshake & Multi-Tenant Metadata Lifecycle
+// Schedule a task; tenant identity comes from the API key.
 const scheduledTask = await client.tasks.schedule({
-  // ── Multi-Tenant Metadata Lifecycle ─────────────────────────────
-  tenant_id: "tenant_enterprise_corp", // Enforces Postgres RLS & isolated pgvector memory
-  profile_id: "${selectedProfileSlug}", // Automatically hydrates Agent Team Profile on wakeup
-
-  // ── Async BullMQ Schedule Parameters ───────────────────────────
   title: "Quarterly Enterprise Renewal & Usage Review",
-  targetTime: targetDate.toISOString(), // Delay window stored in BullMQ Redis z-set
+  targetTime: targetDate.toISOString(),
   instructions:
     "Retrieve contract CTR-8921, calculate Stripe billing delta, and draft renewal terms.",
-
-  // Whitelist exact MCP tools permitted during execution (Zero-trust containment)
-  toolsWhitelist: [
-    "salesforce.get_contract",
-    "stripe.get_customer_usage",
-    "gmail.create_draft",
-    "elevenlabs.trigger_call"
-  ],
-
-  // ── Failover & Voice Escalation Policy (ElevenLabs Fallback) ────
-  edgeCasePolicies: {
-    fallbackOnPrimaryFailure: "escalate",
-    escalationTool: "elevenlabs_trigger_call",
-    escalationInstructions:
-      "Trigger emergency outbound phone call to Account Executive if deal sync encounters network drop.",
-    contactOverrides: {
-      account_executive: "+1 (555) 749-2041",
-      escalation_channel: "pagerduty_tier_1"
-    },
-    maxRetries: 3
-  }
 });
 
-// 3. Response Telemetry
-console.log("BullMQ Job ID:", scheduledTask.jobId);
-console.log("Scheduled Execution Time:", scheduledTask.scheduled_at);
-console.log("Durable Status:", scheduledTask.status); // "SCHEDULED" -> "DELAYED"`;
+console.log("Task ID:", scheduledTask.id);
+console.log("Scheduled time:", scheduledTask.target_time);
+console.log("Status:", scheduledTask.status);`;
       }
 
       if (deferredLang === 'python') {
-        return `# ===================================================================
-# Context Control - Python SDK: BullMQ Deferred Task Scheduling
-# Crash-proof background execution with tenant RLS isolation & voice failover
-# ===================================================================
+        return `import os
+    from datetime import datetime, timedelta, timezone
+    import requests
 
-import os
-from datetime import datetime, timedelta, timezone
-from contextcontrol import ContextControl
-
-# Initialize Context Control SDK
-client = ContextControl(api_key=os.environ["CONTEXT_CONTROL_API_KEY"])
-
-# 1. Compute target timestamp (e.g., exactly 72 hours in the future)
-target_time = (datetime.now(timezone.utc) + timedelta(days=3)).isoformat()
-
-# 2. Dispatch Task to BullMQ / Redis Delayed Queue
-response = client.tasks.schedule(
-    # ── Multi-Tenant Metadata Lifecycle ─────────────────────────────
-    tenant_id="tenant_enterprise_corp",      # Tenant schema & RLS isolation
-    profile_id="${selectedProfileSlug}",     # Wakes up with exact Persona Blueprint
-    
-    # ── BullMQ Async Handshake ──────────────────────────────────────
-    title="Quarterly Enterprise Renewal & Usage Review",
-    target_time=target_time,                 # BullMQ delayed queue entry
-    instructions=(
-        "Retrieve contract CTR-8921, calculate Stripe billing delta, "
-        "and draft renewal terms."
-    ),
-    
-    # Tool permissions whitelist
-    tools_whitelist=[
-        "salesforce.get_contract",
-        "stripe.get_customer_usage",
-        "gmail.create_draft",
-        "elevenlabs.trigger_call"
-    ],
-    
-    # Robust Edge Case Policies with ElevenLabs voice call failover
-    edge_case_policies={
-        "fallback_on_primary_failure": "escalate",
-        "escalation_tool": "elevenlabs_trigger_call",
-        "escalation_instructions": (
-            "Trigger emergency outbound phone call to Account Executive "
-            "if deal sync fails after retries."
-        ),
-        "contact_overrides": {
-            "account_executive": "+1 (555) 749-2041",
-            "dispatch_email": "ops-lead@enterprise.corp"
-        },
-        "max_retries": 3
+    endpoint = os.environ["CONTEXT_CONTROL_BASE_URL"].rstrip("/") + "/api/mcp/platform"
+    headers = {
+      "Authorization": f"Bearer {os.environ['CONTEXT_CONTROL_API_KEY']}",
+      "Content-Type": "application/json",
     }
-)
 
-print(f"Task Successfully Scheduled! Job ID: {response.job_id}")
-print(f"Execution Window: {response.scheduled_at}")
-print(f"Queue Status: {response.status}")`;
+    def rpc(request_id, method, params=None):
+      response = requests.post(endpoint, headers=headers, json={
+        "jsonrpc": "2.0", "id": request_id, "method": method, "params": params or {}
+      })
+      response.raise_for_status()
+      payload = response.json()
+      if "error" in payload:
+        raise RuntimeError(payload["error"]["message"])
+      if payload.get("result", {}).get("isError"):
+        raise RuntimeError(payload["result"]["content"][0]["text"])
+      return payload["result"]
+
+    rpc(1, "initialize", {
+      "protocolVersion": "2024-11-05",
+      "capabilities": {},
+      "clientInfo": {"name": "context-control-python-example", "version": "1.0.0"},
+    })
+    requests.post(endpoint, headers=headers, json={
+      "jsonrpc": "2.0", "method": "notifications/initialized"
+    }).raise_for_status()
+
+    task = rpc(2, "tools/call", {"name": "schedule_deferred_task", "arguments": {
+      "title": "Quarterly Enterprise Renewal & Usage Review",
+      "target_time": (datetime.now(timezone.utc) + timedelta(days=3)).isoformat(),
+      "instructions": "Review the account and prepare renewal recommendations.",
+    }})["structuredContent"]["task"]
+
+    print(task["id"], task["target_time"], task["status"])`;
       }
 
       // cURL
-      return `curl -X POST "https://api.contextcontrol.dev/v1/schedule_task" \\
-  -H "Authorization: Bearer ctx_live_98a72f1bc0934e81a947d102e3b8a1" \\
+      return `curl -X POST "$CONTEXT_CONTROL_BASE_URL/api/mcp/platform" \\
+  -H "Authorization: Bearer $CONTEXT_CONTROL_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "tenant_id": "tenant_enterprise_corp",
-    "profile_id": "${selectedProfileSlug}",
-    "title": "Quarterly Enterprise Renewal & Usage Review",
-    "targetTime": "2026-09-28T14:30:00.000Z",
-    "instructions": "Audit usage metrics for tenant_enterprise_corp, review Salesforce contract CTR-8921, and draft renewal terms.",
-    "toolsWhitelist": [
-      "salesforce.get_contract",
-      "stripe.get_customer_usage",
-      "gmail.create_draft",
-      "elevenlabs.trigger_call"
-    ],
-    "edgeCasePolicies": {
-      "fallbackOnPrimaryFailure": "escalate",
-      "escalationTool": "elevenlabs_trigger_call",
-      "escalationInstructions": "Trigger voice alert to AE if primary CRM update encounters network timeout.",
-      "contactOverrides": {
-        "boss": "+1 (555) 438-9021",
-        "dispatch_email": "ops-lead@enterprise.corp"
-      },
-      "maxRetries": 3
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "tools/call",
+    "params": {
+      "name": "schedule_deferred_task",
+      "arguments": {
+        "title": "Quarterly Enterprise Renewal & Usage Review",
+        "target_time": "2030-01-01T14:30:00.000Z",
+        "instructions": "Review the account and prepare renewal recommendations."
+      }
     }
   }'`;
     }
@@ -361,31 +306,23 @@ const msg = await anthropic.messages.create({
 console.log(msg.content[0].text);`;
 
       case 'typescript':
-        return `// Using the official TypeScript SDK
+        return `// Using the official Context Control TypeScript SDK
 import { ContextControl } from "@contextcontrol/sdk";
 
 const client = new ContextControl({
   apiKey: process.env.CONTEXT_CONTROL_API_KEY!,
+  baseUrl: process.env.CONTEXT_CONTROL_BASE_URL!,
 });
 
-const result = await client.context.resolve({
-  profile: "${selectedProfileSlug}",
-  identity: {
-    tenant_id: "tenant_enterprise_corp",
-    user_id: "user_456",
-    conversation_id: "conversation_789"
-  },
-  input: {
-    query: "Analyze this month's cancellations",
-    trigger: {
-      type: "contract_cancelled",
-      contract_id: "CTR-9281"
-    }
-  }
+const profiles = await client.profiles.list();
+const tasks = await client.tasks.list({ status: "scheduled", limit: 10 });
+const task = await client.tasks.schedule({
+  title: "Review this month's cancellations",
+  instructions: "Summarize cancellation trends and recommend next steps.",
+  targetTime: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
 });
 
-console.log("Compiled Markdown Context:", result.context.content);
-console.log("Tokens:", result.metadata.token_count);`;
+console.log(profiles.length, tasks.length, task.id);`;
 
       case 'python':
         return `from contextcontrol import ContextControl

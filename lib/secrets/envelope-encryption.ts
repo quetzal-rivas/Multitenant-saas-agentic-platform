@@ -5,7 +5,7 @@ const kmsClient = new KMSClient({
   region: process.env.AWS_REGION || 'us-east-2',
 });
 
-const KMS_KEY_ID = process.env.AWS_KMS_KEY_ID || 'alias/context-control-tenant-secrets';
+const KMS_KEY_ID = process.env.KMS_KEY_ID || process.env.AWS_KMS_KEY_ID || 'alias/context-control-tenant-secrets';
 
 export interface EncryptedSecretPayload {
   ciphertext: string; // Base64 encoded AES-256-GCM ciphertext

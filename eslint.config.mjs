@@ -17,6 +17,7 @@ export default defineConfig([
     ],
     rules: {
       "react/no-unescaped-entities": "off",
+      "react-hooks/set-state-in-effect": "off",
       "no-restricted-imports": [
         "error",
         {

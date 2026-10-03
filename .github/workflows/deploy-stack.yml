@@ -63,8 +63,10 @@ jobs:
         run: |
           sam build
           sam deploy \
+            --stack-name context-control-backend \
             --no-confirm-changeset \
             --no-fail-on-empty-changeset \
+            --resolve-image-repos \
             --resolve-s3 \
             --region "${{ secrets.AWS_REGION || vars.AWS_REGION || 'us-east-2' }}" \
             --parameter-overrides \

@@ -78,6 +78,13 @@ jobs:
     runs-on: ubuntu-latest
     needs: backend-aws-sam-deploy
     steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -85,7 +92,17 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
           aws-region: ${{ secrets.AWS_REGION || vars.AWS_REGION || 'us-east-2' }}
 
-      - name: Sync Environment Variables & Trigger Amplify Build
+      - name: Build Next.js Application
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          DEMO_MODE: "false"
+          NEXT_PUBLIC_DEMO_MODE: "false"
+        run: |
+          npm ci
+          npm run build
+
+      - name: Sync Environment Variables & Deploy Bundle to AWS Amplify
         env:
           APP_ID: ${{ secrets.AMPLIFY_APP_ID }}
           AWS_REGION: ${{ secrets.AWS_REGION || vars.AWS_REGION || 'us-east-2' }}
@@ -104,16 +121,23 @@ jobs:
             AMPLIFY_ID="d1ct23sivfa3uv"
           fi
           
-          echo "Updating AWS Amplify environment variables for App ID: $AMPLIFY_ID"
+          echo "1. Updating AWS Amplify environment variables for App ID: $AMPLIFY_ID"
           aws amplify update-app \
             --app-id "$AMPLIFY_ID" \
             --region "$AWS_REGION" \
             --environment-variables \
               "NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL,NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY,SUPABASE_SERVICE_ROLE_KEY=$SUPABASE_SERVICE_ROLE_KEY,STRIPE_SECRET_KEY=$STRIPE_SECRET_KEY,STRIPE_WEBHOOK_SECRET=$STRIPE_WEBHOOK_SECRET,KMS_KEY_ID=$KMS_KEY_ID,DEMO_MODE=$DEMO_MODE,NEXT_PUBLIC_DEMO_MODE=$NEXT_PUBLIC_DEMO_MODE,ENABLE_VOICE_CALLS=$ENABLE_VOICE_CALLS"
 
-          echo "Triggering Amplify RELEASE build on branch main..."
-          aws amplify start-job \
-            --app-id "$AMPLIFY_ID" \
-            --branch-name main \
-            --job-type RELEASE \
-            --region "$AWS_REGION"
+          echo "2. Zipping build deployment package..."
+          zip -q -r deploy.zip . -x "node_modules/*" ".git/*" ".aws-sam/*"
+
+          echo "3. Creating AWS Amplify Deployment..."
+          DEPLOYMENT_JSON=$(aws amplify create-deployment --app-id "$AMPLIFY_ID" --branch-name main --region "$AWS_REGION")
+          JOB_ID=$(echo "$DEPLOYMENT_JSON" | node -e 'console.log(JSON.parse(require("fs").readFileSync(0, "utf-8")).jobId)')
+          UPLOAD_URL=$(echo "$DEPLOYMENT_JSON" | node -e 'console.log(JSON.parse(require("fs").readFileSync(0, "utf-8")).zipUploadUrl)')
+
+          echo "4. Uploading deployment package to Amplify S3 storage (Job ID: $JOB_ID)..."
+          curl -H "Content-Type: application/zip" --upload-file deploy.zip "$UPLOAD_URL"
+
+          echo "5. Starting AWS Amplify Deployment for Job ID: $JOB_ID..."
+          aws amplify start-deployment --app-id "$AMPLIFY_ID" --branch-name main --job-id "$JOB_ID" --region "$AWS_REGION"

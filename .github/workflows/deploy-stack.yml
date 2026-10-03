@@ -137,16 +137,16 @@ jobs:
             done
           fi
 
-          echo "3. Zipping build deployment package..."
-          zip -q -r deploy.zip . -x "node_modules/*" ".git/*" ".aws-sam/*"
-
-          echo "4. Creating AWS Amplify Deployment..."
-          DEPLOYMENT_JSON=$(aws amplify create-deployment --app-id "$AMPLIFY_ID" --branch-name main --region "$AWS_REGION")
-          JOB_ID=$(echo "$DEPLOYMENT_JSON" | node -e 'console.log(JSON.parse(require("fs").readFileSync(0, "utf-8")).jobId)')
-          UPLOAD_URL=$(echo "$DEPLOYMENT_JSON" | node -e 'console.log(JSON.parse(require("fs").readFileSync(0, "utf-8")).zipUploadUrl)')
-
-          echo "5. Uploading deployment package to Amplify S3 storage (Job ID: $JOB_ID)..."
-          curl -H "Content-Type: application/zip" --upload-file deploy.zip "$UPLOAD_URL"
-
-          echo "6. Starting AWS Amplify Deployment for Job ID: $JOB_ID..."
-          aws amplify start-deployment --app-id "$AMPLIFY_ID" --branch-name main --job-id "$JOB_ID" --region "$AWS_REGION"
+          echo "3. Starting AWS Amplify Build Job..."
+          # Start a native Amplify build job which handles Next.js SSR properly
+          JOB_START_JSON=$(aws amplify start-job --app-id "$AMPLIFY_ID" --branch-name main --job-type RELEASE --region "$AWS_REGION" 2>&1 || true)
+          
+          if echo "$JOB_START_JSON" | grep -q "BadRequestException"; then
+            echo "ERROR: Failed to start Amplify job. This usually happens if the Amplify App is not connected to a GitHub repository."
+            echo "Since this is a Next.js SSR app, Amplify must build it natively."
+            echo "ACTION REQUIRED: Please go to the AWS Amplify Console for App ID $AMPLIFY_ID and connect it to your GitHub repository."
+            exit 1
+          else
+            echo "Successfully started Amplify Job!"
+            echo "$JOB_START_JSON"
+          fi

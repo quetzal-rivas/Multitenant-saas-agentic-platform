@@ -155,7 +155,9 @@ jobs:
             --query 'app.repository' \
             --output text)
 
-          if [ "$CURRENT_REPOSITORY" != "$AMPLIFY_REPOSITORY" ]; then
+          # Amplify may store the URL with or without ".git" / a trailing slash; compare normalized.
+          normalize_repo() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's#/+$##; s#\.git$##'; }
+          if [ "$(normalize_repo "$CURRENT_REPOSITORY")" != "$(normalize_repo "$AMPLIFY_REPOSITORY")" ]; then
             if [ -z "$AMPLIFY_GITHUB_TOKEN" ]; then
               echo "ERROR: Amplify app $AMPLIFY_ID is not connected to $AMPLIFY_REPOSITORY."
               echo "Connect this repository in the Amplify Console or add an AMPLIFY_GITHUB_TOKEN repository secret."

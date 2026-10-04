@@ -18,7 +18,8 @@ export interface LLMMessage {
     name: string;
     arguments: Record<string, any>;
   }>;
-  providerContent?: { provider: LLMProvider; content: unknown };
+  /** Raw provider content; `model` records which model produced it (needed when a fallback model replays it). */
+  providerContent?: { provider: LLMProvider; content: unknown; model?: string };
 }
 
 export interface LLMToolDefinition {
@@ -54,7 +55,7 @@ export interface LLMGenerateResult {
   finishReason: 'stop' | 'tool_calls' | 'length' | 'refusal' | 'error';
   /** Model that actually served the request (differs from the requested one after a fallback). */
   model?: string;
-  providerContent?: { provider: LLMProvider; content: unknown };
+  providerContent?: { provider: LLMProvider; content: unknown; model?: string };
 }
 
 export const DEFAULT_MODELS: Record<LLMProvider, string> = {
@@ -268,11 +269,46 @@ async function generateOpenAI(options: LLMGenerateOptions): Promise<LLMGenerateR
 // Gemini (generateContent over fetch)
 // ---------------------------------------------------------------------------
 
-async function generateGemini(options: LLMGenerateOptions): Promise<LLMGenerateResult> {
-  const model = options.model || DEFAULT_MODELS.gemini;
-  const contents: any[] = [];
+/**
+ * Gemini fallbacks, most capable first, cheapest last. Used in order after the
+ * instance's own model when Google reports overload or quota exhaustion.
+ * Verified 2026-10-04 to answer with tool calling on a standard Gemini API key
+ * (Pro models were left out: they returned 429 quota errors on that plan).
+ */
+export const GEMINI_FALLBACK_MODELS = [
+  'gemini-3.8-flash',
+  'gemini-3.7-flash',
+  'gemini-3.6-flash',
+  'gemini-3.5-flash',
+  'gemini-3.5-flash-lite',
+  'gemini-3.1-flash-lite',
+];
 
-  for (const entry of groupToolResults(options.messages.filter((m) => m.role !== 'system'))) {
+/** Statuses where another model may succeed: quota, overload and transient server errors. */
+const GEMINI_RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
+
+/** Google-documented placeholder for thought signatures a different model produced. */
+const SKIP_THOUGHT_SIGNATURE = 'skip_thought_signature_validator';
+
+export function geminiModelChain(requested: string): string[] {
+  return [requested, ...GEMINI_FALLBACK_MODELS.filter((m) => m !== requested)];
+}
+
+export class GeminiApiError extends Error {
+  constructor(public status: number, public model: string, body: string) {
+    super(`Gemini API error (${status}) from ${model}: ${body.slice(0, 300)}`);
+    this.name = 'GeminiApiError';
+  }
+}
+
+/**
+ * Build `contents` for a target model. Model turns are replayed verbatim, except that
+ * thought signatures produced by a *different* model are swapped for Google's skip
+ * marker, since a model only validates its own signatures.
+ */
+export function buildGeminiContents(messages: LLMMessage[], targetModel: string): any[] {
+  const contents: any[] = [];
+  for (const entry of groupToolResults(messages.filter((m) => m.role !== 'system'))) {
     if (Array.isArray(entry)) {
       contents.push({
         role: 'user',
@@ -286,79 +322,108 @@ async function generateGemini(options: LLMGenerateOptions): Promise<LLMGenerateR
       });
     } else if (entry.role === 'assistant') {
       if (entry.providerContent?.provider === 'gemini') {
-        contents.push({ role: 'model', parts: entry.providerContent.content });
+        const parts = entry.providerContent.content as any[];
+        const sameModel = !entry.providerContent.model || entry.providerContent.model === targetModel;
+        contents.push({
+          role: 'model',
+          parts: sameModel
+            ? parts
+            : parts.map((p) => (p?.thoughtSignature ? { ...p, thoughtSignature: SKIP_THOUGHT_SIGNATURE } : p)),
+        });
       } else {
         const parts: any[] = [];
         if (entry.content) parts.push({ text: entry.content });
-        for (const tc of entry.toolCalls || []) parts.push({ functionCall: { name: tc.name, args: tc.arguments } });
+        for (const tc of entry.toolCalls || []) {
+          // Calls without a signature from this model must carry the skip marker on Gemini 3.
+          parts.push({ functionCall: { name: tc.name, args: tc.arguments }, thoughtSignature: SKIP_THOUGHT_SIGNATURE });
+        }
         contents.push({ role: 'model', parts: parts.length ? parts : [{ text: '' }] });
       }
     } else {
       contents.push({ role: 'user', parts: [{ text: entry.content }] });
     }
   }
+  return contents;
+}
 
-  const payload: any = {
-    contents,
-    generationConfig: {
-      maxOutputTokens: options.maxTokens || 16000,
-      ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
-    },
-  };
-  if (options.systemPrompt) payload.systemInstruction = { parts: [{ text: options.systemPrompt }] };
-  if (options.tools?.length) {
-    payload.tools = [
-      {
-        functionDeclarations: options.tools.map((t) => ({
-          name: t.name,
-          description: t.description,
-          parametersJsonSchema: t.parameters,
-        })),
+async function generateGemini(options: LLMGenerateOptions): Promise<LLMGenerateResult> {
+  const chain = geminiModelChain(options.model || DEFAULT_MODELS.gemini);
+  let lastError: GeminiApiError | null = null;
+
+  for (const model of chain) {
+    const payload: any = {
+      contents: buildGeminiContents(options.messages, model),
+      generationConfig: {
+        maxOutputTokens: options.maxTokens || 16000,
+        ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
       },
-    ];
-  }
-
-  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': options.apiKey },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) {
-    throw new Error(`Gemini API error (${res.status}): ${(await res.text()).slice(0, 300)}`);
-  }
-
-  const data = await res.json();
-  const candidate = data.candidates?.[0];
-  const parts: any[] = candidate?.content?.parts || [];
-  let text = '';
-  const toolCalls: NonNullable<LLMGenerateResult['toolCalls']> = [];
-  parts.forEach((part, i) => {
-    if (typeof part.text === 'string' && !part.thought) text += part.text;
-    if (part.functionCall) {
-      toolCalls.push({
-        id: part.functionCall.id || `gemini_${i}_${part.functionCall.name}`,
-        name: part.functionCall.name,
-        arguments: part.functionCall.args || {},
-      });
+    };
+    if (options.systemPrompt) payload.systemInstruction = { parts: [{ text: options.systemPrompt }] };
+    if (options.tools?.length) {
+      payload.tools = [
+        {
+          functionDeclarations: options.tools.map((t) => ({
+            name: t.name,
+            description: t.description,
+            parametersJsonSchema: t.parameters,
+          })),
+        },
+      ];
     }
-  });
 
-  const inputTokens = data.usageMetadata?.promptTokenCount || 0;
-  const outputTokens = data.usageMetadata?.candidatesTokenCount || 0;
-  return {
-    text,
-    toolCalls: toolCalls.length ? toolCalls : undefined,
-    usage: { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens },
-    finishReason: toolCalls.length
-      ? 'tool_calls'
-      : candidate?.finishReason === 'MAX_TOKENS'
-      ? 'length'
-      : candidate?.finishReason === 'SAFETY'
-      ? 'refusal'
-      : 'stop',
-    model,
-    providerContent: { provider: 'gemini', content: parts },
-  };
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': options.apiKey },
+        body: JSON.stringify(payload),
+      }
+    );
+    if (!res.ok) {
+      lastError = new GeminiApiError(res.status, model, await res.text());
+      // Bad key, bad request, unknown model: another model will not fix it.
+      if (!GEMINI_RETRYABLE_STATUSES.has(res.status)) throw lastError;
+      console.warn(`[llm-adapter] ${model} returned ${res.status}; trying the next Gemini fallback`);
+      continue;
+    }
+
+    const data = await res.json();
+    const candidate = data.candidates?.[0];
+    const parts: any[] = candidate?.content?.parts || [];
+    let text = '';
+    const toolCalls: NonNullable<LLMGenerateResult['toolCalls']> = [];
+    parts.forEach((part, i) => {
+      if (typeof part.text === 'string' && !part.thought) text += part.text;
+      if (part.functionCall) {
+        toolCalls.push({
+          id: part.functionCall.id || `gemini_${i}_${part.functionCall.name}`,
+          name: part.functionCall.name,
+          arguments: part.functionCall.args || {},
+        });
+      }
+    });
+
+    const inputTokens = data.usageMetadata?.promptTokenCount || 0;
+    const outputTokens = data.usageMetadata?.candidatesTokenCount || 0;
+    return {
+      text,
+      toolCalls: toolCalls.length ? toolCalls : undefined,
+      usage: { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens },
+      finishReason: toolCalls.length
+        ? 'tool_calls'
+        : candidate?.finishReason === 'MAX_TOKENS'
+        ? 'length'
+        : candidate?.finishReason === 'SAFETY'
+        ? 'refusal'
+        : 'stop',
+      model: data.modelVersion || model,
+      providerContent: { provider: 'gemini', content: parts, model },
+    };
+  }
+
+  throw new Error(
+    `All Gemini models are busy or over quota (tried ${chain.join(', ')}). Last error: ${lastError?.message ?? 'unknown'}`
+  );
 }
 
 /**

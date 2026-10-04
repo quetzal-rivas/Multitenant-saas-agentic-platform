@@ -290,6 +290,12 @@ The **API Keys & Security Vault** forms the cryptographic foundation of the plat
 - **Supabase PostgreSQL & `pgvector`:** Control plane database hosting `checkpoints`, `run_events` (Supabase Realtime), `memory_store` (pgvector), `encrypted_secrets`, and `entitlements`.
 - **ElevenLabs & Twilio Telephony:** Low-latency conversational voice synthesis and PSTN calling behind feature flag (`ENABLE_VOICE_CALLS`) and TCPA compliance attestation.
 
+### Amplify SSR Deployment
+
+The `Deploy Multitenant SaaS Stack` GitHub Actions workflow deploys the Next.js API routes, including `/api/mcp/platform`, through AWS Amplify's native SSR build. The Amplify app must be linked to this GitHub repository. Link it once in the Amplify Console, or configure the `AMPLIFY_GITHUB_TOKEN` GitHub Actions secret so the workflow can connect the app automatically. The token is only used to link the repository; it is never printed by the workflow.
+
+The deployment role needs Amplify permissions for `GetApp`, `UpdateApp`, `ListJobs`, `StopJob`, `StartJob`, and `GetJob`. The workflow now waits for the Amplify build to finish and fails unless its status is `SUCCEED`.
+
 ---
 
 ## 🚀 Quickstart & Local Development

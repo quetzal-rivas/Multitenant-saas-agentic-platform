@@ -21,6 +21,9 @@ Add these secrets and variables in your GitHub Repository under **Settings -> Se
 | `STRIPE_SECRET_KEY` | Stripe Production Secret Key | `sk_live_...` or `sk_test_...` |
 | `STRIPE_WEBHOOK_SECRET` | Stripe Webhook Signing Secret | `whsec_...` |
 | `AWS_KMS_KEY_ID` | AWS KMS Key ARN or Alias for BYOK Envelope Encryption | `alias/context-control-tenant-secrets` |
+| `SUPABASE_DB_PASSWORD` | Database password used by `supabase link` / `db push` in CI (required; the sync job fails without it) | — |
+| `CLIENT_TOKEN_SIGNING_KEY` | Base64 of a P-256 PKCS#8 PEM used to sign and verify client tokens on every instance. Required in production. Generate: `openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 \| base64 \| tr -d '\n'` | `LS0tLS1CRUdJTi...` |
+| `MCP_SMOKE_TEST_KEY` | Optional. A read-only `ctx_live_` key used by the post-deploy smoke test to run an authenticated `initialize` | `ctx_live_...` |
 
 ### ⚙️ GitHub Actions Variables (`vars.*`)
 | Variable Name | Description | Default Value |

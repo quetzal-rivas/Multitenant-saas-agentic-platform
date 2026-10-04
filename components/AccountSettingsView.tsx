@@ -12,11 +12,13 @@ import {
   PauseCircle,
   ArrowRightLeft,
   Trash2,
-  ShieldAlert
+  ShieldAlert,
+  KeyRound
 } from 'lucide-react';
+import { LlmKeysPanel } from '@/components/LlmKeysPanel';
 
 export const AccountSettingsView: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'profile' | 'billing' | 'danger'>('profile');
+  const [activeTab, setActiveTab] = useState<'profile' | 'keys' | 'billing' | 'danger'>('profile');
   
   // Profile state
   const [name, setName] = useState('Admin User');
@@ -84,6 +86,15 @@ export const AccountSettingsView: React.FC = () => {
             Profile Settings
           </button>
           <button
+            onClick={() => setActiveTab('keys')}
+            className={`w-full text-left px-4 py-2.5 rounded-lg text-sm font-medium flex items-center gap-3 transition-colors ${
+              activeTab === 'keys' ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900'
+            }`}
+          >
+            <KeyRound className="w-4 h-4" />
+            LLM keys
+          </button>
+          <button
             onClick={() => setActiveTab('billing')}
             className={`w-full text-left px-4 py-2.5 rounded-lg text-sm font-medium flex items-center gap-3 transition-colors ${
               activeTab === 'billing' ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900'
@@ -105,6 +116,7 @@ export const AccountSettingsView: React.FC = () => {
 
         {/* Content Area */}
         <div className="flex-1 space-y-8">
+          {activeTab === 'keys' && <LlmKeysPanel />}
           {activeTab === 'profile' && (
             <div className="space-y-6 animate-fadeIn">
               <h2 className="text-lg font-semibold text-white">Personal Information</h2>

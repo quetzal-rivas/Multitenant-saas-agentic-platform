@@ -50,6 +50,13 @@ export default function OnboardingPage() {
       if (!res.ok || !data.success) {
         setErrorMsg(data.error || 'Failed to complete onboarding setup');
       } else {
+        if (Array.isArray(data.secretsFailed) && data.secretsFailed.length > 0) {
+          // The workspace exists; tell the user which keys were rejected before moving on.
+          const rejected = data.secretsFailed.map((f: { field: string; reason: string }) => `${f.field}: ${f.reason}`).join('\n');
+          setErrorMsg(`Workspace created, but these keys were rejected and not saved:\n${rejected}\nAdd them later in Account & Billing → LLM keys. Continuing in 8 seconds…`);
+          setTimeout(() => router.push('/organizations'), 8000);
+          return;
+        }
         // Save tenant session to localStorage and navigate to dashboard
         if (typeof window !== 'undefined') {
           if (data.tenantId) localStorage.setItem('ctx_tenant_id', data.tenantId);
@@ -99,7 +106,7 @@ export default function OnboardingPage() {
       {/* Onboarding Wizard Card */}
       <div className="w-full max-w-xl p-8 rounded-2xl bg-zinc-900/70 border border-zinc-800 shadow-2xl backdrop-blur-md relative z-10">
         {errorMsg && (
-          <div className="mb-6 p-3.5 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs font-mono">
+          <div className="mb-6 p-3.5 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs font-mono whitespace-pre-line">
             ⚠️ {errorMsg}
           </div>
         )}

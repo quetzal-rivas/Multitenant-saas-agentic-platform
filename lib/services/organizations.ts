@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import { getSupabaseAdminClient } from '@/lib/supabase';
 import { getMembership, type MemberRole } from '@/lib/auth/membership';
-import { setTenantSecret, type BYOKProvider } from '@/lib/secrets/secrets-service';
+import { setTenantSecret, testProviderConnection, type BYOKProvider } from '@/lib/secrets/secrets-service';
 import { ServiceError } from './errors';
 
 export interface OrganizationSummary {
@@ -78,28 +78,42 @@ export async function createOrganizationWithOwner(userId: string, name: string):
   return { ...organization, role: 'owner', created: true };
 }
 
+export interface OnboardingSecretResult {
+  stored: BYOKProvider[];
+  failed: Array<{ field: string; reason: string }>;
+}
+
 /**
- * Store onboarding BYOK credentials envelope-encrypted. Unknown field names are ignored.
- * Returns the providers that were stored and the fields that failed.
+ * Store onboarding BYOK credentials envelope-encrypted. Each key is verified with its
+ * provider first, so an invalid paste is reported instead of silently stored.
+ * Unknown field names are ignored. `verify` is injectable for tests and the migration script.
  */
 export async function storeOnboardingSecrets(
   tenantId: string,
-  apiKeys: Array<{ name?: unknown; value?: unknown }>
-): Promise<{ stored: BYOKProvider[]; failed: string[] }> {
-  const stored: BYOKProvider[] = [];
-  const failed: string[] = [];
+  apiKeys: Array<{ name?: unknown; value?: unknown }>,
+  options: { verify?: boolean } = {}
+): Promise<OnboardingSecretResult> {
+  const verify = options.verify ?? true;
+  const result: OnboardingSecretResult = { stored: [], failed: [] };
   for (const entry of apiKeys) {
     const field = typeof entry?.name === 'string' ? entry.name : '';
     const value = typeof entry?.value === 'string' ? entry.value.trim() : '';
     const provider = BYOK_PROVIDER_BY_FIELD[field];
     if (!provider || !value) continue;
     try {
+      if (verify) {
+        const check = await testProviderConnection(provider, value);
+        if (!check.success) {
+          result.failed.push({ field, reason: check.message });
+          continue;
+        }
+      }
       await setTenantSecret(tenantId, provider, value);
-      stored.push(provider);
+      result.stored.push(provider);
     } catch (err) {
       console.error(`[onboarding] failed to store ${provider} secret`, err);
-      failed.push(field);
+      result.failed.push({ field, reason: 'Could not store the key. Try again from Account & Billing → LLM keys.' });
     }
   }
-  return { stored, failed };
+  return result;
 }

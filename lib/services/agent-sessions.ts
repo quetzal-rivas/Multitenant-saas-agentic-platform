@@ -100,7 +100,7 @@ export async function createSession(ctx: Ctx, raw: unknown, extra: { forkedFrom?
   const providers = await configuredProviders(ctx.tenantId);
   if (!providers.includes(body.provider)) {
     throw new ServiceError(
-      `No ${body.provider} API key is stored for this organization. Add one in Settings → Secrets first.`,
+      `No ${body.provider} API key is stored for this organization. Add one in Account & Billing → LLM keys first.`,
       'CONFLICT'
     );
   }

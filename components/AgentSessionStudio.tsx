@@ -182,7 +182,7 @@ const InstanceModal: React.FC<{
         {noProviders ? (
           <div className="p-3 rounded-lg bg-amber-950/40 border border-amber-900/60 text-xs text-amber-200 space-y-1">
             <p className="font-semibold">No LLM key stored for this organization.</p>
-            <p>Instances run on your own Anthropic, OpenAI, or Gemini key. Add one under Account &amp; Billing → Secrets, then come back.</p>
+            <p>Instances run on your own Anthropic, OpenAI, or Gemini key. Add one under Account &amp; Billing → LLM keys, then come back.</p>
           </div>
         ) : (
           <div className="space-y-4 text-xs">

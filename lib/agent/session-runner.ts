@@ -90,7 +90,7 @@ async function buildSystemPrompt(ctx: Ctx, session: AgentSession): Promise<strin
 /** Surface LLM provider failures (bad key, rate limit, unknown model) as a 502 the UI can show. */
 function providerError(provider: string, err: unknown): ServiceError {
   if (err instanceof Anthropic.AuthenticationError) {
-    return new ServiceError('The stored Anthropic API key was rejected. Update it in Settings → Secrets.', 'INVALID', 502);
+    return new ServiceError('The stored Anthropic API key was rejected. Update it in Account & Billing → LLM keys.', 'INVALID', 502);
   }
   if (err instanceof Anthropic.RateLimitError) {
     return new ServiceError('Anthropic rate limit reached for this organization’s key. Try again shortly.', 'INVALID', 502);
@@ -99,6 +99,14 @@ function providerError(provider: string, err: unknown): ServiceError {
     return new ServiceError(`Anthropic API error (${err.status ?? 'network'}): ${err.message}`, 'INVALID', 502);
   }
   const message = err instanceof Error ? err.message : String(err);
+  // OpenAI (401) and Gemini (400 API_KEY_INVALID) report a bad key without a typed error.
+  if (/API_KEY_INVALID|API key not valid|Incorrect API key|invalid_api_key|\(401\)/i.test(message)) {
+    return new ServiceError(
+      `The stored ${provider} API key was rejected by the provider. Replace it in Account & Billing → LLM keys.`,
+      'INVALID',
+      502
+    );
+  }
   return new ServiceError(`${provider} request failed: ${message.slice(0, 300)}`, 'INVALID', 502);
 }
 
@@ -125,7 +133,7 @@ export async function runSessionTurn(
   const apiKey = await getSecret(ctx.tenantId, session.provider);
   if (!apiKey) {
     throw new ServiceError(
-      `No ${session.provider} API key is stored for this organization. Add one in Settings → Secrets.`,
+      `No ${session.provider} API key is stored for this organization. Add one in Account & Billing → LLM keys.`,
       'CONFLICT'
     );
   }

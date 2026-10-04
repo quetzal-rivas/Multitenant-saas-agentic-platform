@@ -174,6 +174,16 @@ describe('Agent Studio end-to-end (fake PostgREST, scripted model)', () => {
     assert.match(String(result.tool_executions[0].output), /not enabled/);
   });
 
+  test('a key the provider rejects surfaces an actionable error, not raw provider output', async () => {
+    const failing = async () => {
+      throw new Error('Gemini API error (400): {"error":{"code":400,"message":"API key not valid. Please pass a valid API key.","status":"INVALID_ARGUMENT","details":[{"reason":"API_KEY_INVALID"}]}}');
+    };
+    await assert.rejects(
+      runSessionTurn(ctxA, sessionId, 'hi', { generate: failing as any, getSecret }),
+      (err: any) => err.statusCode === 502 && /rejected by the provider.*Account & Billing → LLM keys/.test(err.message)
+    );
+  });
+
   test('missing BYOK key and runaway tool loops are handled', async () => {
     await assert.rejects(
       runSessionTurn(ctxA, sessionId, 'hi', { generate: scriptedModel([]).generate, getSecret: async () => null }),

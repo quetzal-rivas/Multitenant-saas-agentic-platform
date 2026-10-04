@@ -34,7 +34,9 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { provider, secretValue, testFirst = true } = body;
+    const { provider, testFirst = true } = body;
+    // Pasted keys often carry stray whitespace or newlines; never store or test them raw.
+    const secretValue = typeof body.secretValue === 'string' ? body.secretValue.trim() : '';
 
     if (!provider || !secretValue) {
       return NextResponse.json(

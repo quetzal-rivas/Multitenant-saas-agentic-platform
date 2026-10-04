@@ -23,9 +23,11 @@ async function main() {
       console.log(`would migrate ${row.key_name} for org ${row.organization_id}`);
       continue;
     }
-    const { stored, failed } = await storeOnboardingSecrets(row.organization_id, [
-      { name: row.key_name, value: row.key_value },
-    ]);
+    const { stored, failed } = await storeOnboardingSecrets(
+      row.organization_id,
+      [{ name: row.key_name, value: row.key_value }],
+      { verify: false }
+    );
     if (stored.length === 1) {
       await supabase.from('tenant_api_keys').delete().eq('id', row.id);
       console.log(`migrated ${row.key_name} for org ${row.organization_id}`);

@@ -1,0 +1,3 @@
+# Supabase CLI project config. CI links this directory to the hosted project
+# (SUPABASE_PROJECT_ID) and applies supabase/migrations with `supabase db push`.
+project_id = "contextcontrol"

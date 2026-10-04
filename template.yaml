@@ -77,7 +77,7 @@ Parameters:
   SupabaseUrl:
     Type: String
     Description: Production Supabase Project URL
-    Default: "https://sttaszlypmeusqtqqqyt.supabase.co"
+    Default: "https://zguuksjxomrfhkzpubgx.supabase.co"
   SupabaseServiceRoleKey:
     Type: String
     Description: Production Supabase Service Role API Key

@@ -14,8 +14,8 @@ Add these secrets and variables in your GitHub Repository under **Settings -> Se
 | `AWS_ROLE_TO_ASSUME` | IAM Role ARN configured for GitHub Actions OIDC federation | `arn:aws:iam::123456789012:role/GitHubActionsAmplifyDeployRole` |
 | `AMPLIFY_APP_ID` | AWS Amplify App ID (multitenant-agent-app, us-east-2) | `d1iqgqn47ob84d` |
 | `SUPABASE_ACCESS_TOKEN` | Supabase Personal Access Token (for CLI migrations) | `sbp_...` |
-| `SUPABASE_PROJECT_ID` | Supabase Project Reference ID | `sttaszlypmeusqtqqqyt` |
-| `NEXT_PUBLIC_SUPABASE_URL` | Public Supabase project URL | `https://sttaszlypmeusqtqqqyt.supabase.co` |
+| `SUPABASE_PROJECT_ID` | Supabase Project Reference ID | `zguuksjxomrfhkzpubgx` |
+| `NEXT_PUBLIC_SUPABASE_URL` | Public Supabase project URL | `https://zguuksjxomrfhkzpubgx.supabase.co` |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Public Supabase anonymous API key | `eyJhbGciOiJIUzI1Ni...` |
 | `SUPABASE_SERVICE_ROLE_KEY` | Supabase Service Role Key (Server-only admin key) | `eyJhbGciOiJIUzI1Ni...` |
 | `STRIPE_SECRET_KEY` | Stripe Production Secret Key | `sk_live_...` or `sk_test_...` |

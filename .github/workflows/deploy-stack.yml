@@ -32,13 +32,16 @@ jobs:
             echo "ERROR: SUPABASE_ACCESS_TOKEN and SUPABASE_PROJECT_ID secrets are required to migrate the database."
             exit 1
           fi
-          if [[ ! "$SUPABASE_ACCESS_TOKEN" =~ ^sbp_ ]]; then
-            echo "ERROR: SUPABASE_ACCESS_TOKEN must be a personal access token (sbp_...)."
-            exit 1
-          fi
+          # Tolerate whitespace pasted into the secrets; the CLI validates the token itself.
+          export SUPABASE_ACCESS_TOKEN="$(printf '%s' "$SUPABASE_ACCESS_TOKEN" | tr -d '[:space:]')"
+          export SUPABASE_PROJECT_ID="$(printf '%s' "$SUPABASE_PROJECT_ID" | tr -d '[:space:]')"
+          case "$SUPABASE_ACCESS_TOKEN" in
+            sbp_*) ;;
+            *) echo "::warning::SUPABASE_ACCESS_TOKEN does not look like a personal access token (sbp_...). Create one under Supabase → Account → Access Tokens if linking fails." ;;
+          esac
           echo "Linking Supabase project $SUPABASE_PROJECT_ID..."
           supabase link --project-ref "$SUPABASE_PROJECT_ID"
-          supabase db push
+          supabase db push --include-all
 
   backend-aws-sam-deploy:
     name: AWS SAM Backend Infrastructure Deployment

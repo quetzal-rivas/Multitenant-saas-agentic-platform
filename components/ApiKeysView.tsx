@@ -1,9 +1,13 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { ApiKey, ContextProfile } from '@/lib/types';
-import { getProfiles } from '@/lib/data-service';
-import { INITIAL_API_KEYS, INITIAL_PROFILES } from '@/lib/demo';
+import React, { useState, useEffect, useCallback } from 'react';
+import { ApiKey } from '@/lib/types';
+import { INITIAL_API_KEYS, isDemoMode } from '@/lib/demo';
+import { PLATFORM_SCOPES, PLATFORM_TOOL_DEFINITIONS } from '@/lib/mcp/tool-catalog';
+
+const DEMO = isDemoMode();
+// Mirrors DEFAULT_API_KEY_SCOPES in lib/auth/api-keys.ts (server-only module).
+const DEFAULT_KEY_SCOPES = ['mcp:profiles:read', 'mcp:tasks:read'];
 
 import {
   KeyRound,
@@ -36,141 +40,31 @@ import {
 interface McpToolScopeDefinition {
   id: string;
   name: string;
-  spoke: 'hubspot' | 'stripe' | 'google_workspace' | 'github' | 'slack' | 'notion' | 'postgres' | 'elevenlabs';
   category: string;
   description: string;
+  requiredScope: string;
   isDestructive?: boolean;
 }
 
-export const PLATFORM_MCP_SCOPES_CATALOG: McpToolScopeDefinition[] = [
-  // CRM & Pipeline
-  {
-    id: 'crm.search_contact',
-    name: 'crm.search_contact',
-    spoke: 'hubspot',
-    category: 'CRM & Pipeline',
-    description: 'Lookup customer profiles and company records in CRM.',
-  },
-  {
-    id: 'crm.add_lead',
-    name: 'crm.add_lead',
-    spoke: 'hubspot',
-    category: 'CRM & Pipeline',
-    description: 'Create new prospect accounts and capture inbound contacts.',
-  },
-  {
-    id: 'crm.tag_contact',
-    name: 'crm.tag_contact',
-    spoke: 'hubspot',
-    category: 'CRM & Pipeline',
-    description: 'Update account tags and interest segmentation markers.',
-  },
-  {
-    id: 'crm.update_deal_stage',
-    name: 'crm.update_deal_stage',
-    spoke: 'hubspot',
-    category: 'CRM & Pipeline',
-    description: 'Advance deal stages and expected close values.',
-  },
+/** Platform tools a workspace key can call over /api/mcp/platform (from lib/mcp/tool-catalog). */
+export const PLATFORM_MCP_SCOPES_CATALOG: McpToolScopeDefinition[] = PLATFORM_TOOL_DEFINITIONS.map((tool) => ({
+  id: tool.name,
+  name: tool.title,
+  category: tool.requiredScope.split(':')[1] === 'profiles' ? 'Profiles' : tool.requiredScope.split(':')[1] === 'tasks' ? 'Tasks' : 'API Keys',
+  description: tool.description,
+  requiredScope: tool.requiredScope,
+  isDestructive: tool.sideEffect === 'write',
+}));
 
-  // Google Workspace
-  {
-    id: 'gmail.send_draft',
-    name: 'gmail.send_draft',
-    spoke: 'google_workspace',
-    category: 'Google Workspace',
-    description: 'Create and dispatch outbound emails via connected Gmail.',
-  },
-  {
-    id: 'calendar.schedule_meeting',
-    name: 'calendar.schedule_meeting',
-    spoke: 'google_workspace',
-    category: 'Google Workspace',
-    description: 'Book Google Calendar reservations and send calendar invites.',
-  },
-  {
-    id: 'drive.read_document',
-    name: 'drive.read_document',
-    spoke: 'google_workspace',
-    category: 'Google Workspace',
-    description: 'Read-only access to customer contracts and Google Docs.',
-  },
+const SCOPE_LABELS: Record<string, string> = {
+  'mcp:profiles:read': 'Read profiles',
+  'mcp:profiles:write': 'Create / edit / archive profiles',
+  'mcp:tasks:read': 'Read scheduled tasks',
+  'mcp:tasks:write': 'Schedule / cancel tasks',
+  'mcp:keys:read': 'List API keys (no secrets)',
+};
 
-  // Voice & Telephony
-  {
-    id: 'elevenlabs.trigger_call',
-    name: 'elevenlabs.trigger_call',
-    spoke: 'elevenlabs',
-    category: 'Voice & Telephony',
-    description: 'Dispatch autonomous conversational AI voice call to customer.',
-  },
-  {
-    id: 'elevenlabs.audit_transcript',
-    name: 'elevenlabs.audit_transcript',
-    spoke: 'elevenlabs',
-    category: 'Voice & Telephony',
-    description: 'Fetch post-call sentiment, recordings, and conversation transcript.',
-  },
-
-  // Stripe & Billing
-  {
-    id: 'stripe.get_invoice',
-    name: 'stripe.get_invoice',
-    spoke: 'stripe',
-    category: 'Billing & Payments',
-    description: 'Retrieve line items, status, and payment due dates.',
-  },
-  {
-    id: 'stripe.process_payment',
-    name: 'stripe.process_payment',
-    spoke: 'stripe',
-    category: 'Billing & Payments',
-    description: 'Authorize transactions against stored customer payment methods.',
-    isDestructive: true,
-  },
-  {
-    id: 'stripe.refund_status',
-    name: 'stripe.refund_status',
-    spoke: 'stripe',
-    category: 'Billing & Payments',
-    description: 'Inspect status of refunds, chargebacks, and disputes.',
-  },
-
-  // Database & Supavisor
-  {
-    id: 'postgres.read_query',
-    name: 'postgres.read_query',
-    spoke: 'postgres',
-    category: 'Database & Storage',
-    description: 'Execute isolated SELECT queries through Supavisor connection pool.',
-  },
-  {
-    id: 'postgres.delete_record',
-    name: 'postgres.delete_record',
-    spoke: 'postgres',
-    category: 'Database & Storage',
-    description: 'Delete database records. Dangerous for client tokens.',
-    isDestructive: true,
-  },
-
-  // Slack & Team Chat
-  {
-    id: 'slack.post_incident_alert',
-    name: 'slack.post_incident_alert',
-    spoke: 'slack',
-    category: 'Team Communication',
-    description: 'Send alerts to team channels on critical task outcomes.',
-  },
-
-  // Notion Knowledge Base
-  {
-    id: 'notion.search_pages',
-    name: 'notion.search_pages',
-    spoke: 'notion',
-    category: 'Team Communication',
-    description: 'Semantic search of product SOPs and escalation runbooks.',
-  },
-];
+const SCOPE_CATEGORIES = Array.from(new Set(PLATFORM_MCP_SCOPES_CATALOG.map((t) => t.category)));
 
 // Discrete TTL Options for the Dynamic Slider
 const TTL_STEPS = [
@@ -181,57 +75,89 @@ const TTL_STEPS = [
   { index: 4, duration: '24h', label: '24 Hours', seconds: 86400, description: 'Maximum client session ceiling' },
 ];
 
+interface ApiKeyRecordResponse {
+  id: string;
+  name: string;
+  key_prefix: string;
+  environment: 'live' | 'test';
+  scopes: string[];
+  tools_whitelist: string[];
+  rate_limit_rpm: number;
+  last_used_at?: string | null;
+  expires_at?: string | null;
+  created_at: string;
+}
+
+function toApiKey(record: ApiKeyRecordResponse): ApiKey {
+  return {
+    id: record.id,
+    name: record.name,
+    key: '',
+    prefix: `${record.key_prefix}…`,
+    environment: record.environment,
+    createdAt: record.created_at,
+    lastUsedAt: record.last_used_at ? new Date(record.last_used_at).toLocaleString() : 'Never',
+    scopes: record.scopes || [],
+    toolsWhitelist: record.tools_whitelist || [],
+    rateLimitMax: record.rate_limit_rpm,
+  };
+}
+
+async function readError(res: Response): Promise<string> {
+  try {
+    const body = await res.json();
+    if (body?.code === 'NO_ORGANIZATION') return 'Finish onboarding to create an organization first.';
+    return body?.error || `Request failed (${res.status})`;
+  } catch {
+    return `Request failed (${res.status})`;
+  }
+}
+
 export const ApiKeysView: React.FC = () => {
-  const [keys, setKeys] = useState<ApiKey[]>(INITIAL_API_KEYS);
-  const [profilesList, setProfilesList] = useState<ContextProfile[]>(INITIAL_PROFILES);
-  const [dynamicToolsCatalog, setDynamicToolsCatalog] = useState<McpToolScopeDefinition[]>(PLATFORM_MCP_SCOPES_CATALOG);
+  const [keys, setKeys] = useState<ApiKey[]>(DEMO ? INITIAL_API_KEYS : []);
+  const [keysLoading, setKeysLoading] = useState(!DEMO);
+  const [keysError, setKeysError] = useState<string | null>(null);
+  const [revealedKey, setRevealedKey] = useState<{ name: string; rawKey: string } | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  useEffect(() => {
-    async function loadData() {
-      const data = await getProfiles();
-      if (data && data.length > 0) {
-        setProfilesList(data);
-      }
-      try {
-        const toolsRes = await fetch('/api/mcp/tools');
-        if (toolsRes.ok) {
-          const toolsData = await toolsRes.json();
-          if (toolsData.tools && toolsData.tools.length > 0) {
-            const mapped = toolsData.tools.map((t: any) => ({
-              id: t.name || t.id,
-              name: t.name || t.id,
-              spoke: t.server || t.spoke || 'postgres',
-              category: t.category || 'MCP Server Tools',
-              description: t.description || 'Registered MCP tool capability.'
-            }));
-            setDynamicToolsCatalog(mapped);
-          }
-        }
-      } catch (err) {
-        console.warn('Failed to fetch dynamic MCP tools list, using catalog fallback:', err);
-      }
+  const loadKeys = useCallback(async () => {
+    if (DEMO) return;
+    setKeysLoading(true);
+    try {
+      const res = await fetch('/api/v1/api-keys', { cache: 'no-store' });
+      if (!res.ok) throw new Error(await readError(res));
+      const data = await res.json();
+      setKeys((data.keys || []).map(toApiKey));
+      setKeysError(null);
+    } catch (err: any) {
+      setKeysError(err?.message || 'Could not load API keys');
+    } finally {
+      setKeysLoading(false);
     }
-    loadData();
   }, []);
+
+  useEffect(() => {
+    loadKeys();
+  }, [loadKeys]);
 
   // Key creation state
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newKeyName, setNewKeyName] = useState('');
   const [newKeyEnvironment, setNewKeyEnvironment] = useState<'live' | 'test'>('live');
-  const [newKeyTools, setNewKeyTools] = useState<string[]>([
-    'crm.search_contact',
-    'crm.update_deal_stage',
-    'gmail.send_draft',
-  ]);
+  const [newKeyScopes, setNewKeyScopes] = useState<string[]>(DEFAULT_KEY_SCOPES);
+  const [newKeyTools, setNewKeyTools] = useState<string[]>([]);
+  const [newKeyExpiryDays, setNewKeyExpiryDays] = useState<number | null>(90);
+  const [isCreatingKey, setIsCreatingKey] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
 
   // Key Edit Scopes Dialog state
   const [editingKey, setEditingKey] = useState<ApiKey | null>(null);
   const [tempToolsWhitelist, setTempToolsWhitelist] = useState<string[]>([]);
+  const [tempScopes, setTempScopes] = useState<string[]>([]);
   const [scopeCategoryFilter, setScopeCategoryFilter] = useState<string>('ALL');
+  const [editError, setEditError] = useState<string | null>(null);
 
   // Short-lived Context Token Minter State
-  const [mintTenant, setMintTenant] = useState('tenant_enterprise_corp');
   const [mintUser, setMintUser] = useState('user_456');
   const [mintProfile, setMintProfile] = useState('sales-agent');
   const [mintTtlStep, setMintTtlStep] = useState<number>(1); // Default to 1h
@@ -240,6 +166,7 @@ export const ApiKeysView: React.FC = () => {
     'gmail.send_draft',
   ]);
   const [isMinting, setIsMinting] = useState(false);
+  const [mintError, setMintError] = useState<string | null>(null);
   const [mintedResponse, setMintedResponse] = useState<{
     token: string;
     expiresAt: string;
@@ -253,23 +180,46 @@ export const ApiKeysView: React.FC = () => {
     setTimeout(() => setCopiedId(null), 2000);
   };
 
+  const toggle = (list: string[], value: string) =>
+    list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
+
   const handleOpenEditScopes = (key: ApiKey) => {
     setEditingKey(key);
+    setEditError(null);
     setTempToolsWhitelist(key.toolsWhitelist ? [...key.toolsWhitelist] : []);
+    setTempScopes(key.scopes ? [...key.scopes] : []);
   };
 
-  const handleSaveEditedScopes = () => {
+  const handleSaveEditedScopes = async () => {
     if (!editingKey) return;
-    setKeys((prev) =>
-      prev.map((k) => (k.id === editingKey.id ? { ...k, toolsWhitelist: tempToolsWhitelist } : k))
-    );
-    setEditingKey(null);
+    if (DEMO) {
+      setKeys((prev) =>
+        prev.map((k) => (k.id === editingKey.id ? { ...k, toolsWhitelist: tempToolsWhitelist, scopes: tempScopes } : k))
+      );
+      setEditingKey(null);
+      return;
+    }
+    if (tempScopes.length === 0) {
+      setEditError('Grant at least one scope, or revoke the key instead.');
+      return;
+    }
+    try {
+      const res = await fetch(`/api/v1/api-keys/${editingKey.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scopes: tempScopes, toolsWhitelist: tempToolsWhitelist }),
+      });
+      if (!res.ok) throw new Error(await readError(res));
+      const { apiKey } = await res.json();
+      setKeys((prev) => prev.map((k) => (k.id === apiKey.id ? toApiKey(apiKey) : k)));
+      setEditingKey(null);
+    } catch (err: any) {
+      setEditError(err?.message || 'Could not update key');
+    }
   };
 
   const handleToggleScope = (toolId: string) => {
-    setTempToolsWhitelist((prev) =>
-      prev.includes(toolId) ? prev.filter((id) => id !== toolId) : [...prev, toolId]
-    );
+    setTempToolsWhitelist((prev) => toggle(prev, toolId));
   };
 
   const handleSelectAllScopes = () => {
@@ -280,47 +230,73 @@ export const ApiKeysView: React.FC = () => {
     setTempToolsWhitelist([]);
   };
 
-  const handleRevokeKey = (keyId: string) => {
-    if (confirm('Are you sure you want to revoke this secret API key? Any server backend using it will be blocked.')) {
+  const handleRevokeKey = async (keyId: string) => {
+    if (!confirm('Revoke this secret API key? Any server or MCP client using it will be blocked immediately.')) return;
+    if (DEMO) {
       setKeys((prev) => prev.filter((k) => k.id !== keyId));
+      return;
+    }
+    try {
+      const res = await fetch(`/api/v1/api-keys/${keyId}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error(await readError(res));
+      setKeys((prev) => prev.filter((k) => k.id !== keyId));
+    } catch (err: any) {
+      setKeysError(err?.message || 'Could not revoke key');
     }
   };
 
-  const handleCreateKey = () => {
-    if (!newKeyName.trim()) return;
-    const prefixStr = newKeyEnvironment === 'live' ? 'ctx_live_' : 'ctx_test_';
-    const rawSecret = `${prefixStr}${Math.random().toString(36).substring(2, 15)}${Math.random().toString(36).substring(2, 15)}`;
-
-    const newKey: ApiKey = {
-      id: `key-${Date.now()}`,
-      name: newKeyName,
-      key: rawSecret,
-      prefix: `${rawSecret.slice(0, 12)}...`,
-      environment: newKeyEnvironment,
-      createdAt: new Date().toISOString(),
-      lastUsedAt: 'Never',
-      scopes: ['context:resolve', 'profiles:read'],
-      toolsWhitelist: newKeyTools,
-      rateLimitUsed: 0,
-      rateLimitMax: 60,
-    };
-
-    setKeys([newKey, ...keys]);
+  const resetCreateForm = () => {
     setNewKeyName('');
-    setNewKeyTools(['crm.search_contact', 'crm.update_deal_stage', 'gmail.send_draft']);
-    setShowCreateModal(false);
+    setNewKeyScopes(DEFAULT_KEY_SCOPES);
+    setNewKeyTools([]);
+    setNewKeyExpiryDays(90);
+    setCreateError(null);
+  };
+
+  const handleCreateKey = async () => {
+    if (!newKeyName.trim() || newKeyScopes.length === 0) return;
+    if (DEMO) {
+      setCreateError('Key creation is disabled in demo mode.');
+      return;
+    }
+    setIsCreatingKey(true);
+    setCreateError(null);
+    try {
+      const res = await fetch('/api/v1/api-keys', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: newKeyName.trim(),
+          environment: newKeyEnvironment,
+          scopes: newKeyScopes,
+          toolsWhitelist: newKeyTools,
+          expiresInDays: newKeyExpiryDays,
+        }),
+      });
+      if (!res.ok) throw new Error(await readError(res));
+      const { apiKey } = await res.json();
+      setKeys((prev) => [toApiKey(apiKey), ...prev]);
+      setRevealedKey({ name: apiKey.name, rawKey: apiKey.rawKey });
+      setShowCreateModal(false);
+      resetCreateForm();
+    } catch (err: any) {
+      setCreateError(err?.message || 'Could not create key');
+    } finally {
+      setIsCreatingKey(false);
+    }
   };
 
   const handleMintToken = async () => {
     setIsMinting(true);
+    setMintError(null);
     const selectedTtl = TTL_STEPS[mintTtlStep];
 
     try {
+      // The tenant is taken from your session on the server, never from this form.
       const res = await fetch('/api/v1/context/token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          tenant: mintTenant,
           user: mintUser,
           profile: mintProfile,
           ttlSeconds: selectedTtl.seconds,
@@ -329,9 +305,7 @@ export const ApiKeysView: React.FC = () => {
         }),
       });
 
-      if (!res.ok) {
-        throw new Error('Token minting failed');
-      }
+      if (!res.ok) throw new Error(await readError(res));
 
       const data = await res.json();
       setMintedResponse({
@@ -340,42 +314,12 @@ export const ApiKeysView: React.FC = () => {
         ttlFormatted: data.ttlFormatted || selectedTtl.label,
         claims: data.claims,
       });
-    } catch (err) {
-      console.warn('Backend route failed, using local cryptographic mint fallback:', err);
-      const now = Math.floor(Date.now() / 1000);
-      const exp = now + selectedTtl.seconds;
-      const claims = {
-        iss: 'https://api.contextcontrol.dev',
-        sub: mintUser,
-        aud: 'context-control-client',
-        tenant_id: mintTenant,
-        profile_slug: mintProfile,
-        iat: now,
-        exp: exp,
-        ttl: selectedTtl.duration,
-        tools_whitelist: mintAllowedTools,
-        rate_limit: { rpm: 60, burst: 10 },
-      };
-      const b64 = (val: any) =>
-        btoa(JSON.stringify(val)).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
-      const token = `eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.${b64(claims)}.sig_${Math.random().toString(36).substring(2, 16)}`;
-      setMintedResponse({
-        token,
-        expiresAt: new Date(exp * 1000).toISOString(),
-        ttlFormatted: selectedTtl.label,
-        claims,
-      });
+    } catch (err: any) {
+      setMintedResponse(null);
+      setMintError(err?.message || 'Token minting failed');
     } finally {
       setIsMinting(false);
     }
-  };
-
-  // Rate limit helper style
-  const getRateLimitColor = (used: number = 0, max: number = 60) => {
-    const percentage = (used / max) * 100;
-    if (percentage >= 85) return { bar: 'bg-rose-500', text: 'text-rose-400', border: 'border-rose-900/60' };
-    if (percentage >= 50) return { bar: 'bg-amber-500', text: 'text-amber-400', border: 'border-amber-900/60' };
-    return { bar: 'bg-emerald-500', text: 'text-emerald-400', border: 'border-emerald-900/60' };
   };
 
   const filteredCatalogForDialog =
@@ -433,13 +377,26 @@ export const ApiKeysView: React.FC = () => {
           </div>
         </div>
 
+        {keysError && (
+          <div className="p-3 rounded-lg bg-rose-950/40 border border-rose-900/60 text-xs font-mono text-rose-300 flex items-center gap-2">
+            <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+            <span>{keysError}</span>
+          </div>
+        )}
+        {keysLoading && <p className="text-xs font-mono text-zinc-500">Loading keys…</p>}
+        {!keysLoading && !keysError && keys.length === 0 && (
+          <p className="text-xs font-mono text-zinc-500">
+            No keys yet. Create one to connect an MCP client or call the API from a server.
+          </p>
+        )}
+
         <div className="divide-y divide-zinc-800/80">
           {keys.map((k) => {
-            const used = k.rateLimitUsed ?? 12;
             const max = k.rateLimitMax ?? 60;
-            const pct = Math.min(100, Math.round((used / max) * 100));
-            const rlStyle = getRateLimitColor(used, max);
-            const whitelist = k.toolsWhitelist || ['crm.search_contact', 'gmail.send_draft'];
+            const whitelist = k.toolsWhitelist || [];
+            const reachableTools = PLATFORM_MCP_SCOPES_CATALOG.filter(
+              (t) => k.scopes.includes('*') || k.scopes.includes(t.requiredScope)
+            ).filter((t) => whitelist.length === 0 || whitelist.includes(t.id));
 
             return (
               <div key={k.id} className="py-5 space-y-3.5">
@@ -470,24 +427,6 @@ export const ApiKeysView: React.FC = () => {
                   {/* Right Action Buttons */}
                   <div className="flex items-center gap-2 shrink-0">
                     <button
-                      onClick={() => handleCopy(k.id, k.key)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-zinc-200 text-xs font-mono transition-colors"
-                      title="Copy raw secret key"
-                    >
-                      {copiedId === k.id ? (
-                        <>
-                          <Check className="w-3.5 h-3.5 text-emerald-400" />
-                          <span className="text-emerald-400">Copied</span>
-                        </>
-                      ) : (
-                        <>
-                          <Copy className="w-3.5 h-3.5 text-zinc-400" />
-                          <span>Copy Key</span>
-                        </>
-                      )}
-                    </button>
-
-                    <button
                       onClick={() => handleOpenEditScopes(k)}
                       className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-950/70 hover:bg-indigo-900/80 border border-indigo-700/80 text-indigo-200 text-xs font-mono transition-colors font-medium"
                       title="Configure allowed MCP tool permissions"
@@ -513,7 +452,7 @@ export const ApiKeysView: React.FC = () => {
                     <div className="flex items-center justify-between text-[11px] font-mono">
                       <span className="text-zinc-400 font-semibold flex items-center gap-1.5">
                         <Shield className="w-3.5 h-3.5 text-indigo-400" />
-                        <span>Authorized MCP Tools Whitelist ({whitelist.length})</span>
+                        <span>Scopes ({k.scopes.length}) · Reachable tools ({reachableTools.length})</span>
                       </span>
                       <button
                         onClick={() => handleOpenEditScopes(k)}
@@ -524,10 +463,21 @@ export const ApiKeysView: React.FC = () => {
                     </div>
 
                     <div className="flex flex-wrap gap-1.5">
-                      {whitelist.length > 0 ? (
-                        whitelist.map((toolId) => {
+                      {k.scopes.map((scope) => (
+                        <span
+                          key={scope}
+                          className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-mono border bg-indigo-950/60 text-indigo-200 border-indigo-800/60"
+                          title={SCOPE_LABELS[scope] || scope}
+                        >
+                          {scope}
+                        </span>
+                      ))}
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {reachableTools.length > 0 ? (
+                        reachableTools.map(({ id: toolId }) => {
                           const toolMeta = PLATFORM_MCP_SCOPES_CATALOG.find((t) => t.id === toolId);
-                          const isDestructive = toolMeta?.isDestructive || toolId.includes('delete') || toolId.includes('process_payment');
+                          const isDestructive = !!toolMeta?.isDestructive;
                           return (
                             <span
                               key={toolId}
@@ -545,7 +495,7 @@ export const ApiKeysView: React.FC = () => {
                         })
                       ) : (
                         <span className="text-[11px] font-mono text-rose-400 italic">
-                          No tools authorized. All agent tool calls using this key will be rejected.
+                          No tools reachable: the tool whitelist excludes every tool these scopes allow.
                         </span>
                       )}
                     </div>
@@ -556,26 +506,14 @@ export const ApiKeysView: React.FC = () => {
                     <div className="flex items-center justify-between text-[11px] font-mono">
                       <span className="text-zinc-400 font-semibold flex items-center gap-1.5">
                         <Gauge className="w-3.5 h-3.5 text-amber-400" />
-                        <span>Rate Telemetry</span>
+                        <span>Rate Limit</span>
                       </span>
-                      <span className={`font-bold ${rlStyle.text}`}>
-                        {used} / {max} req/min
-                      </span>
+                      <span className="font-bold text-emerald-400">{max} req/min</span>
                     </div>
-
-                    {/* Visual Progress Bar */}
-                    <div className="space-y-1">
-                      <div className="w-full h-2 rounded-full bg-zinc-800 overflow-hidden">
-                        <div
-                          className={`h-full rounded-full transition-all duration-500 ${rlStyle.bar}`}
-                          style={{ width: `${pct}%` }}
-                        />
-                      </div>
-                      <div className="flex items-center justify-between text-[10px] font-mono text-zinc-500">
-                        <span>Free Tier Ceiling</span>
-                        <span>{pct}% Consumed</span>
-                      </div>
-                    </div>
+                    <p className="text-[10px] font-mono text-zinc-500">
+                      Burst limit enforced per server instance.
+                      {whitelist.length === 0 ? ' No tool whitelist: every tool its scopes allow.' : ` Whitelist narrows to ${whitelist.length} tool(s).`}
+                    </p>
                   </div>
                 </div>
               </div>
@@ -614,13 +552,9 @@ export const ApiKeysView: React.FC = () => {
             <label className="text-[11px] font-mono font-semibold uppercase text-zinc-400 block mb-1.5">
               Scope Tenant:
             </label>
-            <input
-              type="text"
-              value={mintTenant}
-              onChange={(e) => setMintTenant(e.target.value)}
-              placeholder="e.g. tenant_enterprise_corp"
-              className="w-full bg-[#0a0c10] border border-zinc-700/80 rounded-lg px-3 py-2 text-xs font-mono text-zinc-200 focus:outline-none focus:border-cyan-500"
-            />
+            <div className="w-full bg-[#0a0c10] border border-zinc-800 rounded-lg px-3 py-2 text-xs font-mono text-zinc-500">
+              Your organization (set by the server)
+            </div>
           </div>
 
           <div>
@@ -640,17 +574,13 @@ export const ApiKeysView: React.FC = () => {
             <label className="text-[11px] font-mono font-semibold uppercase text-zinc-400 block mb-1.5">
               Target Context Profile:
             </label>
-            <select
+            <input
+              type="text"
               value={mintProfile}
               onChange={(e) => setMintProfile(e.target.value)}
+              placeholder="profile slug, e.g. sales-agent"
               className="w-full bg-[#0a0c10] border border-zinc-700/80 rounded-lg px-3 py-2 text-xs font-mono text-zinc-200 focus:outline-none focus:border-cyan-500"
-            >
-              {INITIAL_PROFILES.map((p) => (
-                <option key={p.slug} value={p.slug}>
-                  {p.name} ({p.slug})
-                </option>
-              ))}
-            </select>
+            />
           </div>
         </div>
 
@@ -750,6 +680,12 @@ export const ApiKeysView: React.FC = () => {
           </span>
         </div>
 
+        {mintError && (
+          <p className="text-xs font-mono text-rose-400 flex items-center gap-1.5">
+            <AlertTriangle className="w-3.5 h-3.5" /> {mintError}
+          </p>
+        )}
+
         {/* Minted Output Box */}
         {mintedResponse && (
           <div className="p-4 rounded-xl bg-[#090b0f] border border-cyan-900/60 text-xs font-mono space-y-3">
@@ -810,7 +746,7 @@ export const ApiKeysView: React.FC = () => {
                 <div className="flex items-center gap-2">
                   <Shield className="w-4 h-4 text-indigo-400" />
                   <h3 className="text-base font-bold text-white">
-                    Edit Allowed MCP Scopes Whitelist
+                    Edit Key Scopes & Tool Whitelist
                   </h3>
                 </div>
                 <p className="text-xs text-zinc-400 mt-1 font-mono">
@@ -826,6 +762,37 @@ export const ApiKeysView: React.FC = () => {
               </button>
             </div>
 
+            {/* Scopes */}
+            <div className="space-y-2">
+              <p className="text-[11px] font-mono font-semibold uppercase text-zinc-400">Scopes</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                {PLATFORM_SCOPES.map((scope) => (
+                  <label key={scope} className="flex items-center gap-2 text-xs font-mono text-zinc-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={tempScopes.includes(scope) || tempScopes.includes('*')}
+                      disabled={tempScopes.includes('*')}
+                      onChange={() => setTempScopes((prev) => toggle(prev, scope))}
+                      className="rounded bg-zinc-900 border-zinc-700 text-indigo-500"
+                    />
+                    <span title={scope}>{SCOPE_LABELS[scope] || scope}</span>
+                  </label>
+                ))}
+              </div>
+              {tempScopes.includes('*') && (
+                <button
+                  type="button"
+                  onClick={() => setTempScopes(PLATFORM_SCOPES)}
+                  className="text-[11px] font-mono text-amber-400 hover:text-amber-300"
+                >
+                  This key has full access (*). Switch to explicit scopes →
+                </button>
+              )}
+              <p className="text-[11px] font-mono text-zinc-500 pt-1">
+                Tool whitelist (optional): leave empty to allow every tool the scopes permit, or tick tools to narrow further.
+              </p>
+            </div>
+
             {/* Quick Actions & Filter */}
             <div className="flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
               {/* Category Filter */}
@@ -838,12 +805,9 @@ export const ApiKeysView: React.FC = () => {
                   className="bg-[#121624] border border-zinc-700 rounded px-2.5 py-1 text-zinc-200"
                 >
                   <option value="ALL">All Categories</option>
-                  <option value="CRM & Pipeline">CRM & Pipeline</option>
-                  <option value="Google Workspace">Google Workspace</option>
-                  <option value="Voice & Telephony">Voice & Telephony</option>
-                  <option value="Billing & Payments">Billing & Payments</option>
-                  <option value="Database & Storage">Database & Storage</option>
-                  <option value="Team Communication">Team Communication</option>
+                  {SCOPE_CATEGORIES.map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
                 </select>
               </div>
 
@@ -892,13 +856,14 @@ export const ApiKeysView: React.FC = () => {
                           <span className="font-mono text-xs font-bold text-white">
                             {tool.id}
                           </span>
+                          <span className="text-[10px] font-mono text-indigo-400">{tool.requiredScope}</span>
                           <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-400">
                             {tool.category}
                           </span>
                         </div>
                         {tool.isDestructive && (
                           <span className="text-[10px] font-mono px-2 py-0.2 rounded bg-rose-950 text-rose-400 border border-rose-800">
-                            High Risk / Destructive
+                            Writes data
                           </span>
                         )}
                       </div>
@@ -916,8 +881,10 @@ export const ApiKeysView: React.FC = () => {
               <span className="text-xs font-mono text-zinc-400">
                 Authorized:{' '}
                 <strong className="text-indigo-400">{tempToolsWhitelist.length}</strong> of{' '}
-                {PLATFORM_MCP_SCOPES_CATALOG.length} platform tools
+                {PLATFORM_MCP_SCOPES_CATALOG.length} tools whitelisted
+                {tempToolsWhitelist.length === 0 && ' (no narrowing)'}
               </span>
+              {editError && <span className="text-xs font-mono text-rose-400">{editError}</span>}
 
               <div className="flex items-center gap-2">
                 <button
@@ -932,7 +899,7 @@ export const ApiKeysView: React.FC = () => {
                   onClick={handleSaveEditedScopes}
                   className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shadow-md"
                 >
-                  Save Tool Whitelist
+                  Save Changes
                 </button>
               </div>
             </div>
@@ -998,52 +965,119 @@ export const ApiKeysView: React.FC = () => {
                 </div>
               </div>
 
-              {/* Initial Tool Permissions */}
+              {/* Scopes */}
               <div>
-                <label className="text-xs font-mono text-zinc-300 block mb-1.5">
-                  Initial MCP Tools Whitelist
-                </label>
-                <div className="max-h-40 overflow-y-auto space-y-1.5 p-2 rounded-lg bg-[#07090f] border border-zinc-800">
-                  {PLATFORM_MCP_SCOPES_CATALOG.slice(0, 8).map((tool) => {
-                    const isChecked = newKeyTools.includes(tool.id);
-                    return (
-                      <label
-                        key={tool.id}
-                        className="flex items-center gap-2 text-xs font-mono text-zinc-300 cursor-pointer hover:text-white"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={isChecked}
-                          onChange={() =>
-                            setNewKeyTools((prev) =>
-                              prev.includes(tool.id)
-                                ? prev.filter((id) => id !== tool.id)
-                                : [...prev, tool.id]
-                            )
-                          }
-                          className="rounded bg-zinc-900 border-zinc-700 text-emerald-500"
-                        />
-                        <span>{tool.id}</span>
-                      </label>
-                    );
-                  })}
+                <label className="text-xs font-mono text-zinc-300 block mb-1.5">Scopes</label>
+                <div className="space-y-1.5 p-2 rounded-lg bg-[#07090f] border border-zinc-800">
+                  {PLATFORM_SCOPES.map((scope) => (
+                    <label key={scope} className="flex items-center gap-2 text-xs font-mono text-zinc-300 cursor-pointer hover:text-white">
+                      <input
+                        type="checkbox"
+                        checked={newKeyScopes.includes(scope)}
+                        onChange={() => setNewKeyScopes((prev) => toggle(prev, scope))}
+                        className="rounded bg-zinc-900 border-zinc-700 text-emerald-500"
+                      />
+                      <span>{SCOPE_LABELS[scope] || scope}</span>
+                      <span className="text-[10px] text-zinc-500">{scope}</span>
+                    </label>
+                  ))}
                 </div>
               </div>
+
+              {/* Optional tool narrowing */}
+              <div>
+                <label className="text-xs font-mono text-zinc-300 block mb-1.5">
+                  Restrict to specific tools (optional)
+                </label>
+                <div className="max-h-32 overflow-y-auto space-y-1.5 p-2 rounded-lg bg-[#07090f] border border-zinc-800">
+                  {PLATFORM_MCP_SCOPES_CATALOG.filter((t) => newKeyScopes.includes(t.requiredScope)).map((tool) => (
+                    <label
+                      key={tool.id}
+                      className="flex items-center gap-2 text-xs font-mono text-zinc-300 cursor-pointer hover:text-white"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={newKeyTools.includes(tool.id)}
+                        onChange={() => setNewKeyTools((prev) => toggle(prev, tool.id))}
+                        className="rounded bg-zinc-900 border-zinc-700 text-emerald-500"
+                      />
+                      <span>{tool.id}</span>
+                    </label>
+                  ))}
+                </div>
+                <p className="text-[10px] font-mono text-zinc-500 mt-1">
+                  {newKeyTools.length === 0 ? 'None ticked: all tools the scopes allow.' : `${newKeyTools.length} tool(s) selected.`}
+                </p>
+              </div>
+
+              <div>
+                <label className="text-xs font-mono text-zinc-300 block mb-1">Expires</label>
+                <select
+                  value={newKeyExpiryDays ?? 'never'}
+                  onChange={(e) => setNewKeyExpiryDays(e.target.value === 'never' ? null : Number(e.target.value))}
+                  className="bg-[#090b0f] border border-zinc-700 rounded-lg px-3 py-2 text-xs font-mono text-white"
+                >
+                  <option value={30}>In 30 days</option>
+                  <option value={90}>In 90 days</option>
+                  <option value={365}>In 1 year</option>
+                  <option value="never">Never</option>
+                </select>
+              </div>
+
+              {createError && <p className="text-xs font-mono text-rose-400">{createError}</p>}
             </div>
 
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-zinc-800">
               <button
-                onClick={() => setShowCreateModal(false)}
+                onClick={() => { setShowCreateModal(false); resetCreateForm(); }}
                 className="px-3.5 py-2 rounded-lg text-xs font-medium text-zinc-400 hover:text-white"
               >
                 Cancel
               </button>
               <button
                 onClick={handleCreateKey}
-                disabled={!newKeyName.trim()}
+                disabled={!newKeyName.trim() || newKeyScopes.length === 0 || isCreatingKey}
                 className="px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold text-xs disabled:opacity-50"
               >
-                Generate Key
+                {isCreatingKey ? 'Generating…' : 'Generate Key'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* ==================================================================== */}
+      {/* MODAL 3: ONE-TIME SECRET REVEAL */}
+      {/* ==================================================================== */}
+      {revealedKey && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-lg bg-[#0e131e] border border-emerald-800/70 rounded-2xl p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+              <h3 className="text-base font-bold text-white">Key created: {revealedKey.name}</h3>
+            </div>
+            <p className="text-xs text-amber-300 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              Copy it now. Only a hash is stored, so this secret cannot be shown again.
+            </p>
+            <p className="text-emerald-200 bg-black/60 p-3 rounded border border-zinc-800 font-mono text-xs break-all select-all">
+              {revealedKey.rawKey}
+            </p>
+            <p className="text-[11px] font-mono text-zinc-400">
+              Use it as <code className="text-emerald-400">Authorization: Bearer …</code>. The Platform MCP tab generates ready-to-paste client configs.
+            </p>
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-zinc-800">
+              <button
+                onClick={() => handleCopy('revealed', revealedKey.rawKey)}
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-mono"
+              >
+                {copiedId === 'revealed' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                <span>{copiedId === 'revealed' ? 'Copied' : 'Copy key'}</span>
+              </button>
+              <button
+                onClick={() => setRevealedKey(null)}
+                className="px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold text-xs"
+              >
+                I saved it
               </button>
             </div>
           </div>

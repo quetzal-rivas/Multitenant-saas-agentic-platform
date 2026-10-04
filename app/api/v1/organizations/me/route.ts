@@ -2,11 +2,12 @@ export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/utils/supabase/server';
 
-import { requireAuth, AuthError } from '@/lib/auth/require-auth';
+import { requireSessionUser, AuthError } from '@/lib/auth/require-auth';
 
-export async function GET(req: NextRequest) {
+export async function GET(_req: NextRequest) {
   try {
-    const auth = await requireAuth(req, 'session');
+    // No membership required: users with zero organizations get an empty list.
+    const auth = await requireSessionUser();
     const supabase = await createClient();
 
 

@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { demoOnlyGuard } from '@/lib/http/demo-only';
 import { ProprietaryMcpServer } from '@/lib/demo/legacy_mocks/mcp-server';
 import { PLATFORM_MCP_TOOLS_CATALOG } from '@/lib/demo/legacy_mocks/team-blueprint-manager';
 
 export async function GET(req: NextRequest) {
+  const blocked = demoOnlyGuard();
+  if (blocked) return blocked;
+
   try {
     const url = new URL(req.url);
     const profileSlug = url.searchParams.get('profile') || undefined;

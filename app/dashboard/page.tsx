@@ -25,15 +25,18 @@ import { CreateProfileModal } from '@/components/CreateProfileModal';
 import { AccountSettingsView } from '@/components/AccountSettingsView';
 import { FunctionStudio } from '@/components/FunctionStudio';
 import { DemoBanner } from '@/components/DemoBanner';
-import { INITIAL_PROFILES, INITIAL_SOURCES } from '@/lib/demo';
+import { INITIAL_PROFILES, INITIAL_SOURCES, isDemoMode } from '@/lib/demo';
 import { ContextProfile, ContextSource } from '@/lib/types';
 
+// Sample workspace content is only shown in demo mode; real accounts start empty.
+const DEMO = isDemoMode();
+
 export default function DashboardPage() {
-  const [profiles, setProfiles] = useState<ContextProfile[]>(INITIAL_PROFILES);
-  const [sources, setSources] = useState<ContextSource[]>(INITIAL_SOURCES);
+  const [profiles, setProfiles] = useState<ContextProfile[]>(DEMO ? INITIAL_PROFILES : []);
+  const [sources, setSources] = useState<ContextSource[]>(DEMO ? INITIAL_SOURCES : []);
   const [skillsCount, setSkillsCount] = useState<number>(5);
   const [activeTab, setActiveTab] = useState<string>('profiles');
-  const [selectedProfile, setSelectedProfile] = useState<ContextProfile | null>(profiles[0]);
+  const [selectedProfile, setSelectedProfile] = useState<ContextProfile | null>(profiles[0] ?? null);
   const [studioProfileId, setStudioProfileId] = useState<string | undefined>(undefined);
   const [studioThreadId, setStudioThreadId] = useState<string | undefined>(undefined);
 

@@ -1,8 +1,12 @@
-export const dynamic = 'force-static';
+export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
+import { demoOnlyGuard } from '@/lib/http/demo-only';
 import { ProprietaryMcpServer } from '@/lib/demo/legacy_mocks/mcp-server';
 
 export async function POST(req: NextRequest) {
+  const blocked = demoOnlyGuard();
+  if (blocked) return blocked;
+
   try {
     const body = await req.json();
     const { toolName, toolArgs, profileSlug } = body;

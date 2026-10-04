@@ -3,8 +3,16 @@ import { NextRequest, NextResponse } from 'next/server';
 import { ProprietaryMcpServer } from '@/lib/demo/legacy_mocks/mcp-server';
 import { createClient } from '@/utils/supabase/server';
 import crypto from 'crypto';
+import { isDemoMode } from '@/lib/demo';
+import { POST as platformPOST } from './platform/route';
 
 export async function POST(req: NextRequest) {
+  // Outside demo mode, the legacy profile endpoint serves the real platform MCP server
+  // (same keys, same tools) so existing client configs keep working.
+  if (!isDemoMode()) {
+    return platformPOST(req);
+  }
+
   try {
     const url = new URL(req?.url || 'http://localhost');
     const authHeader = req.headers.get('authorization') || '';

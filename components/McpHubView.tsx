@@ -42,6 +42,8 @@ import {
 } from '@/lib/demo/legacy_mocks/types';
 import { HOSTED_MCP_SERVERS, MCP_SKILLS } from '@/lib/demo/legacy_mocks/hosted-servers';
 import { McpProfileManager } from '@/lib/demo/legacy_mocks/profile-manager';
+import { PLATFORM_TOOL_DEFINITIONS } from '@/lib/mcp/tool-catalog';
+import { API_KEY_PLACEHOLDER, generateClientConfigSnippets, platformMcpEndpoint } from '@/lib/mcp/client-config';
 import { ContextProfile } from '@/lib/types';
 import { PlatformMcpServerView } from './PlatformMcpServerView';
 
@@ -64,20 +66,11 @@ export const McpHubView: React.FC<McpHubViewProps> = ({
   const [oauthToast, setOauthToast] = useState<{ title: string; message: string } | null>(null);
 
   // Inspector & Tester state
-  const [testerMethod, setTesterMethod] = useState<'tools/list' | 'tools/call' | 'prompts/list' | 'prompts/get' | 'resources/list' | 'initialize'>('tools/call');
-  const [testerToolName, setTesterToolName] = useState<string>('context_resolve_profile');
-  const [testerArgsJson, setTesterArgsJson] = useState<string>(
-    JSON.stringify(
-      {
-        profile_slug: 'sales-agent',
-        tenant_id: 'acme-corp',
-        user_id: 'usr_vip_9482',
-        query: 'What is our refund and SLA policy for enterprise?',
-      },
-      null,
-      2
-    )
-  );
+  const [testerMethod, setTesterMethod] = useState<'tools/list' | 'tools/call' | 'initialize'>('tools/list');
+  const [testerToolName, setTesterToolName] = useState<string>('list_mcp_profiles');
+  const [testerArgsJson, setTesterArgsJson] = useState<string>(JSON.stringify({ limit: 20 }, null, 2));
+  // Workspace API key used by the tester and client snippets; kept in memory only.
+  const [testerApiKey, setTesterApiKey] = useState<string>('');
   const [testerOutput, setTesterOutput] = useState<any>(null);
   const [isExecutingTool, setIsExecutingTool] = useState(false);
   const [executionTimeMs, setExecutionTimeMs] = useState<number | null>(null);
@@ -380,19 +373,22 @@ export const McpHubView: React.FC<McpHubViewProps> = ({
                 name: testerToolName,
                 arguments: parsedArgs,
               }
-            : testerMethod === 'prompts/get'
-            ? {
-                name: `context-prompt-${contextProfiles[0]?.slug || 'sales-agent'}`,
-                arguments: { tenant_id: 'acme-corp', user_id: 'usr_vip_9482', query: 'Status update' },
-              }
+            : testerMethod === 'initialize'
+            ? { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'mcp-hub-tester', version: '1.0.0' } }
             : {},
       };
 
-      const res = await fetch(`/api/mcp?profile=${selectedProfile?.slug || 'fullstack-dev'}`, {
+      const key = testerApiKey.trim() || (selectedProfile?.apiKey?.startsWith('ctx_') ? selectedProfile.apiKey : '');
+      if (!key) {
+        setTesterOutput({ error: 'Paste a workspace API key (API Keys tab) to call the platform MCP server.' });
+        setIsExecutingTool(false);
+        return;
+      }
+      const res = await fetch('/api/mcp/platform', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${selectedProfile?.apiKey || 'test_token'}`,
+          Authorization: `Bearer ${key}`,
         },
         body: JSON.stringify(jsonRpcPayload),
       });
@@ -417,7 +413,8 @@ export const McpHubView: React.FC<McpHubViewProps> = ({
 
   // Base URL helper
   const origin = typeof window !== 'undefined' ? window.location.origin : 'https://your-domain.run.app';
-  const mcpEndpointUrl = `${origin}/api/mcp?profile=${selectedProfile?.slug || 'default'}`;
+  const mcpEndpointUrl = platformMcpEndpoint(origin);
+  const clientSnippets = generateClientConfigSnippets(testerApiKey.trim(), origin);
 
   // Server icon resolver
   const renderServerIcon = (icon: string) => {
@@ -779,10 +776,14 @@ export const McpHubView: React.FC<McpHubViewProps> = ({
 
             <div className="flex items-center gap-2">
               <span className="text-xs text-zinc-400 font-mono">
-                API Key: <code className="text-emerald-400">{selectedProfile.apiKey.slice(0, 14)}...</code>
+                API Key:{' '}
+                <code className="text-emerald-400">
+                  {selectedProfile.apiKey ? `${selectedProfile.apiKey.slice(0, 14)}...` : 'manage under API Keys'}
+                </code>
               </span>
               <button
-                onClick={() => handleCopy(selectedProfile.apiKey, 'api-key')}
+                disabled={!selectedProfile.apiKey}
+                onClick={() => selectedProfile.apiKey && handleCopy(selectedProfile.apiKey, 'api-key')}
                 className="p-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs"
                 title="Copy API Key"
               >
@@ -1031,115 +1032,53 @@ export const McpHubView: React.FC<McpHubViewProps> = ({
             </button>
           </div>
 
+          <div className="space-y-2">
+            <label className="text-[11px] uppercase font-mono text-zinc-500 block">Workspace API key (not saved)</label>
+            <input
+              type="password"
+              value={testerApiKey}
+              onChange={(e) => setTesterApiKey(e.target.value)}
+              placeholder="ctx_live_…  (create one in the API Keys tab)"
+              autoComplete="off"
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-md p-2 text-xs font-mono text-zinc-200 focus:outline-none focus:border-emerald-500"
+            />
+            {!testerApiKey.trim() && (
+              <p className="text-[11px] font-mono text-amber-400/90">
+                Snippets show <code>{API_KEY_PLACEHOLDER}</code> until you paste a key.
+              </p>
+            )}
+          </div>
+
           {/* Configuration Cards Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Claude Desktop Config */}
-            <div className="rounded-xl border border-zinc-800 bg-[#0e1117] p-5 space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full bg-amber-500"></div>
-                  <h4 className="text-sm font-bold text-white">Claude Desktop Configuration</h4>
+            {([
+              { id: 'cursor', title: 'Cursor', file: '.cursor/mcp.json', text: JSON.stringify(clientSnippets.cursor, null, 2), dot: 'bg-cyan-500' },
+              { id: 'claude', title: 'Claude Desktop', file: 'claude_desktop_config.json (via mcp-remote)', text: JSON.stringify(clientSnippets.claudeDesktop, null, 2), dot: 'bg-amber-500' },
+              { id: 'claude-code', title: 'Claude Code', file: 'terminal', text: clientSnippets.claudeCode, dot: 'bg-orange-500' },
+              { id: 'windsurf', title: 'Windsurf', file: '~/.codeium/windsurf/mcp_config.json', text: JSON.stringify(clientSnippets.windsurf, null, 2), dot: 'bg-teal-500' },
+            ] as const).map((card) => (
+              <div key={card.id} className="rounded-xl border border-zinc-800 bg-[#0e1117] p-5 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className={`w-3 h-3 rounded-full ${card.dot}`}></div>
+                    <h4 className="text-sm font-bold text-white">{card.title}</h4>
+                  </div>
+                  <button
+                    onClick={() => handleCopy(card.text, card.id)}
+                    className="text-xs text-zinc-400 hover:text-white flex items-center gap-1"
+                  >
+                    {isCopied === card.id ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>Copy</span>
+                  </button>
                 </div>
-                <button
-                  onClick={() =>
-                    handleCopy(
-                      JSON.stringify(
-                        {
-                          mcpServers: {
-                            'context-control': {
-                              url: mcpEndpointUrl,
-                              headers: {
-                                Authorization: `Bearer ${selectedProfile.apiKey}`,
-                              },
-                            },
-                          },
-                        },
-                        null,
-                        2
-                      ),
-                      'claude'
-                    )
-                  }
-                  className="text-xs text-zinc-400 hover:text-white flex items-center gap-1"
-                >
-                  {isCopied === 'claude' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                  <span>Copy</span>
-                </button>
+                <p className="text-xs text-zinc-400">
+                  <code className="text-zinc-300">{card.file}</code>
+                </p>
+                <pre className="p-3 rounded-lg bg-zinc-950 font-mono text-[11px] text-emerald-400 overflow-x-auto whitespace-pre-wrap break-all border border-zinc-800/80">
+                  {testerApiKey.trim() ? card.text.split(testerApiKey.trim()).join(`${testerApiKey.trim().slice(0, 16)}…`) : card.text}
+                </pre>
               </div>
-
-              <p className="text-xs text-zinc-400">
-                Paste into your <code className="text-zinc-300">claude_desktop_config.json</code> file:
-              </p>
-
-              <pre className="p-3 rounded-lg bg-zinc-950 font-mono text-[11px] text-emerald-400 overflow-x-auto border border-zinc-800/80">
-{`{
-  "mcpServers": {
-    "context-control": {
-      "url": "${mcpEndpointUrl}",
-      "headers": {
-        "Authorization": "Bearer ${selectedProfile.apiKey}"
-      }
-    }
-  }
-}`}
-              </pre>
-            </div>
-
-            {/* Cursor IDE Config */}
-            <div className="rounded-xl border border-zinc-800 bg-[#0e1117] p-5 space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full bg-cyan-500"></div>
-                  <h4 className="text-sm font-bold text-white">Cursor IDE MCP Settings</h4>
-                </div>
-                <button
-                  onClick={() =>
-                    handleCopy(
-                      JSON.stringify(
-                        {
-                          mcp: {
-                            servers: {
-                              'context-control': {
-                                url: mcpEndpointUrl,
-                                headers: {
-                                  Authorization: `Bearer ${selectedProfile.apiKey}`,
-                                },
-                              },
-                            },
-                          },
-                        },
-                        null,
-                        2
-                      ),
-                      'cursor'
-                    )
-                  }
-                  className="text-xs text-zinc-400 hover:text-white flex items-center gap-1"
-                >
-                  {isCopied === 'cursor' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                  <span>Copy</span>
-                </button>
-              </div>
-
-              <p className="text-xs text-zinc-400">
-                Paste into <code className="text-zinc-300">.cursor/mcp.json</code> or Cursor Settings &gt; MCP:
-              </p>
-
-              <pre className="p-3 rounded-lg bg-zinc-950 font-mono text-[11px] text-cyan-300 overflow-x-auto border border-zinc-800/80">
-{`{
-  "mcp": {
-    "servers": {
-      "context-control": {
-        "url": "${mcpEndpointUrl}",
-        "headers": {
-          "Authorization": "Bearer ${selectedProfile.apiKey}"
-        }
-      }
-    }
-  }
-}`}
-              </pre>
-            </div>
+            ))}
           </div>
         </div>
       )}
@@ -1152,7 +1091,7 @@ export const McpHubView: React.FC<McpHubViewProps> = ({
           <div>
             <h2 className="text-lg font-bold text-white">MCP Protocol Inspector & Live Tester</h2>
             <p className="text-xs text-zinc-400">
-              Directly invoke JSON-RPC 2.0 methods (<code className="text-emerald-400">tools/list</code>, <code className="text-emerald-400">tools/call</code>, <code className="text-emerald-400">prompts/list</code>) against the proprietary MCP server engine.
+              Directly invoke JSON-RPC 2.0 methods (<code className="text-emerald-400">tools/list</code>, <code className="text-emerald-400">tools/call</code>, <code className="text-emerald-400">prompts/list</code>) against the live platform MCP endpoint (<code className="text-emerald-400">/api/mcp/platform</code>) with a workspace API key.
             </p>
           </div>
 
@@ -1163,16 +1102,25 @@ export const McpHubView: React.FC<McpHubViewProps> = ({
 
               <div className="space-y-3 text-xs">
                 <div>
+                  <label className="text-zinc-400 block mb-1">Workspace API key:</label>
+                  <input
+                    type="password"
+                    value={testerApiKey}
+                    onChange={(e) => setTesterApiKey(e.target.value)}
+                    placeholder="ctx_live_…"
+                    autoComplete="off"
+                    className="w-full bg-zinc-900 border border-zinc-700 rounded-md p-2 text-white font-mono"
+                  />
+                </div>
+                <div>
                   <label className="text-zinc-400 block mb-1">MCP Method:</label>
                   <select
                     value={testerMethod}
                     onChange={(e: any) => setTesterMethod(e.target.value)}
                     className="w-full bg-zinc-900 border border-zinc-700 rounded-md p-2 text-white font-mono"
                   >
+                    <option value="tools/list">tools/list (Tools this key can use)</option>
                     <option value="tools/call">tools/call (Execute Tool)</option>
-                    <option value="tools/list">tools/list (List Assigned Tools)</option>
-                    <option value="prompts/list">prompts/list (List Context Prompts)</option>
-                    <option value="resources/list">resources/list (List Resources)</option>
                     <option value="initialize">initialize (Handshake)</option>
                   </select>
                 </div>
@@ -1186,9 +1134,9 @@ export const McpHubView: React.FC<McpHubViewProps> = ({
                         onChange={(e) => setTesterToolName(e.target.value)}
                         className="w-full bg-zinc-900 border border-zinc-700 rounded-md p-2 text-white font-mono"
                       >
-                        {selectedProfile.selectedToolNames.map((tool) => (
-                          <option key={tool} value={tool}>
-                            {tool}
+                        {PLATFORM_TOOL_DEFINITIONS.map((tool) => (
+                          <option key={tool.name} value={tool.name}>
+                            {tool.name} ({tool.requiredScope})
                           </option>
                         ))}
                       </select>

@@ -1,141 +1,96 @@
 export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/utils/supabase/server';
-import crypto from 'crypto';
+import { z } from 'zod';
+import { requireAuth, requireRole } from '@/lib/auth/require-auth';
+import { createPlatformApiKey } from '@/lib/auth/api-keys';
+import { errorResponse } from '@/lib/http/route-errors';
+import * as profiles from '@/lib/services/profiles';
 
-export async function GET() {
+/** Map a DB profile row to the shape the dashboard components expect. */
+function toDashboardProfile(p: any, apiKey?: string) {
+  return {
+    id: p.id,
+    name: p.name,
+    slug: p.settings?.slug || p.id,
+    description: p.description,
+    tokenBudget: p.token_budget,
+    selectedToolNames: p.settings?.selectedToolNames || [],
+    selectedSkillNames: p.settings?.selectedSkillNames || [],
+    boundContextProfileSlugs: p.settings?.boundContextProfileSlugs || [],
+    apiKey,
+    isActive: p.is_active,
+    createdAt: p.created_at,
+    updatedAt: p.updated_at,
+    lastActive: p.settings?.lastActive || 'Never',
+  };
+}
+
+const createBody = z.object({
+  name: z.string().trim().min(1).max(120).default('Custom MCP Profile'),
+  description: z.string().max(2000).optional(),
+  tokenBudget: z.number().int().min(256).max(2_000_000).default(10_000),
+  slug: z.string().max(120).optional(),
+  selectedToolNames: z.array(z.string()).default([]),
+  selectedSkillNames: z.array(z.string()).default([]),
+  boundContextProfileSlugs: z.array(z.string()).default([]),
+  issueApiKey: z.boolean().default(true),
+});
+
+export async function GET(req: NextRequest) {
   try {
-    const supabase = await createClient();
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    if (authError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
-    const { data: profiles, error } = await supabase
-      .from('mcp_profiles')
-      .select('*, mcp_api_keys(key_prefix)')
-      .order('created_at', { ascending: false });
-
-    if (error) throw error;
-
-    // Map to the format expected by the frontend
-    const formattedProfiles = profiles.map(p => ({
-      id: p.id,
-      name: p.name,
-      slug: p.settings?.slug || p.id,
-      description: p.description,
-      tokenBudget: p.token_budget,
-      selectedToolNames: p.settings?.selectedToolNames || [],
-      selectedSkillNames: p.settings?.selectedSkillNames || [],
-      boundContextProfileSlugs: p.settings?.boundContextProfileSlugs || [],
-      apiKey: p.mcp_api_keys?.[0]?.key_prefix + '...', // Masked key for UI
-      createdAt: p.created_at,
-      updatedAt: p.updated_at,
-      lastActive: p.settings?.lastActive || 'Never'
-    }));
-
-    return NextResponse.json({ profiles: formattedProfiles });
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    const auth = await requireAuth(req, 'session');
+    const { profiles: rows } = await profiles.listProfiles(auth, { limit: 100 });
+    return NextResponse.json({ profiles: rows.map((p) => toDashboardProfile(p)) });
+  } catch (err) {
+    return errorResponse(err, 'mcp-profiles:list');
   }
 }
 
 export async function POST(req: NextRequest) {
   try {
-    const supabase = await createClient();
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    if (authError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
+    const auth = await requireAuth(req, 'session');
+    requireRole(auth, ['owner', 'admin']);
     const body = await req.json();
 
     if (body.action === 'update' && body.id) {
-      const { data: existing } = await supabase.from('mcp_profiles').select('settings').eq('id', body.id).single();
-      const updatedSettings = { ...(existing?.settings || {}), ...body.data };
-      
-      const { data, error } = await supabase
-        .from('mcp_profiles')
-        .update({ settings: updatedSettings, updated_at: new Date().toISOString() })
-        .eq('id', body.id)
-        .select()
-        .single();
-        
-      if (error) return NextResponse.json({ error: error.message }, { status: 400 });
-      return NextResponse.json({ profile: data });
+      const { profile: existing } = await profiles.getProfile(auth, { profile_id: body.id });
+      const settings = { ...(existing.settings || {}), ...(body.data || {}) };
+      const { profile } = await profiles.updateProfile(auth, { profile_id: body.id, settings });
+      return NextResponse.json({ profile: toDashboardProfile(profile) });
     }
 
     if (body.action === 'delete' && body.id) {
-      const { error } = await supabase.from('mcp_profiles').delete().eq('id', body.id);
-      if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+      // Soft delete: keeps task history and audit references intact.
+      await profiles.archiveProfile(auth, { profile_id: body.id });
       return NextResponse.json({ success: true });
     }
 
-    // CREATE NEW PROFILE
-    // 1. Get user's primary org_id
-    const { data: orgMember, error: orgError } = await supabase
-      .from('organization_members')
-      .select('organization_id')
-      .eq('user_id', user.id)
-      .limit(1)
-      .single();
-      
-    if (orgError || !orgMember) return NextResponse.json({ error: 'No organization found' }, { status: 400 });
-    const orgId = orgMember.organization_id;
-
-    // 2. Insert Profile
-    const { data: profile, error: profileError } = await supabase
-      .from('mcp_profiles')
-      .insert({
-        org_id: orgId,
-        created_by: user.id,
-        name: body.name || 'Custom MCP Profile',
-        description: body.description || '',
-        token_budget: body.tokenBudget || 10000,
-        settings: {
-          slug: body.slug || `mcp-${Date.now()}`,
-          selectedToolNames: body.selectedToolNames || [],
-          selectedSkillNames: body.selectedSkillNames || [],
-          boundContextProfileSlugs: body.boundContextProfileSlugs || [],
-          lastActive: 'Never'
-        }
-      })
-      .select()
-      .single();
-
-    if (profileError) throw profileError;
-
-    // 3. Generate API Key
-    const rawKey = `cc_live_${crypto.randomBytes(16).toString('hex')}`;
-    const keyPrefix = rawKey.substring(0, 14);
-    const keyHash = crypto.createHash('sha256').update(rawKey).digest();
-
-    const { error: keyError } = await supabase
-      .from('mcp_api_keys')
-      .insert({
-        profile_id: profile.id,
-        org_id: orgId,
-        key_prefix: keyPrefix,
-        key_hash: keyHash,
-        label: `${body.name || 'Custom'} Key`,
-        created_by: user.id
-      });
-
-    if (keyError) throw keyError;
-
-    return NextResponse.json({ 
-      profile: {
-        id: profile.id,
-        name: profile.name,
-        slug: profile.settings.slug,
-        description: profile.description,
-        tokenBudget: profile.token_budget,
-        selectedToolNames: profile.settings.selectedToolNames,
-        selectedSkillNames: profile.settings.selectedSkillNames,
-        boundContextProfileSlugs: profile.settings.boundContextProfileSlugs,
-        apiKey: rawKey, // Return raw key ONCE
-        createdAt: profile.created_at,
-        updatedAt: profile.updated_at,
-        lastActive: 'Never'
-      }
+    const input = createBody.parse(body);
+    const { profile } = await profiles.createProfile(auth, {
+      name: input.name,
+      description: input.description,
+      token_budget: input.tokenBudget,
+      settings: {
+        slug: input.slug || `mcp-${Date.now()}`,
+        selectedToolNames: input.selectedToolNames,
+        selectedSkillNames: input.selectedSkillNames,
+        boundContextProfileSlugs: input.boundContextProfileSlugs,
+        lastActive: 'Never',
+      },
     });
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 400 });
+
+    let rawKey: string | undefined;
+    if (input.issueApiKey) {
+      const key = await createPlatformApiKey(auth.tenantId, {
+        name: `${profile.name} Key`,
+        createdBy: auth.userId,
+        profileId: profile.id,
+      });
+      rawKey = key.rawKey; // returned once
+    }
+
+    return NextResponse.json({ profile: toDashboardProfile(profile, rawKey) }, { status: 201 });
+  } catch (err) {
+    return errorResponse(err, 'mcp-profiles:write');
   }
 }

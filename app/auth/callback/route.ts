@@ -5,7 +5,11 @@ import { createClient } from '@/utils/supabase/server';
 export async function GET(request: NextRequest) {
   const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get('code');
-  const next = searchParams.get('next') ?? '/onboarding';
+  // Only allow same-origin relative paths as the post-login destination.
+  const requestedNext = searchParams.get('next') ?? '/onboarding';
+  const next = requestedNext.startsWith('/') && !requestedNext.startsWith('//') && !requestedNext.includes('\\')
+    ? requestedNext
+    : '/onboarding';
 
   if (code) {
     const supabase = await createClient();

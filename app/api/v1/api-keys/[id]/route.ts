@@ -1,33 +1,39 @@
 export const dynamic = 'force-dynamic';
 
 import { NextRequest, NextResponse } from 'next/server';
-import { requireAuth, isAuthError } from '@/lib/auth/require-auth';
-import { revokePlatformApiKey } from '@/lib/auth/api-keys';
+import { requireAuth, requireRole } from '@/lib/auth/require-auth';
+import { revokePlatformApiKey, updatePlatformApiKey } from '@/lib/auth/api-keys';
+import { updateApiKeyBody } from '@/lib/services/api-key-input';
+import { errorResponse } from '@/lib/http/route-errors';
+import { ServiceError } from '@/lib/services/errors';
 
-export async function DELETE(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+type Params = { params: Promise<{ id: string }> };
+
+export async function PATCH(req: NextRequest, { params }: Params) {
   try {
     const auth = await requireAuth(req, 'session');
-    if (auth.role !== 'owner' && auth.role !== 'admin') {
-      return NextResponse.json(
-        { error: 'Only tenant owners and admins can revoke API keys', code: 'FORBIDDEN' },
-        { status: 403 }
-      );
-    }
-
+    requireRole(auth, ['owner', 'admin']);
     const { id } = await params;
-    if (!id) {
-      return NextResponse.json({ error: 'Missing API key id', code: 'INVALID_REQUEST' }, { status: 400 });
-    }
 
-    await revokePlatformApiKey(auth.tenantId, id);
+    const body = updateApiKeyBody.parse(await req.json());
+    const apiKey = await updatePlatformApiKey(auth.tenantId, id, body);
+    if (!apiKey) throw new ServiceError('API key not found in this organization.', 'NOT_FOUND');
+    return NextResponse.json({ apiKey });
+  } catch (err) {
+    return errorResponse(err, 'api-keys:update');
+  }
+}
+
+export async function DELETE(req: NextRequest, { params }: Params) {
+  try {
+    const auth = await requireAuth(req, 'session');
+    requireRole(auth, ['owner', 'admin']);
+    const { id } = await params;
+
+    const revoked = await revokePlatformApiKey(auth.tenantId, id);
+    if (!revoked) throw new ServiceError('API key not found in this organization.', 'NOT_FOUND');
     return NextResponse.json({ message: 'Platform API key successfully revoked' });
-  } catch (err: any) {
-    if (isAuthError(err)) {
-      return NextResponse.json({ error: err.message, code: err.code }, { status: err.statusCode });
-    }
-    return NextResponse.json({ error: err.message || 'Internal server error' }, { status: 500 });
+  } catch (err) {
+    return errorResponse(err, 'api-keys:revoke');
   }
 }

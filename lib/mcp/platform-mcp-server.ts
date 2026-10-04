@@ -1,99 +1,51 @@
-import { z } from 'zod';
-import { hashApiKey } from '@/lib/auth/require-auth';
-import { getSupabaseAdminClient } from '@/lib/supabase';
+import { ZodError } from 'zod';
+import { ApiKeyError, extractRawApiKey, verifyApiKey } from '@/lib/auth/api-keys';
+import type { AuthContext } from '@/lib/auth/require-auth';
+import { listPlatformApiKeys } from '@/lib/auth/api-keys';
+import { isServiceError } from '@/lib/services/errors';
+import * as profiles from '@/lib/services/profiles';
+import * as tasks from '@/lib/services/tasks';
+import {
+  PLATFORM_TOOL_DEFINITIONS,
+  getAuthorizedPlatformTools,
+  toMcpToolList,
+  type PlatformToolName,
+} from './tool-catalog';
 
-export interface ClientConfigSnippets {
-  claudeDesktop: Record<string, any>;
-  cursor: Record<string, any>;
-}
+export { getAuthorizedPlatformTools } from './tool-catalog';
+export const PLATFORM_MCP_TOOLS = PLATFORM_TOOL_DEFINITIONS;
 
-interface PlatformTool {
-  name: string;
-  description: string;
-  requiredScope: string;
-  inputSchema: Record<string, unknown>;
-}
+export type { ClientConfigSnippets } from './client-config';
 
-interface ApiKeyContext {
-  id: string;
-  tenant_id: string;
-  scopes: string[] | null;
-  tools_whitelist: string[] | null;
-  revoked_at: string | null;
-  expires_at: string | null;
-  last_used_at?: string | null;
-}
+/** Newest first; the first entry is offered when the client asks for something unknown. */
+export const SUPPORTED_PROTOCOL_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'];
 
-const SUPPORTED_PROTOCOL_VERSION = '2024-11-05';
+type ToolCtx = Pick<AuthContext, 'tenantId' | 'userId' | 'authMode' | 'apiKeyId'>;
 
-const listProfilesArgs = z.object({
-  limit: z.number().int().min(1).max(100).optional(),
-}).strict();
-
-const listTasksArgs = z.object({
-  status: z.enum(['scheduled', 'active', 'completed', 'escalated']).optional(),
-  limit: z.number().int().min(1).max(100).optional(),
-}).strict();
-
-const scheduleTaskArgs = z.object({
-  title: z.string().trim().min(1).max(255),
-  instructions: z.string().trim().min(1).max(10000),
-  target_time: z.string().datetime({ offset: true }),
-  profile_id: z.string().uuid().optional(),
-}).strict();
-
-export const PLATFORM_MCP_TOOLS: PlatformTool[] = [
-  {
-    name: 'list_mcp_profiles',
-    description: 'List active MCP profiles owned by the authenticated tenant.',
-    requiredScope: 'mcp:profiles:read',
-    inputSchema: {
-      type: 'object',
-      properties: { limit: { type: 'integer', minimum: 1, maximum: 100 } },
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'list_scheduled_tasks',
-    description: 'List scheduled task records owned by the authenticated tenant.',
-    requiredScope: 'mcp:tasks:read',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        status: { type: 'string', enum: ['scheduled', 'active', 'completed', 'escalated'] },
-        limit: { type: 'integer', minimum: 1, maximum: 100 },
-      },
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'schedule_deferred_task',
-    description: 'Create a tenant-owned scheduled task record for a future execution time.',
-    requiredScope: 'mcp:tasks:write',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        title: { type: 'string', minLength: 1, maxLength: 255 },
-        instructions: { type: 'string', minLength: 1, maxLength: 10000 },
-        target_time: { type: 'string', format: 'date-time' },
-        profile_id: { type: 'string', format: 'uuid' },
-      },
-      required: ['title', 'instructions', 'target_time'],
-      additionalProperties: false,
-    },
-  },
-];
+const TOOL_HANDLERS: Record<PlatformToolName, (ctx: ToolCtx, args: any) => Promise<unknown>> = {
+  list_mcp_profiles: profiles.listProfiles,
+  get_mcp_profile: profiles.getProfile,
+  create_mcp_profile: profiles.createProfile,
+  update_mcp_profile: profiles.updateProfile,
+  archive_mcp_profile: profiles.archiveProfile,
+  list_scheduled_tasks: tasks.listTasks,
+  get_scheduled_task: tasks.getTask,
+  schedule_deferred_task: tasks.scheduleTask,
+  cancel_scheduled_task: tasks.cancelTask,
+  list_api_keys: async (ctx) => ({
+    keys: (await listPlatformApiKeys(ctx.tenantId)).map(({ tenant_id: _t, ...key }) => key),
+  }),
+};
 
 function rpcError(id: unknown, code: number, message: string) {
   return { jsonrpc: '2.0', error: { code, message }, id: id ?? null };
 }
 
 function toolResult(id: unknown, value: unknown) {
-  const json = JSON.stringify(value);
   return {
     jsonrpc: '2.0',
     result: {
-      content: [{ type: 'text', text: json }],
+      content: [{ type: 'text', text: JSON.stringify(value) }],
       structuredContent: value,
     },
     id,
@@ -108,135 +60,65 @@ function toolError(id: unknown, message: string) {
   };
 }
 
-export function getAuthorizedPlatformTools(
-  whitelist: string[] | null | undefined,
-  scopes: string[] | null | undefined
-): PlatformTool[] {
-  const allowedTools = whitelist || [];
-  const allowedScopes = scopes || [];
-  return PLATFORM_MCP_TOOLS.filter((tool) =>
-    (allowedTools.includes('*') || allowedTools.includes(tool.name)) &&
-    (allowedScopes.includes('*') || allowedScopes.includes(tool.requiredScope))
-  );
+function describeToolFailure(error: unknown): string {
+  if (error instanceof ZodError) {
+    return `Invalid arguments: ${error.issues.map((i) => `${i.path.join('.') || '(root)'} ${i.message}`).join('; ')}`;
+  }
+  if (isServiceError(error)) return error.message;
+  console.error('[platform-mcp] tool execution failed', error);
+  return 'Platform MCP tool execution failed.';
 }
 
-async function executePlatformTool(
-  toolName: string,
-  rawArguments: unknown,
-  key: ApiKeyContext
-): Promise<unknown> {
-  const supabase = getSupabaseAdminClient();
+export async function executePlatformTool(name: string, rawArguments: unknown, ctx: ToolCtx) {
+  const tool = PLATFORM_TOOL_DEFINITIONS.find((t) => t.name === name);
+  if (!tool) throw new Error(`Tool '${name}' is not implemented by the platform MCP server.`);
+  const args = tool.schema.parse(rawArguments ?? {});
+  return TOOL_HANDLERS[tool.name](ctx, args);
+}
 
-  switch (toolName) {
-    case 'list_mcp_profiles': {
-      const args = listProfilesArgs.parse(rawArguments || {});
-      const { data, error } = await supabase
-        .from('mcp_profiles')
-        .select('id, name, description, token_budget, settings, is_active, created_at, updated_at')
-        .eq('org_id', key.tenant_id)
-        .eq('is_active', true)
-        .order('created_at', { ascending: false })
-        .limit(args.limit || 20);
-      if (error) throw new Error(`Could not list MCP profiles: ${error.message}`);
-      return { profiles: data || [] };
-    }
-    case 'list_scheduled_tasks': {
-      const args = listTasksArgs.parse(rawArguments || {});
-      let query = supabase
-        .from('supervisor_tasks')
-        .select('id, title, description, status, target_time, metadata, created_at')
-        .eq('tenant_id', key.tenant_id)
-        .order('target_time', { ascending: true })
-        .limit(args.limit || 20);
-      if (args.status) query = query.eq('status', args.status);
-      const { data, error } = await query;
-      if (error) throw new Error(`Could not list scheduled tasks: ${error.message}`);
-      return { tasks: data || [] };
-    }
-    case 'schedule_deferred_task': {
-      const args = scheduleTaskArgs.parse(rawArguments || {});
-      const targetTime = new Date(args.target_time);
-      if (targetTime.getTime() <= Date.now()) {
-        throw new Error('target_time must be in the future.');
-      }
-
-      if (args.profile_id) {
-        const { data: profile, error: profileError } = await supabase
-          .from('mcp_profiles')
-          .select('id')
-          .eq('id', args.profile_id)
-          .eq('org_id', key.tenant_id)
-          .eq('is_active', true)
-          .maybeSingle();
-        if (profileError) throw new Error(`Could not validate MCP profile: ${profileError.message}`);
-        if (!profile) throw new Error('profile_id is not an active profile owned by this tenant.');
-      }
-
-      const { data, error } = await supabase
-        .from('supervisor_tasks')
-        .insert({
-          tenant_id: key.tenant_id,
-          title: args.title,
-          description: args.instructions,
-          status: 'scheduled',
-          target_time: targetTime.toISOString(),
-          metadata: { source: 'platform_mcp', profile_id: args.profile_id || null },
-        })
-        .select('id, title, description, status, target_time, created_at')
-        .single();
-      if (error || !data) throw new Error(`Could not create scheduled task: ${error?.message || 'no task returned'}`);
-      return { task: data };
-    }
-    default:
-      throw new Error(`Tool '${toolName}' is not implemented by the platform MCP server.`);
-  }
+export function negotiateProtocolVersion(requested: unknown): string {
+  return typeof requested === 'string' && SUPPORTED_PROTOCOL_VERSIONS.includes(requested)
+    ? requested
+    : SUPPORTED_PROTOCOL_VERSIONS[0];
 }
 
 /** Handle authenticated MCP JSON-RPC requests for the platform endpoint. */
 export async function handlePlatformMCPRPC(
-  rawApiKey: string,
+  authorizationHeader: string,
   rpcBody: any
 ): Promise<{ statusCode: number; body: any }> {
   const id = rpcBody?.id ?? null;
   if (!rpcBody || rpcBody.jsonrpc !== '2.0' || typeof rpcBody.method !== 'string') {
-    return { statusCode: 200, body: rpcError(id, -32600, 'Invalid JSON-RPC request') };
+    return { statusCode: 400, body: rpcError(id, -32600, 'Invalid JSON-RPC request') };
   }
+
+  const rawApiKey = extractRawApiKey(authorizationHeader);
   if (!rawApiKey) {
-    return {
-      statusCode: 401,
-      body: { jsonrpc: '2.0', error: { code: -32001, message: 'Missing Authorization header with Platform API Key' }, id },
-    };
+    return { statusCode: 401, body: rpcError(id, -32001, 'Missing Authorization: Bearer <Context Control API key>') };
   }
 
-  const keyHash = `\\x${hashApiKey(rawApiKey.replace(/^Bearer\s+/i, '').trim())}`;
-  const supabase = getSupabaseAdminClient();
-  const { data: keyRecord, error: keyErr } = await supabase
-    .from('mcp_api_keys')
-    .select('id, tenant_id, scopes, tools_whitelist, revoked_at, expires_at')
-    .eq('key_hash', keyHash)
-    .single();
-
-  if (keyErr || !keyRecord || keyRecord.revoked_at) {
-    return {
-      statusCode: 401,
-      body: { jsonrpc: '2.0', error: { code: -32001, message: 'Invalid or revoked Platform API Key' }, id },
-    };
+  let key;
+  try {
+    key = await verifyApiKey(rawApiKey);
+  } catch (err) {
+    if (err instanceof ApiKeyError) {
+      return { statusCode: err.code === 'RATE_LIMITED' ? 429 : 401, body: rpcError(id, -32001, err.message) };
+    }
+    throw err;
   }
-  if (keyRecord.expires_at && new Date(keyRecord.expires_at) < new Date()) {
-    return {
-      statusCode: 401,
-      body: { jsonrpc: '2.0', error: { code: -32001, message: 'Platform API Key has expired' }, id },
-    };
-
-
-  await supabase
-    .from('mcp_api_keys')
-    .update({ last_used_at: new Date().toISOString() })
-    .eq('id', keyRecord!.id);
+  if (!key) {
+    return { statusCode: 401, body: rpcError(id, -32001, 'Invalid or revoked Platform API Key') };
   }
 
-  const key = keyRecord as ApiKeyContext;
+  const ctx: ToolCtx = { tenantId: key.tenantId, userId: `key_${key.id}`, authMode: 'api_key', apiKeyId: key.id };
+  const authorizedTools = getAuthorizedPlatformTools(key.toolsWhitelist, key.scopes);
   const { method, params } = rpcBody;
+
+  // JSON-RPC notifications carry no id and get no response body.
+  if (method.startsWith('notifications/')) {
+    return { statusCode: 202, body: null };
+  }
+
   switch (method) {
     case 'initialize':
       return {
@@ -245,35 +127,28 @@ export async function handlePlatformMCPRPC(
           jsonrpc: '2.0',
           id,
           result: {
-            protocolVersion: SUPPORTED_PROTOCOL_VERSION,
-            capabilities: { tools: {} },
-            serverInfo: { name: 'context-control', version: '1.0.0' },
+            protocolVersion: negotiateProtocolVersion(params?.protocolVersion),
+            capabilities: { tools: { listChanged: false } },
+            serverInfo: { name: 'context-control', title: 'Context Control', version: '1.1.0' },
+            instructions:
+              'Manage this Context Control organization: profiles, scheduled tasks and API key inventory. ' +
+              'Available tools depend on the scopes granted to the API key.',
           },
         },
       };
-    case 'notifications/initialized':
-      return { statusCode: 202, body: null };
     case 'ping':
       return { statusCode: 200, body: { jsonrpc: '2.0', id, result: {} } };
     case 'tools/list':
-      return {
-        statusCode: 200,
-        body: { jsonrpc: '2.0', result: { tools: getAuthorizedPlatformTools(key.tools_whitelist, key.scopes) }, id },
-      };
+      return { statusCode: 200, body: { jsonrpc: '2.0', result: { tools: toMcpToolList(authorizedTools) }, id } };
     case 'tools/call': {
       const name = params?.name;
-      const allowedTool = getAuthorizedPlatformTools(key.tools_whitelist, key.scopes)
-        .find((tool) => tool.name === name);
-      if (!allowedTool) {
+      if (!authorizedTools.some((tool) => tool.name === name)) {
         return { statusCode: 200, body: toolError(id, `Tool '${name}' is not enabled for this API key.`) };
       }
       try {
-        return { statusCode: 200, body: toolResult(id, await executePlatformTool(name, params?.arguments, key)) };
+        return { statusCode: 200, body: toolResult(id, await executePlatformTool(name, params?.arguments, ctx)) };
       } catch (error) {
-        return {
-          statusCode: 200,
-          body: toolError(id, error instanceof Error ? error.message : 'Platform MCP tool execution failed.'),
-        };
+        return { statusCode: 200, body: toolError(id, describeToolFailure(error)) };
       }
     }
     default:
@@ -281,16 +156,4 @@ export async function handlePlatformMCPRPC(
   }
 }
 
-/** Generate Claude Desktop & Cursor configuration JSON snippets for an API key. */
-export function generateClientConfigSnippets(rawApiKey: string, origin: string): ClientConfigSnippets {
-  const mcpEndpointUrl = `${origin.replace(/\/$/, '')}/api/mcp/platform`;
-  const serverConfig = {
-    url: mcpEndpointUrl,
-    headers: { Authorization: `Bearer ${rawApiKey}` },
-  };
-
-  return {
-    claudeDesktop: { mcpServers: { 'context-control': serverConfig } },
-    cursor: { mcpServers: { 'context-control': serverConfig } },
-  };
-}
+export { API_KEY_PLACEHOLDER, generateClientConfigSnippets } from './client-config';

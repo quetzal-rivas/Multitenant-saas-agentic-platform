@@ -35,6 +35,20 @@ CREATE TABLE IF NOT EXISTS public.mcp_api_keys (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- 20261002010000_mcp_profiles.sql already created mcp_api_keys (org_id-based), so the
+-- CREATE above is skipped on a fresh database. Add tenant_id before policies use it.
+ALTER TABLE public.mcp_api_keys
+    ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES public.organizations(id) ON DELETE CASCADE;
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'mcp_api_keys' AND column_name = 'org_id'
+    ) THEN
+        UPDATE public.mcp_api_keys SET tenant_id = org_id WHERE tenant_id IS NULL;
+    END IF;
+END $$;
+
 ALTER TABLE public.mcp_api_keys ENABLE ROW LEVEL SECURITY;
 
 -- RLS: Only tenant members can SELECT keys for their tenant (excluding sensitive hash via REVOKE below)

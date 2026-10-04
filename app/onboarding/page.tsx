@@ -52,7 +52,7 @@ export default function OnboardingPage() {
       } else {
         // Save tenant session to localStorage and navigate to dashboard
         if (typeof window !== 'undefined') {
-          localStorage.setItem('ctx_tenant_id', data.tenantId || '00000000-0000-0000-0000-000000000001');
+          if (data.tenantId) localStorage.setItem('ctx_tenant_id', data.tenantId);
           localStorage.setItem('ctx_onboarded', 'true');
         }
         router.push('/organizations');

@@ -54,7 +54,7 @@ export default function LoginPage() {
           password,
           options: {
             data: { full_name: username },
-            emailRedirectTo: `${window.location.origin}/onboarding`,
+            emailRedirectTo: `${window.location.origin}/auth/callback?next=/onboarding`,
           },
         });
         if (error) throw error;
@@ -66,7 +66,7 @@ export default function LoginPage() {
           password,
         });
         if (error) throw error;
-        // Successful login, router should redirect or user clicks "Go to Dashboard"
+        // Middleware sends accounts without an organization to /onboarding.
         router.push('/dashboard');
       }
     } catch (err: any) {

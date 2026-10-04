@@ -1,5 +1,6 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
+import { getMembership } from '@/lib/auth/membership'
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({
@@ -38,12 +39,29 @@ export async function updateSession(request: NextRequest) {
     // Refresh session if expired
     const { data: { user } } = await supabase.auth.getUser()
 
-    const isProtectedRoute = request.nextUrl.pathname.startsWith('/dashboard')
-                            
-    if (!user && isProtectedRoute) {
-      const loginUrl = request.nextUrl.clone()
-      loginUrl.pathname = '/login'
-      return NextResponse.redirect(loginUrl)
+    const path = request.nextUrl.pathname
+    const isDashboard = path.startsWith('/dashboard')
+    const isOnboarding = path.startsWith('/onboarding')
+
+    const redirectTo = (pathname: string) => {
+      const url = request.nextUrl.clone()
+      url.pathname = pathname
+      url.search = ''
+      const response = NextResponse.redirect(url)
+      // Keep any refreshed auth cookies on the redirect.
+      supabaseResponse.cookies.getAll().forEach((cookie) => response.cookies.set(cookie))
+      return response
+    }
+
+    if (!user && (isDashboard || isOnboarding)) {
+      return redirectTo('/login')
+    }
+
+    // Every account must belong to an organization before it can use the dashboard.
+    if (user && (isDashboard || isOnboarding)) {
+      const membership = await getMembership(supabase, user.id)
+      if (!membership && isDashboard) return redirectTo('/onboarding')
+      if (membership && isOnboarding) return redirectTo('/dashboard')
     }
 
     return supabaseResponse

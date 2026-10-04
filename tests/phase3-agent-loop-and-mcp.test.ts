@@ -5,14 +5,20 @@ import { compileAgentContext, estimateTokenCount } from '../lib/agent/context-co
 import { isSSRFSafeUrl, executeMCPToolCall } from '../lib/mcp/mcp-gateway';
 import {
   API_KEY_PLACEHOLDER,
-  SUPPORTED_PROTOCOL_VERSIONS,
+  CHARACTER_LIMIT,
   executePlatformTool,
   generateClientConfigSnippets,
   getAuthorizedPlatformTools,
-  handlePlatformMCPRPC,
-  negotiateProtocolVersion,
+  renderMarkdown,
 } from '../lib/mcp/platform-mcp-server';
-import { PLATFORM_TOOL_DEFINITIONS, toMcpToolList } from '../lib/mcp/tool-catalog';
+import {
+  LEGACY_TOOL_NAMES,
+  PLATFORM_TOOL_DEFINITIONS,
+  canonicalToolName,
+  toolInputJsonSchema,
+  toolOutputJsonSchema,
+} from '../lib/mcp/tool-catalog';
+import { pageInfo } from '../lib/services/errors';
 import { DEFAULT_API_KEY_SCOPES } from '../lib/auth/api-keys';
 
 describe('Phase 3 Real Agent Loop & MCP Gateway Verification', () => {
@@ -101,13 +107,14 @@ describe('Phase 3 Real Agent Loop & MCP Gateway Verification', () => {
     const names = (tools: readonly { name: string }[]) => tools.map((t) => t.name).sort();
 
     // Empty whitelist = no extra restriction, scopes decide.
-    assert.deepEqual(names(getAuthorizedPlatformTools([], ['mcp:tasks:read'])), ['get_scheduled_task', 'list_scheduled_tasks']);
+    assert.deepEqual(names(getAuthorizedPlatformTools([], ['mcp:tasks:read'])), ['contextcontrol_get_task', 'contextcontrol_list_tasks']);
     assert.equal(getAuthorizedPlatformTools([], ['*']).length, PLATFORM_TOOL_DEFINITIONS.length);
     assert.deepEqual(getAuthorizedPlatformTools([], []), []);
 
-    // Whitelist narrows within granted scopes, never widens.
-    assert.deepEqual(names(getAuthorizedPlatformTools(['schedule_deferred_task'], ['*'])), ['schedule_deferred_task']);
-    assert.deepEqual(getAuthorizedPlatformTools(['schedule_deferred_task'], ['mcp:tasks:read']), []);
+    // Whitelist narrows within granted scopes, never widens; legacy names still match.
+    assert.deepEqual(names(getAuthorizedPlatformTools(['contextcontrol_schedule_task'], ['*'])), ['contextcontrol_schedule_task']);
+    assert.deepEqual(names(getAuthorizedPlatformTools(['schedule_deferred_task'], ['*'])), ['contextcontrol_schedule_task']);
+    assert.deepEqual(getAuthorizedPlatformTools(['contextcontrol_schedule_task'], ['mcp:tasks:read']), []);
 
     // Segment wildcards.
     const readOnly = getAuthorizedPlatformTools([], ['mcp:*:read']);
@@ -115,37 +122,54 @@ describe('Phase 3 Real Agent Loop & MCP Gateway Verification', () => {
 
     // Default key scopes give a usable read-only toolset.
     assert.deepEqual(names(getAuthorizedPlatformTools([], DEFAULT_API_KEY_SCOPES)), [
-      'get_mcp_profile', 'get_scheduled_task', 'list_mcp_profiles', 'list_scheduled_tasks',
+      'contextcontrol_get_profile', 'contextcontrol_get_task', 'contextcontrol_list_profiles', 'contextcontrol_list_tasks',
     ]);
   });
 
-  test('Platform MCP Server: tools/list exposes JSON Schemas generated from the zod contract', () => {
-    const tools = toMcpToolList(PLATFORM_TOOL_DEFINITIONS);
-    const schedule = tools.find((t) => t.name === 'schedule_deferred_task')!;
-    assert.equal((schedule.inputSchema as any).type, 'object');
-    assert.deepEqual([...(schedule.inputSchema as any).required].sort(), ['instructions', 'target_time', 'title']);
-    assert.equal((schedule.inputSchema as any).additionalProperties, false);
-    assert.equal(tools.find((t) => t.name === 'list_api_keys')!.annotations.readOnlyHint, true);
-    assert.equal(tools.find((t) => t.name === 'archive_mcp_profile')!.annotations.destructiveHint, true);
+  test('Platform MCP Server: every tool follows the mcp-builder conventions', () => {
+    for (const tool of PLATFORM_TOOL_DEFINITIONS) {
+      assert.match(tool.name, /^contextcontrol_[a-z]+(_[a-z]+)+$/, `${tool.name} is prefixed snake_case`);
+      assert.ok(tool.title && tool.description.length > 30, `${tool.name} is described`);
+      const input = toolInputJsonSchema(tool) as any;
+      assert.equal(input.type, 'object');
+      assert.equal(input.additionalProperties, false, `${tool.name} rejects unknown arguments`);
+      assert.equal((toolOutputJsonSchema(tool) as any).type, 'object');
+      const a = tool.annotations;
+      assert.equal(a.readOnlyHint, tool.sideEffect === 'read');
+      assert.equal(a.openWorldHint, false);
+      if (a.readOnlyHint) assert.equal(a.destructiveHint, false);
+    }
+    const byName = Object.fromEntries(PLATFORM_TOOL_DEFINITIONS.map((t) => [t.name, t.annotations]));
+    assert.equal(byName.contextcontrol_archive_profile.destructiveHint, true);
+    assert.equal(byName.contextcontrol_create_profile.destructiveHint, false);
+    assert.equal(byName.contextcontrol_update_profile.idempotentHint, true);
+
+    // Every legacy name maps to a real tool.
+    for (const next of Object.values(LEGACY_TOOL_NAMES)) assert.ok(PLATFORM_TOOL_DEFINITIONS.some((t) => t.name === next));
+    assert.equal(canonicalToolName('list_mcp_profiles'), 'contextcontrol_list_profiles');
+    assert.equal(canonicalToolName('contextcontrol_list_tasks'), 'contextcontrol_list_tasks');
+  });
+
+  test('Platform MCP Server: paging metadata and markdown rendering', () => {
+    assert.deepEqual(pageInfo(45, 0, 20), { total_count: 45, has_more: true, next_offset: 20 });
+    assert.deepEqual(pageInfo(45, 40, 5), { total_count: 45, has_more: false, next_offset: null });
+    assert.deepEqual(pageInfo(0, 0, 0), { total_count: 0, has_more: false, next_offset: null });
+
+    const md = renderMarkdown('contextcontrol_list_tasks', {
+      tasks: [{ id: 't1', title: 'Rotate keys', status: 'scheduled', target_time: '2026-12-01T00:00:00.000Z', description: null }],
+      ...pageInfo(3, 0, 1),
+    });
+    assert.match(md, /\*\*Rotate keys\*\* \(`t1`\) · scheduled · runs 2026-12-01T00:00:00Z/);
+    assert.match(md, /Pass offset=1 for more/);
+    assert.equal(renderMarkdown('contextcontrol_list_profiles', { profiles: [], ...pageInfo(0, 0, 0) }), 'No profiles found.');
+    assert.equal(CHARACTER_LIMIT, 25_000);
   });
 
   test('Platform MCP Server: rejects invalid tool arguments before any database call', async () => {
     const ctx = { tenantId: '11111111-1111-4111-a111-111111111111', userId: 'key_x', authMode: 'api_key' as const };
-    await assert.rejects(executePlatformTool('get_mcp_profile', { profile_id: 'not-a-uuid' }, ctx));
-    await assert.rejects(executePlatformTool('list_scheduled_tasks', { tenant_id: 'other' }, ctx), /Unrecognized key/);
+    await assert.rejects(executePlatformTool('contextcontrol_get_profile', { profile_id: 'not-a-uuid' }, ctx));
+    await assert.rejects(executePlatformTool('contextcontrol_list_tasks', { tenant_id: 'other' }, ctx), /Unrecognized key/);
+    await assert.rejects(executePlatformTool('list_scheduled_tasks', { limit: 0 }, ctx), 'legacy name resolves, then validates');
     await assert.rejects(executePlatformTool('drop_database', {}, ctx), /not implemented/);
-  });
-
-  test('Platform MCP Server: negotiates protocol version and requires a bearer key', async () => {
-    assert.equal(negotiateProtocolVersion('2024-11-05'), '2024-11-05');
-    assert.equal(negotiateProtocolVersion('2025-06-18'), '2025-06-18');
-    assert.equal(negotiateProtocolVersion('1999-01-01'), SUPPORTED_PROTOCOL_VERSIONS[0]);
-
-    const missing = await handlePlatformMCPRPC('', { jsonrpc: '2.0', id: 1, method: 'tools/list' });
-    assert.equal(missing.statusCode, 401);
-    const malformed = await handlePlatformMCPRPC('Bearer sk_live_abc', { jsonrpc: '2.0', id: 2, method: 'tools/list' });
-    assert.equal(malformed.statusCode, 401);
-    const invalid = await handlePlatformMCPRPC('Bearer x', { method: 'tools/list' });
-    assert.equal(invalid.statusCode, 400);
   });
 });

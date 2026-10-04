@@ -1,1071 +1,929 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Bot,
   Send,
-  Sparkles,
-  Server,
   Database,
-  ShieldCheck,
-  RefreshCw,
   ChevronDown,
-  Layers,
-  Clock,
   Code2,
-  ExternalLink,
   CheckCircle2,
   Plus,
   Trash2,
-  Cpu,
-  Lock,
-  ArrowRight,
-  Terminal,
-  Activity,
-  Zap,
-  Info,
+  Pencil,
+  GitBranch,
+  AlertTriangle,
   Check,
   Copy,
-  Users,
-  Sliders,
+  Wrench,
+  Settings2,
+  X,
+  Loader2,
+  Info,
 } from 'lucide-react';
+import { PLATFORM_TOOL_DEFINITIONS } from '@/lib/mcp/tool-catalog';
 
-interface ToolExecution {
-  toolName: string;
-  serverProvider: string;
-  arguments: Record<string, any>;
-  output: any;
-  latencyMs: number;
-  assignedWorker?: string;
-}
+// ---------------------------------------------------------------------------
+// Types mirroring /api/v1/agent-sessions responses
+// ---------------------------------------------------------------------------
 
-interface ChatMessage {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  profileId?: string;
-  profileName?: string;
-  checkpointId?: string;
-  toolsExecuted?: ToolExecution[];
-  isTeamBlueprint?: boolean;
-  activeWorker?: string;
-  timestamp: string;
-}
+type Provider = 'anthropic' | 'openai' | 'gemini';
 
-interface CheckpointItem {
-  checkpointId: string;
-  threadId: string;
-  tenantId: string;
-  profileId: string;
-  profileName: string;
-  stepIndex: number;
-  userMessage: string;
-  assistantMessage: string;
-  toolsExecuted: ToolExecution[];
-  compiledToolsCount: number;
-  compiledToolsNames: string[];
-  metadata: Record<string, any>;
-  timestamp: string;
-}
-
-interface VaultSpoke {
-  id: string;
-  provider: string;
-  providerName: string;
-  accountLabel: string;
-  scopes: string[];
-  keyFingerprint: string;
-  isActive: boolean;
-  connectedAt: string;
-}
-
-interface TeamBlueprintOption {
+interface AgentSession {
   id: string;
   name: string;
-  supervisorPrompt: string;
-  workers: {
-    id: string;
-    name: string;
-    role: string;
-    mcpTools: string[];
-    avatarIcon?: string;
-  }[];
-  isTeamBlueprint: boolean;
+  provider: Provider;
+  model: string;
+  mcp_profile_id: string | null;
+  context_profile_id: string | null;
+  allowed_tools: string[];
+  forked_from_checkpoint: string | null;
+  created_at: string;
+  last_active_at: string;
+}
+
+interface ToolCall {
+  id: string;
+  name: string;
+  arguments: Record<string, any>;
+}
+
+interface TranscriptItem {
+  role: 'user' | 'assistant' | 'tool';
+  content: string;
+  name?: string;
+  toolCallId?: string;
+  isError?: boolean;
+  toolCalls?: ToolCall[];
+}
+
+interface CheckpointSummary {
+  id: string;
+  step_index: number;
+  parent_id: string | null;
+  user_message: string;
+  assistant_message: string | null;
+  tools_executed: Array<{ toolName: string; isError: boolean; latencyMs: number }>;
+  usage: { totalTokens?: number; steps?: number };
+  metadata: Record<string, any>;
+  created_at: string;
+}
+
+interface ProviderInfo {
+  id: Provider;
+  configured: boolean;
+  defaultModel: string;
+}
+
+interface NamedOption {
+  id: string;
+  name: string;
+  selectedToolNames?: string[];
 }
 
 interface AgentSessionStudioProps {
-  initialProfileId?: string;
+  /** Opens this instance on load when it exists (e.g. from another screen). */
   initialThreadId?: string;
-  onOpenTeamBuilder?: () => void;
+  initialProfileId?: string;
 }
 
-const AVAILABLE_PERSONAS = [
-  {
-    id: 'sales_persona',
-    name: 'Universal Sales & CRM Agent',
-    badge: 'Sales & CRM',
-    color: 'emerald',
-    description: 'Binds HubSpot CRM leads, deal pipelines, and executive Gmail correspondence.',
-    tools: ['crm.search_contact', 'crm.update_deal_stage', 'gmail.send_draft'],
-    spokes: ['HubSpot CRM', 'Google Workspace'],
-    samplePrompts: [
-      'What is the status of our top prospective lead from yesterday?',
-      'Draft a follow up email thanking them for the initial demo.',
-      'Search HubSpot for Marcus Vance at Vance Logistics Corp.',
-    ],
-  },
-  {
-    id: 'developer_persona',
-    name: 'Full-Stack Developer MCP Agent',
-    badge: 'Dev & DB Ops',
-    color: 'blue',
-    description: 'Binds GitHub repositories, Postgres schema queries via Supavisor, and code reviews.',
-    tools: ['postgres.describe_table', 'postgres.execute_read_query'],
-    spokes: ['GitHub Enterprise', 'Supavisor Postgres (:5432)'],
-    samplePrompts: [
-      'Describe the column structure and indexes of the tenants table in Postgres.',
-      'Search our database schemas for profiles and profile_workers tables.',
-      'Check the latest read replica lag for our database instance.',
-    ],
-  },
-  {
-    id: 'support_persona',
-    name: 'Customer Support Specialist',
-    badge: 'Support & KB',
-    color: 'amber',
-    description: 'Binds internal Notion documentation, incident runbooks, and Slack dispatch alerts.',
-    tools: ['notion.search_pages', 'slack.post_incident_alert'],
-    spokes: ['Notion Knowledge Base', 'Slack Enterprise'],
-    samplePrompts: [
-      'Search internal Notion docs for SLA response time on critical incidents.',
-      'Post an incident triage notification to the engineering Slack channel.',
-      'Look up troubleshooting guidelines for Supavisor database connection drops.',
-    ],
-  },
-];
+const PROVIDER_LABELS: Record<Provider, string> = { anthropic: 'Anthropic', openai: 'OpenAI', gemini: 'Google Gemini' };
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const DEFAULT_TOOLS = PLATFORM_TOOL_DEFINITIONS.filter((t) => t.sideEffect === 'read').map((t) => t.name);
 
-export const AgentSessionStudio: React.FC<AgentSessionStudioProps> = ({
-  initialProfileId,
-  initialThreadId,
-  onOpenTeamBuilder,
-}) => {
-  const [selectedProfileId, setSelectedProfileId] = useState<string>(
-    initialProfileId || 'team_front_desk_automation'
-  );
-  const [currentThreadId, setCurrentThreadId] = useState<string>(
-    initialThreadId || 'session_enterprise_001'
-  );
-  const [tenantId] = useState<string>('tenant_enterprise_corp');
-  
-  const [inputMessage, setInputMessage] = useState<string>('');
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [checkpoints, setCheckpoints] = useState<CheckpointItem[]>([]);
-  const [vaultSpokes, setVaultSpokes] = useState<VaultSpoke[]>([]);
-  const [allThreads, setAllThreads] = useState<any[]>([]);
-  const [teamBlueprints, setTeamBlueprints] = useState<TeamBlueprintOption[]>([]);
-  
-  const [isSending, setIsSending] = useState<boolean>(false);
-  const [profileSwitchedAlert, setProfileSwitchedAlert] = useState<string | null>(null);
-  const [inspectorTab, setInspectorTab] = useState<'gateway' | 'checkpoints' | 'spec'>('gateway');
-  const [selectedCheckpointModal, setSelectedCheckpointModal] = useState<CheckpointItem | null>(null);
-  const [copiedCurl, setCopiedCurl] = useState<boolean>(false);
+const SAMPLE_PROMPTS: Record<string, string> = {
+  contextcontrol_list_profiles: 'Which MCP profiles do we have, and what are their token budgets?',
+  contextcontrol_list_tasks: 'What tasks are scheduled right now?',
+  contextcontrol_schedule_task: 'Schedule a task for tomorrow at 9am to review new leads.',
+  contextcontrol_list_api_keys: 'List our API keys and when each was last used.',
+  contextcontrol_create_profile: 'Create an MCP profile called "Support triage" with a 16k token budget.',
+};
 
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+async function api<T>(url: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(url, {
+    ...init,
+    headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
+    cache: 'no-store',
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    if (body?.code === 'NO_ORGANIZATION') throw new Error('Finish onboarding to create an organization first.');
+    throw new Error(body?.error || `Request failed (${res.status})`);
+  }
+  return body as T;
+}
 
-  // Sync initial props when passed
-  useEffect(() => {
-    if (initialProfileId) setSelectedProfileId(initialProfileId);
-  }, [initialProfileId]);
+function relativeTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  if (diff < 60_000) return 'just now';
+  if (diff < 3_600_000) return `${Math.round(diff / 60_000)}m ago`;
+  if (diff < 86_400_000) return `${Math.round(diff / 3_600_000)}h ago`;
+  return new Date(iso).toLocaleDateString();
+}
 
-  useEffect(() => {
-    if (initialThreadId) setCurrentThreadId(initialThreadId);
-  }, [initialThreadId]);
+// ---------------------------------------------------------------------------
+// Instance create / edit form
+// ---------------------------------------------------------------------------
 
-  // Fetch Team Blueprints from Supabase/API
-  const fetchTeams = useCallback(async () => {
+interface InstanceFormValues {
+  name: string;
+  provider: Provider;
+  model: string;
+  mcp_profile_id: string;
+  context_profile_id: string;
+  allowed_tools: string[];
+}
+
+const InstanceModal: React.FC<{
+  mode: 'create' | 'edit';
+  initial: InstanceFormValues;
+  providers: ProviderInfo[];
+  mcpProfiles: NamedOption[];
+  contextProfiles: NamedOption[];
+  onCancel: () => void;
+  onSubmit: (values: InstanceFormValues) => Promise<void>;
+}> = ({ mode, initial, providers, mcpProfiles, contextProfiles, onCancel, onSubmit }) => {
+  const [values, setValues] = useState<InstanceFormValues>(initial);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const configured = providers.filter((p) => p.configured);
+  const set = <K extends keyof InstanceFormValues>(key: K, value: InstanceFormValues[K]) =>
+    setValues((v) => ({ ...v, [key]: value }));
+
+  const submit = async () => {
+    setSaving(true);
+    setError(null);
     try {
-      const res = await fetch(`/api/v1/teams?tenant_id=${tenantId}`);
-      if (res.ok) {
-        const data = await res.json();
-        setTeamBlueprints(data.teams || []);
-      }
-    } catch (e) {
-      console.error('Failed to load team blueprints:', e);
-    }
-  }, [tenantId]);
-
-  useEffect(() => {
-    fetchTeams();
-  }, [fetchTeams]);
-
-  // Determine active profile (either Team Blueprint or Persona)
-  const activeTeam = teamBlueprints.find((t) => t.id === selectedProfileId);
-  const activePersona = AVAILABLE_PERSONAS.find((p) => p.id === selectedProfileId);
-  const isTeam = !!activeTeam;
-
-  const currentDisplayName = activeTeam ? activeTeam.name : (activePersona?.name || 'Front Desk Automation Team');
-  const currentToolsCount = activeTeam
-    ? activeTeam.workers.reduce((acc, w) => acc + (w.mcpTools?.length || 0), 0)
-    : (activePersona?.tools.length || 3);
-
-  // Sample prompt suggestions based on selected team/persona
-  const activeSamplePrompts = activeTeam
-    ? [
-        'Check billing invoice balance for Acme Corp',
-        'Verify identity and update contact Marcus Vance in CRM',
-        'Inspect table schema for profiles and check replica health',
-      ]
-    : activePersona?.samplePrompts || [
-        'What is the status of our top prospective lead from yesterday?',
-        'Describe the column structure and indexes of the tenants table in Postgres.',
-      ];
-
-  // Load thread history and vault spokes
-  const loadThreadData = useCallback(async (threadId: string) => {
-    try {
-      const res = await fetch(`/api/v1/chat/threads?thread_id=${threadId}&tenant_id=${tenantId}`);
-      if (res.ok) {
-        const data = await res.json();
-        setCheckpoints(data.checkpoints || []);
-        setAllThreads(data.all_threads || []);
-        if (data.vault?.credentials) {
-          setVaultSpokes(data.vault.credentials);
-        }
-
-        // Convert checkpoints into conversational history
-        const reconstructedMessages: ChatMessage[] = [];
-        (data.checkpoints || []).forEach((chk: CheckpointItem) => {
-          reconstructedMessages.push({
-            id: `usr_${chk.checkpointId}`,
-            role: 'user',
-            content: chk.userMessage,
-            timestamp: chk.timestamp,
-          });
-          reconstructedMessages.push({
-            id: `asst_${chk.checkpointId}`,
-            role: 'assistant',
-            content: chk.assistantMessage,
-            profileId: chk.profileId,
-            profileName: chk.profileName,
-            checkpointId: chk.checkpointId,
-            toolsExecuted: chk.toolsExecuted,
-            timestamp: chk.timestamp,
-          });
-        });
-        setMessages(reconstructedMessages);
-      }
-    } catch (err) {
-      console.error('Failed to load thread data:', err);
-    }
-  }, [tenantId]);
-
-  useEffect(() => {
-    loadThreadData(currentThreadId);
-  }, [currentThreadId, loadThreadData]);
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, isSending]);
-
-  // Handle Dynamic Profile/Team Switching
-  const handleProfileSwitch = (newProfileId: string) => {
-    if (newProfileId === selectedProfileId) return;
-    const oldName = currentDisplayName;
-    setSelectedProfileId(newProfileId);
-
-    const targetTeam = teamBlueprints.find((t) => t.id === newProfileId);
-    const targetPersona = AVAILABLE_PERSONAS.find((p) => p.id === newProfileId);
-    const nextName = targetTeam ? targetTeam.name : (targetPersona?.name || newProfileId);
-
-    setProfileSwitchedAlert(
-      `Blueprint switched from ${oldName} to ${nextName}. ` +
-      (targetTeam
-        ? `Multi-Agent Supervisor loaded with ${targetTeam.workers.length} workers.`
-        : `Single Persona loaded with ${targetPersona?.tools.length || 0} tools.`)
-    );
-    setTimeout(() => setProfileSwitchedAlert(null), 6000);
-  };
-
-  // Spawn Fresh Thread ID for this profile
-  const handleSpawnUniqueThread = async () => {
-    try {
-      const res = await fetch('/api/v1/threads/spawn', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          profile_id: selectedProfileId,
-          tenant_id: tenantId,
-          title: `Session with ${currentDisplayName}`,
-        }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setCurrentThreadId(data.thread_id);
-        setMessages([]);
-        setCheckpoints([]);
-        loadThreadData(data.thread_id);
-      }
-    } catch (err) {
-      console.error('Failed to spawn thread instance:', err);
-    }
-  };
-
-  // Submit Turn to /api/v1/chat/generate
-  const handleSendMessage = async (customText?: string) => {
-    const textToSend = (customText || inputMessage).trim();
-    if (!textToSend || isSending) return;
-
-    setInputMessage('');
-    setIsSending(true);
-
-    const tempUserMsgId = `temp_usr_${Date.now()}`;
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: tempUserMsgId,
-        role: 'user',
-        content: textToSend,
-        timestamp: new Date().toISOString(),
-      },
-    ]);
-
-    try {
-      const response = await fetch('/api/v1/chat/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          thread_id: currentThreadId,
-          tenant_id: tenantId,
-          profile_id: selectedProfileId,
-          message: textToSend,
-        }),
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        const asstMsg: ChatMessage = {
-          id: `asst_${data.checkpoint_id}`,
-          role: 'assistant',
-          content: data.message,
-          profileId: data.profile_id,
-          profileName: data.profile_name,
-          checkpointId: data.checkpoint_id,
-          toolsExecuted: data.tool_executions,
-          isTeamBlueprint: data.is_team_blueprint,
-          activeWorker: data.active_worker,
-          timestamp: data.timestamp,
-        };
-        setMessages((prev) => [...prev, asstMsg]);
-        // Refresh checkpoints
-        loadThreadData(currentThreadId);
-      } else {
-        const err = await response.json();
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: `err_${Date.now()}`,
-            role: 'assistant',
-            content: `Execution Error: ${err.error || 'Failed to generate turn'}`,
-            timestamp: new Date().toISOString(),
-          },
-        ]);
-      }
-    } catch (error: any) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `err_${Date.now()}`,
-          role: 'assistant',
-          content: `Network Error: ${error.message || 'Server connection failed'}`,
-          timestamp: new Date().toISOString(),
-        },
-      ]);
+      await onSubmit(values);
+    } catch (err: any) {
+      setError(err?.message || 'Could not save instance');
     } finally {
-      setIsSending(false);
+      setSaving(false);
     }
   };
 
-  // Create New Thread
-  const handleCreateNewThread = async () => {
-    try {
-      const res = await fetch('/api/v1/chat/threads', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'create' }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setCurrentThreadId(data.thread_id);
-        setMessages([]);
-        setCheckpoints([]);
+  const noProviders = mode === 'create' && configured.length === 0;
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="w-full max-w-lg bg-[#0e131e] border border-zinc-700 rounded-2xl p-6 space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto">
+        <div className="flex items-start justify-between">
+          <div>
+            <h3 className="text-base font-bold text-white">{mode === 'create' ? 'New agent instance' : 'Edit instance'}</h3>
+            <p className="text-xs text-zinc-400 mt-1">
+              An instance is a saved conversation with fixed settings. Every turn is stored as a checkpoint.
+            </p>
+          </div>
+          <button onClick={onCancel} className="text-zinc-400 hover:text-white">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {noProviders ? (
+          <div className="p-3 rounded-lg bg-amber-950/40 border border-amber-900/60 text-xs text-amber-200 space-y-1">
+            <p className="font-semibold">No LLM key stored for this organization.</p>
+            <p>Instances run on your own Anthropic, OpenAI, or Gemini key. Add one under Account &amp; Billing → Secrets, then come back.</p>
+          </div>
+        ) : (
+          <div className="space-y-4 text-xs">
+            <label className="block space-y-1">
+              <span className="font-mono text-zinc-300">Name</span>
+              <input
+                value={values.name}
+                onChange={(e) => set('name', e.target.value)}
+                placeholder="e.g. Ops assistant"
+                autoFocus
+                className="w-full bg-[#090b0f] border border-zinc-700 rounded-lg px-3 py-2 font-mono text-white focus:outline-none focus:border-emerald-500"
+              />
+            </label>
+
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block space-y-1">
+                <span className="font-mono text-zinc-300">LLM provider</span>
+                <select
+                  value={values.provider}
+                  disabled={mode === 'edit'}
+                  onChange={(e) => {
+                    const p = providers.find((x) => x.id === e.target.value)!;
+                    setValues((v) => ({ ...v, provider: p.id, model: p.defaultModel }));
+                  }}
+                  className="w-full bg-[#090b0f] border border-zinc-700 rounded-lg px-3 py-2 font-mono text-white disabled:opacity-60"
+                >
+                  {(mode === 'edit' ? providers : configured).map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {PROVIDER_LABELS[p.id]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block space-y-1">
+                <span className="font-mono text-zinc-300">Model</span>
+                <input
+                  value={values.model}
+                  disabled={mode === 'edit'}
+                  onChange={(e) => set('model', e.target.value)}
+                  className="w-full bg-[#090b0f] border border-zinc-700 rounded-lg px-3 py-2 font-mono text-white disabled:opacity-60"
+                />
+              </label>
+            </div>
+            {mode === 'edit' && (
+              <p className="text-[11px] text-zinc-500 -mt-2">Provider and model are fixed once an instance exists. Fork it to change them.</p>
+            )}
+
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block space-y-1">
+                <span className="font-mono text-zinc-300">Context profile</span>
+                <select
+                  value={values.context_profile_id}
+                  onChange={(e) => set('context_profile_id', e.target.value)}
+                  className="w-full bg-[#090b0f] border border-zinc-700 rounded-lg px-3 py-2 font-mono text-white"
+                >
+                  <option value="">None</option>
+                  {contextProfiles.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block space-y-1">
+                <span className="font-mono text-zinc-300">MCP profile</span>
+                <select
+                  value={values.mcp_profile_id}
+                  onChange={(e) => set('mcp_profile_id', e.target.value)}
+                  className="w-full bg-[#090b0f] border border-zinc-700 rounded-lg px-3 py-2 font-mono text-white"
+                >
+                  <option value="">None</option>
+                  {mcpProfiles.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <p className="text-[11px] text-zinc-500 -mt-2">
+              The context profile&apos;s instruction and policy steps become the agent&apos;s system prompt.
+            </p>
+
+            <div className="space-y-1.5">
+              <span className="font-mono text-zinc-300">Tools this instance may use</span>
+              <div className="space-y-1 p-2 rounded-lg bg-[#07090f] border border-zinc-800 max-h-52 overflow-y-auto">
+                {PLATFORM_TOOL_DEFINITIONS.map((t) => (
+                  <label key={t.name} className="flex items-start gap-2 font-mono text-zinc-300 cursor-pointer hover:text-white">
+                    <input
+                      type="checkbox"
+                      checked={values.allowed_tools.includes(t.name)}
+                      onChange={() =>
+                        set(
+                          'allowed_tools',
+                          values.allowed_tools.includes(t.name)
+                            ? values.allowed_tools.filter((n) => n !== t.name)
+                            : [...values.allowed_tools, t.name]
+                        )
+                      }
+                      className="mt-0.5 rounded bg-zinc-900 border-zinc-700 text-emerald-500"
+                    />
+                    <span className="flex-1">
+                      {t.name}
+                      {t.sideEffect === 'write' && <span className="ml-1.5 text-[10px] text-amber-400">writes data</span>}
+                    </span>
+                  </label>
+                ))}
+              </div>
+              {values.allowed_tools.some((n) => PLATFORM_TOOL_DEFINITIONS.find((t) => t.name === n)?.sideEffect === 'write') && (
+                <p className="text-[11px] text-amber-400 flex items-center gap-1">
+                  <AlertTriangle className="w-3 h-3" /> The agent can change real data with the selected write tools.
+                </p>
+              )}
+            </div>
+
+            {error && <p className="text-rose-400 font-mono">{error}</p>}
+          </div>
+        )}
+
+        <div className="flex justify-end gap-2 pt-2 border-t border-zinc-800">
+          <button onClick={onCancel} className="px-3.5 py-2 rounded-lg text-xs text-zinc-400 hover:text-white">
+            Cancel
+          </button>
+          {!noProviders && (
+            <button
+              onClick={submit}
+              disabled={saving || !values.name.trim() || !values.model.trim()}
+              className="px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold text-xs disabled:opacity-50"
+            >
+              {saving ? 'Saving…' : mode === 'create' ? 'Create instance' : 'Save changes'}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// Studio
+// ---------------------------------------------------------------------------
+
+export const AgentSessionStudio: React.FC<AgentSessionStudioProps> = ({ initialThreadId }) => {
+  const [sessions, setSessions] = useState<AgentSession[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [checkpoints, setCheckpoints] = useState<CheckpointSummary[]>([]);
+  const [transcript, setTranscript] = useState<TranscriptItem[]>([]);
+  const [providers, setProviders] = useState<ProviderInfo[]>([]);
+  const [mcpProfiles, setMcpProfiles] = useState<NamedOption[]>([]);
+  const [contextProfiles, setContextProfiles] = useState<NamedOption[]>([]);
+
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [input, setInput] = useState('');
+  const [sending, setSending] = useState(false);
+  const [turnError, setTurnError] = useState<string | null>(null);
+  const [modal, setModal] = useState<'create' | 'edit' | null>(null);
+  const [tab, setTab] = useState<'config' | 'checkpoints' | 'api'>('config');
+  const [checkpointDetail, setCheckpointDetail] = useState<any | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
+  const endRef = useRef<HTMLDivElement>(null);
+
+  const active = sessions.find((s) => s.id === activeId) || null;
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+
+  const loadSessions = useCallback(async (preferId?: string | null) => {
+    const { sessions: list } = await api<{ sessions: AgentSession[] }>('/api/v1/agent-sessions');
+    setSessions(list);
+    setActiveId((current) => {
+      const want = preferId || current;
+      return want && list.some((s) => s.id === want) ? want : list[0]?.id || null;
+    });
+    return list;
+  }, []);
+
+  const loadDetail = useCallback(async (id: string) => {
+    const detail = await api<{ checkpoints: CheckpointSummary[]; transcript: TranscriptItem[] }>(
+      `/api/v1/agent-sessions/${id}`
+    );
+    setCheckpoints(detail.checkpoints);
+    setTranscript(detail.transcript);
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const [prov, mcp, ctx] = await Promise.all([
+          api<{ providers: ProviderInfo[] }>('/api/v1/llm-providers'),
+          api<{ profiles: NamedOption[] }>('/api/mcp/profiles').catch(() => ({ profiles: [] })),
+          api<{ profiles: NamedOption[] }>('/api/v1/context-profiles').catch(() => ({ profiles: [] })),
+        ]);
+        setProviders(prov.providers);
+        setMcpProfiles(mcp.profiles);
+        setContextProfiles(ctx.profiles);
+        await loadSessions(initialThreadId && UUID_RE.test(initialThreadId) ? initialThreadId : null);
+      } catch (err: any) {
+        setLoadError(err?.message || 'Could not load Agent Studio');
+      } finally {
+        setLoading(false);
       }
-    } catch (err) {
-      console.error('Failed to create thread:', err);
-    }
-  };
+    })();
+  }, [initialThreadId, loadSessions]);
 
-  // Clear Current Thread
-  const handleClearThread = async () => {
-    try {
-      await fetch('/api/v1/chat/threads', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'clear', thread_id: currentThreadId }),
-      });
-      setMessages([]);
+  useEffect(() => {
+    setTurnError(null);
+    if (!activeId) {
       setCheckpoints([]);
-      loadThreadData(currentThreadId);
-    } catch (err) {
-      console.error('Failed to clear thread:', err);
+      setTranscript([]);
+      return;
+    }
+    loadDetail(activeId).catch((err) => setTurnError(err?.message || 'Could not load conversation'));
+  }, [activeId, loadDetail]);
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [transcript, sending]);
+
+  const toolResults = useMemo(() => {
+    const map = new Map<string, TranscriptItem>();
+    transcript.forEach((t) => t.role === 'tool' && t.toolCallId && map.set(t.toolCallId, t));
+    return map;
+  }, [transcript]);
+
+  const samplePrompts = useMemo(
+    () => (active?.allowed_tools || []).map((t) => SAMPLE_PROMPTS[t]).filter(Boolean).slice(0, 3),
+    [active]
+  );
+
+  const copy = (id: string, text: string) => {
+    navigator.clipboard.writeText(text);
+    setCopied(id);
+    setTimeout(() => setCopied(null), 2000);
+  };
+
+  const handleSend = async (text?: string) => {
+    const message = (text ?? input).trim();
+    if (!message || !active || sending) return;
+    setInput('');
+    setTurnError(null);
+    setSending(true);
+    setTranscript((t) => [...t, { role: 'user', content: message }]);
+    try {
+      const result = await api<{ transcript: TranscriptItem[] }>('/api/v1/chat/generate', {
+        method: 'POST',
+        body: JSON.stringify({ session_id: active.id, message }),
+      });
+      setTranscript(result.transcript);
+      await Promise.all([loadDetail(active.id), loadSessions(active.id)]);
+    } catch (err: any) {
+      setTurnError(err?.message || 'The turn failed');
+      setTranscript((t) => t.slice(0, -1));
+      setInput(message);
+    } finally {
+      setSending(false);
     }
   };
 
-  const copyCurl = () => {
-    const curl = `curl -X POST https://api.yourdomain.com/v1/chat/generate \\
+  const formFromSession = (s: AgentSession | null): InstanceFormValues => {
+    const firstConfigured = providers.find((p) => p.configured) || providers[0];
+    return s
+      ? {
+          name: s.name,
+          provider: s.provider,
+          model: s.model,
+          mcp_profile_id: s.mcp_profile_id || '',
+          context_profile_id: s.context_profile_id || '',
+          allowed_tools: s.allowed_tools,
+        }
+      : {
+          name: '',
+          provider: firstConfigured?.id || 'anthropic',
+          model: firstConfigured?.defaultModel || '',
+          mcp_profile_id: '',
+          context_profile_id: '',
+          allowed_tools: DEFAULT_TOOLS,
+        };
+  };
+
+  const submitInstance = async (values: InstanceFormValues) => {
+    const attachments = {
+      mcp_profile_id: values.mcp_profile_id || null,
+      context_profile_id: values.context_profile_id || null,
+      allowed_tools: values.allowed_tools,
+    };
+    if (modal === 'create') {
+      const { session } = await api<{ session: AgentSession }>('/api/v1/agent-sessions', {
+        method: 'POST',
+        body: JSON.stringify({ name: values.name.trim(), provider: values.provider, model: values.model.trim(), ...attachments }),
+      });
+      await loadSessions(session.id);
+    } else if (active) {
+      await api(`/api/v1/agent-sessions/${active.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ name: values.name.trim(), ...attachments }),
+      });
+      await loadSessions(active.id);
+    }
+    setModal(null);
+  };
+
+  const archiveActive = async () => {
+    if (!active || !confirm(`Archive "${active.name}"? Its checkpoints are kept but it leaves this list.`)) return;
+    try {
+      await api(`/api/v1/agent-sessions/${active.id}`, { method: 'DELETE' });
+      await loadSessions(null);
+    } catch (err: any) {
+      setTurnError(err?.message || 'Could not archive instance');
+    }
+  };
+
+  const openCheckpoint = async (id: string) => {
+    try {
+      const { checkpoint } = await api<{ checkpoint: any }>(`/api/v1/checkpoints/${id}`);
+      setCheckpointDetail(checkpoint);
+    } catch (err: any) {
+      setTurnError(err?.message || 'Could not load checkpoint');
+    }
+  };
+
+  const forkFrom = async (checkpointId: string) => {
+    try {
+      const { session } = await api<{ session: AgentSession }>('/api/v1/agent-sessions/fork', {
+        method: 'POST',
+        body: JSON.stringify({ checkpoint_id: checkpointId }),
+      });
+      setCheckpointDetail(null);
+      await loadSessions(session.id);
+    } catch (err: any) {
+      setTurnError(err?.message || 'Could not fork');
+    }
+  };
+
+  const chatCurl = `curl -X POST ${origin}/api/v1/chat/generate \\
+  -H "Authorization: Bearer $CONTEXT_CONTROL_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "thread_id": "${currentThreadId}",
-    "tenant_id": "${tenantId}",
-    "profile_id": "${selectedProfileId}",
-    "message": "What did the lead from the voice call say?"
+    "session_id": "${active?.id || '<SESSION_ID>'}",
+    "message": "What tasks are scheduled right now?"
   }'`;
-    navigator.clipboard.writeText(curl);
-    setCopiedCurl(true);
-    setTimeout(() => setCopiedCurl(false), 2500);
-  };
+
+  const createCurl = `curl -X POST ${origin}/api/v1/agent-sessions \\
+  -H "Authorization: Bearer $CONTEXT_CONTROL_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "name": "Ops assistant",
+    "provider": "${active?.provider || 'anthropic'}",
+    "allowed_tools": ${JSON.stringify(active?.allowed_tools || DEFAULT_TOOLS)}
+  }'`;
+
+  const mcpProfile = mcpProfiles.find((p) => p.id === active?.mcp_profile_id);
+  const contextProfile = contextProfiles.find((p) => p.id === active?.context_profile_id);
+
+  if (loading) {
+    return (
+      <div className="flex h-[calc(100vh-3.5rem)] items-center justify-center bg-[#090b10] text-zinc-400 text-sm gap-2">
+        <Loader2 className="w-4 h-4 animate-spin" /> Loading Agent Studio…
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-[calc(100vh-3.5rem)] bg-[#090b10] text-zinc-100 overflow-hidden">
-      {/* ========================================================================= */}
-      {/* LEFT/CENTER CHAT CANVAS */}
-      {/* ========================================================================= */}
+      {/* CHAT */}
       <div className="flex-1 flex flex-col border-r border-zinc-800/80 min-w-0">
-        {/* Dynamic Persona & Session Control Bar */}
         <header className="px-5 py-3 border-b border-zinc-800 bg-[#0d1017] flex flex-wrap items-center justify-between gap-3 shrink-0">
-          <div className="flex items-center gap-3">
-            <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-              isTeam
-                ? 'bg-purple-950/60 border border-purple-800/60 text-purple-400'
-                : 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-400'
-            }`}>
-              {isTeam ? <Users className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 shrink-0">
+              <Bot className="w-4 h-4" />
             </div>
-
-            {/* Profile / Team Blueprint Dropdown */}
-            <div>
-              <div className="flex items-center gap-1.5 text-[11px] font-mono text-zinc-400 uppercase tracking-wider">
-                <span>{isTeam ? 'Active Team Blueprint' : 'Active Agent Persona'}</span>
-                <span className="text-zinc-600">•</span>
-                <span className={isTeam ? 'text-purple-400' : 'text-emerald-400'}>
-                  {isTeam ? 'Multi-Agent Router' : 'Single Worker'}
-                </span>
-              </div>
-              <div className="relative mt-0.5 flex items-center gap-2">
-                <div className="relative">
-                  <select
-                    value={selectedProfileId}
-                    onChange={(e) => handleProfileSwitch(e.target.value)}
-                    className="bg-zinc-900 border border-zinc-700/80 text-white font-medium text-xs rounded-md px-2.5 py-1.5 pr-8 focus:outline-none focus:border-emerald-500 transition-colors cursor-pointer appearance-none max-w-xs truncate"
-                  >
-                    {teamBlueprints.length > 0 && (
-                      <optgroup label="🏢 Agent Team Blueprints (Multi-Agent)">
-                        {teamBlueprints.map((t) => (
-                          <option key={t.id} value={t.id}>
-                            {t.name} ({t.workers.length} Workers)
-                          </option>
-                        ))}
-                      </optgroup>
-                    )}
-                    <optgroup label="🤖 Single Agent Personas">
-                      {AVAILABLE_PERSONAS.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name} ({p.badge})
-                        </option>
-                      ))}
-                    </optgroup>
-                  </select>
-                  <ChevronDown className="w-3.5 h-3.5 text-zinc-400 absolute right-2.5 top-2.5 pointer-events-none" />
-                </div>
-
-                {onOpenTeamBuilder && (
-                  <button
-                    onClick={onOpenTeamBuilder}
-                    className="px-2.5 py-1.5 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white text-xs font-semibold flex items-center gap-1.5 border border-zinc-700/80 transition-all"
-                    title="Open Agent Team Builder to create blueprints"
-                  >
-                    <Sliders className="w-3 h-3 text-emerald-400" />
-                    <span>Team Builder</span>
-                  </button>
-                )}
+            <div className="min-w-0">
+              <div className="text-[11px] font-mono text-zinc-400 uppercase tracking-wider">Agent instance</div>
+              <div className="relative mt-0.5">
+                <select
+                  value={activeId || ''}
+                  onChange={(e) => setActiveId(e.target.value || null)}
+                  disabled={sessions.length === 0}
+                  className="bg-zinc-900 border border-zinc-700/80 text-white font-medium text-xs rounded-md px-2.5 py-1.5 pr-8 focus:outline-none focus:border-emerald-500 appearance-none max-w-xs truncate disabled:opacity-60"
+                >
+                  {sessions.length === 0 && <option value="">No instances yet</option>}
+                  {sessions.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name} · {relativeTime(s.last_active_at)}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="w-3.5 h-3.5 text-zinc-400 absolute right-2.5 top-2 pointer-events-none" />
               </div>
             </div>
           </div>
 
-          {/* Session / Thread / RLS Bar */}
-          <div className="flex items-center gap-2 text-xs font-mono">
-            {/* Thread Instance Selector */}
-            <div className="flex items-center gap-1.5 px-2.5 py-1 bg-zinc-900 border border-zinc-800 rounded-md">
-              <Clock className="w-3.5 h-3.5 text-zinc-400" />
-              <span className="text-zinc-500">Instance:</span>
-              <select
-                value={currentThreadId}
-                onChange={(e) => setCurrentThreadId(e.target.value)}
-                className="bg-transparent text-zinc-200 font-semibold focus:outline-none cursor-pointer max-w-[140px] truncate"
-              >
-                {allThreads.map((t) => (
-                  <option key={t.threadId} value={t.threadId} className="bg-zinc-900 text-white">
-                    {t.threadId} ({t.turnsCount} turns)
-                  </option>
-                ))}
-                {!allThreads.some((t) => t.threadId === currentThreadId) && (
-                  <option value={currentThreadId} className="bg-zinc-900 text-white">
-                    {currentThreadId} (active)
-                  </option>
-                )}
-              </select>
-            </div>
-
-            {/* Spawn Brand New Unique Thread Instance */}
+          <div className="flex items-center gap-2 text-xs">
+            {active && (
+              <>
+                <button
+                  onClick={() => setModal('edit')}
+                  className="p-1.5 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-white"
+                  title="Rename or change attachments"
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={archiveActive}
+                  className="p-1.5 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-rose-400"
+                  title="Archive instance"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </>
+            )}
             <button
-              onClick={handleSpawnUniqueThread}
-              title="Spawn brand new unique thread instance bound to this blueprint"
-              className="px-2.5 py-1 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white font-medium flex items-center gap-1 transition-all shadow-sm"
+              onClick={() => setModal('create')}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white font-semibold"
             >
-              <Zap className="w-3.5 h-3.5" />
-              <span>Spawn Instance</span>
-            </button>
-
-            {/* Reset Thread Button */}
-            <button
-              onClick={handleClearThread}
-              title="Clear thread checkpoints"
-              className="p-1.5 rounded-md hover:bg-zinc-800 text-zinc-500 hover:text-red-400 transition-colors"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
+              <Plus className="w-3.5 h-3.5" />
+              New instance
             </button>
           </div>
         </header>
 
-        {/* Dynamic Profile Switch Banner Alert */}
-        {profileSwitchedAlert && (
-          <div className="px-5 py-2.5 bg-emerald-950/60 border-b border-emerald-800/60 text-emerald-200 text-xs flex items-center gap-2 animate-fadeIn shrink-0">
-            <Zap className="w-4 h-4 text-emerald-400 shrink-0" />
-            <span className="font-mono">{profileSwitchedAlert}</span>
-          </div>
-        )}
-
-        {/* Chat Message Scrollable Area */}
-        <div className="flex-1 overflow-y-auto p-5 space-y-5">
-          {messages.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-center max-w-lg mx-auto p-6 space-y-4">
-              <div className="w-12 h-12 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-center text-emerald-400 shadow-xl">
-                {isTeam ? <Users className="w-6 h-6 text-purple-400" /> : <Cpu className="w-6 h-6" />}
-              </div>
-              <div className="space-y-1.5">
-                <h3 className="text-base font-semibold text-white">
-                  {isTeam ? `${currentDisplayName} (Team Blueprint)` : 'Decoupled Hub-and-Spoke Agent Session'}
-                </h3>
-                <p className="text-xs text-zinc-400 leading-relaxed">
-                  {isTeam ? (
-                    <>
-                      Backed by LangGraph multi-agent supervisor. Queries are triaged to specialized workers (
-                      <span className="text-emerald-400">
-                        {activeTeam?.workers.map((w) => w.name).join(', ')}
-                      </span>
-                      ) with independent MCP Gateway tool assignments and <strong className="text-cyan-400">PostgresSaver</strong> state checkpointer.
-                    </>
-                  ) : (
-                    <>
-                      Interacting with a stateless LangGraph worker backed by <strong className="text-emerald-400">PostgresSaver</strong> and our proprietary <strong className="text-emerald-400">MCP Gateway</strong>.
-                    </>
-                  )}
-                </p>
-              </div>
-
-              {/* Sample Prompt Starters */}
-              <div className="w-full space-y-2 pt-2">
-                <div className="text-[11px] font-mono text-zinc-500 uppercase tracking-wider text-left">
-                  Try a prompt for {currentDisplayName}:
-                </div>
-                <div className="space-y-1.5 text-left">
-                  {activeSamplePrompts.map((prompt, i) => (
-                    <button
-                      key={i}
-                      onClick={() => handleSendMessage(prompt)}
-                      className="w-full text-left text-xs px-3.5 py-2 rounded-lg bg-zinc-900/90 border border-zinc-800 hover:border-emerald-500/50 hover:bg-zinc-800/80 text-zinc-300 hover:text-white transition-all flex items-center justify-between group"
-                    >
-                      <span className="truncate pr-2">{prompt}</span>
-                      <ArrowRight className="w-3.5 h-3.5 text-zinc-500 group-hover:text-emerald-400 shrink-0" />
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          ) : (
-            messages.map((msg) => (
-              <div
-                key={msg.id}
-                className={`flex gap-3 text-xs ${
-                  msg.role === 'user' ? 'justify-end' : 'justify-start'
-                }`}
-              >
-                {msg.role === 'assistant' && (
-                  <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
-                    msg.isTeamBlueprint
-                      ? 'bg-purple-950 border border-purple-800 text-purple-400'
-                      : 'bg-emerald-950 border border-emerald-800 text-emerald-400'
-                  }`}>
-                    {msg.isTeamBlueprint ? <Users className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
-                  </div>
-                )}
-
-                <div
-                  className={`max-w-[85%] rounded-xl px-4 py-3 space-y-2.5 ${
-                    msg.role === 'user'
-                      ? 'bg-emerald-600/90 text-white rounded-tr-none'
-                      : 'bg-zinc-900 border border-zinc-800 text-zinc-200 rounded-tl-none shadow-md'
-                  }`}
-                >
-                  {/* Persona / Supervisor Metadata Header */}
-                  {msg.role === 'assistant' && (
-                    <div className="flex flex-wrap items-center justify-between gap-2 pb-1.5 border-b border-zinc-800/80 text-[11px] font-mono">
-                      <div className="flex items-center gap-1.5 text-emerald-400 font-medium">
-                        <Sparkles className="w-3 h-3" />
-                        <span>{msg.profileName || currentDisplayName}</span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        {msg.activeWorker && (
-                          <span className="text-[10px] text-purple-300 bg-purple-950/80 px-2 py-0.5 rounded border border-purple-800/60 font-semibold flex items-center gap-1">
-                            <Bot className="w-3 h-3" />
-                            Dispatched: {msg.activeWorker}
-                          </span>
-                        )}
-                        {msg.checkpointId && (
-                          <span className="text-[10px] text-zinc-500 bg-zinc-800/80 px-1.5 py-0.5 rounded border border-zinc-700/50">
-                            {msg.checkpointId}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Message Body */}
-                  <div className="whitespace-pre-wrap leading-relaxed text-[13px]">
-                    {msg.content}
-                  </div>
-
-                  {/* Executed Tools Card */}
-                  {msg.toolsExecuted && msg.toolsExecuted.length > 0 && (
-                    <div className="pt-2 border-t border-zinc-800/70 space-y-2">
-                      <div className="text-[11px] font-mono text-zinc-400 flex items-center gap-1.5">
-                        <Terminal className="w-3 h-3 text-emerald-400" />
-                        <span>Gateway Tools Executed (0 Credential Exposure):</span>
-                      </div>
-                      {msg.toolsExecuted.map((tool, idx) => (
-                        <div
-                          key={idx}
-                          className="bg-black/40 border border-zinc-800 rounded-lg p-2.5 font-mono text-[11px] space-y-1.5"
-                        >
-                          <div className="flex items-center justify-between text-zinc-300">
-                            <span className="text-emerald-400 font-semibold">{tool.toolName}</span>
-                            <span className="text-zinc-500 text-[10px]">
-                              {tool.serverProvider} • {tool.latencyMs}ms
-                            </span>
-                          </div>
-                          <div className="text-zinc-400 text-[10px]">
-                            Arguments: {JSON.stringify(tool.arguments)}
-                          </div>
-                          <div className="bg-zinc-950/80 rounded p-1.5 text-zinc-300 overflow-x-auto text-[10px]">
-                            {JSON.stringify(tool.output, null, 2)}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  <div className="text-[10px] text-right font-mono text-zinc-500 pt-0.5">
-                    {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </div>
-                </div>
-
-                {msg.role === 'user' && (
-                  <div className="w-7 h-7 rounded-lg bg-zinc-800 border border-zinc-700 flex items-center justify-center text-zinc-300 shrink-0 mt-0.5">
-                    <span className="font-mono text-xs font-bold">U</span>
-                  </div>
-                )}
-              </div>
-            ))
+        <div className="flex-1 overflow-y-auto p-6 space-y-4">
+          {loadError && (
+            <div className="p-3 rounded-lg bg-rose-950/40 border border-rose-900/60 text-xs text-rose-300">{loadError}</div>
           )}
 
-          {isSending && (
-            <div className="flex gap-3 text-xs justify-start items-center">
-              <div className="w-7 h-7 rounded-lg bg-emerald-950 border border-emerald-800 flex items-center justify-center text-emerald-400 animate-pulse">
-                <Bot className="w-4 h-4" />
-              </div>
-              <div className="bg-zinc-900 border border-zinc-800 text-zinc-400 rounded-xl px-4 py-3 flex items-center gap-2">
-                <RefreshCw className="w-3.5 h-3.5 animate-spin text-emerald-400" />
-                <span className="font-mono text-xs">
-                  {isTeam
-                    ? `Supervisor routing query to staff workers in ${currentDisplayName}...`
-                    : `Gateway compiling ${currentDisplayName} tools & querying LangGraph PostgresSaver...`}
-                </span>
-              </div>
-            </div>
-          )}
-
-          <div ref={messagesEndRef} />
-        </div>
-
-        {/* Input Bar & Suggested Chips */}
-        <div className="p-4 border-t border-zinc-800 bg-[#0c0e14] shrink-0 space-y-2.5">
-          {/* Quick prompt suggestions */}
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-[11px] font-mono no-scrollbar">
-            <span className="text-zinc-500 shrink-0">Quick Ask:</span>
-            {activeSamplePrompts.map((p, idx) => (
+          {!loadError && !active && (
+            <div className="max-w-md mx-auto text-center pt-16 space-y-3">
+              <Bot className="w-8 h-8 text-emerald-400 mx-auto" />
+              <h2 className="text-lg font-bold text-white">Create your first agent instance</h2>
+              <p className="text-sm text-zinc-400">
+                Give it a name, pick your LLM key, attach a context profile and an MCP profile, and choose the tools it may use.
+              </p>
               <button
-                key={idx}
-                onClick={() => handleSendMessage(p)}
-                className="shrink-0 px-2.5 py-1 rounded bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 hover:text-white border border-zinc-700/60 transition-colors whitespace-nowrap"
+                onClick={() => setModal('create')}
+                className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold"
               >
-                {p}
+                New instance
               </button>
-            ))}
-          </div>
-
-          {/* Form */}
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              handleSendMessage();
-            }}
-            className="flex items-center gap-2"
-          >
-            <div className="relative flex-1">
-              <input
-                type="text"
-                value={inputMessage}
-                onChange={(e) => setInputMessage(e.target.value)}
-                placeholder={`Ask ${currentDisplayName} using dynamic Gateway tools...`}
-                disabled={isSending}
-                className="w-full bg-zinc-900 border border-zinc-750 rounded-lg px-4 py-2.5 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500 transition-colors"
-              />
-              <span className="absolute right-3 top-2.5 text-[10px] font-mono text-zinc-500">
-                POST /v1/chat/generate
-              </span>
-            </div>
-
-            <button
-              type="submit"
-              disabled={isSending || !inputMessage.trim()}
-              className="px-4 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-medium text-xs flex items-center gap-1.5 transition-all shadow-md shadow-emerald-950/40"
-            >
-              <Send className="w-3.5 h-3.5" />
-              <span>Send</span>
-            </button>
-          </form>
-        </div>
-      </div>
-
-      {/* ========================================================================= */}
-      {/* RIGHT-HAND INSPECTOR (Gateway Hub, Checkpoints Audit, & Architecture) */}
-      {/* ========================================================================= */}
-      <div className="w-96 flex flex-col bg-[#0b0d13] shrink-0 border-l border-zinc-800">
-        {/* Tab Selector */}
-        <div className="flex border-b border-zinc-800 text-xs font-mono bg-[#0e1118]">
-          <button
-            onClick={() => setInspectorTab('gateway')}
-            className={`flex-1 py-3 px-2 text-center font-medium transition-colors border-b-2 flex items-center justify-center gap-1.5 ${
-              inspectorTab === 'gateway'
-                ? 'border-emerald-500 text-emerald-400 bg-zinc-900/50'
-                : 'border-transparent text-zinc-400 hover:text-zinc-200'
-            }`}
-          >
-            <Server className="w-3.5 h-3.5" />
-            <span>Gateway Hub</span>
-          </button>
-          <button
-            onClick={() => setInspectorTab('checkpoints')}
-            className={`flex-1 py-3 px-2 text-center font-medium transition-colors border-b-2 flex items-center justify-center gap-1.5 ${
-              inspectorTab === 'checkpoints'
-                ? 'border-emerald-500 text-emerald-400 bg-zinc-900/50'
-                : 'border-transparent text-zinc-400 hover:text-zinc-200'
-            }`}
-          >
-            <Database className="w-3.5 h-3.5" />
-            <span>Checkpoints ({checkpoints.length})</span>
-          </button>
-          <button
-            onClick={() => setInspectorTab('spec')}
-            className={`flex-1 py-3 px-2 text-center font-medium transition-colors border-b-2 flex items-center justify-center gap-1.5 ${
-              inspectorTab === 'spec'
-                ? 'border-emerald-500 text-emerald-400 bg-zinc-900/50'
-                : 'border-transparent text-zinc-400 hover:text-zinc-200'
-            }`}
-          >
-            <Code2 className="w-3.5 h-3.5" />
-            <span>API & cURL</span>
-          </button>
-        </div>
-
-        {/* Tab Content */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          {/* TAB 1: GATEWAY HUB & SPOKES */}
-          {inspectorTab === 'gateway' && (
-            <div className="space-y-4 text-xs">
-              {/* Architecture Topology Badge */}
-              <div className="p-3.5 rounded-lg bg-emerald-950/30 border border-emerald-800/40 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="font-semibold text-emerald-300 font-mono text-[11px] uppercase tracking-wider">
-                    Decoupled Hub-and-Spoke Pattern
-                  </span>
-                  <span className="flex h-2 w-2 relative">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                  </span>
-                </div>
-                <p className="text-[11px] text-zinc-300 leading-relaxed">
-                  The LLM runtime has <strong>0 direct credential access</strong>. The upstream MCP Gateway binds pre-authenticated OAuth tokens from the Supabase Vault per active <code className="text-emerald-400">profile_id</code>.
-                </p>
-              </div>
-
-              {/* Active Blueprint Compiled Tools & Workers */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between text-zinc-400 font-mono text-[11px]">
-                  <span>{isTeam ? 'STAFF WORKERS & SCOPED TOOLS' : 'DYNAMICALLY BOUND TOOLS'}</span>
-                  <span className="text-emerald-400 font-bold">{currentToolsCount} Tools</span>
-                </div>
-                {isTeam && activeTeam ? (
-                  <div className="space-y-2">
-                    {activeTeam.workers.map((worker) => (
-                      <div
-                        key={worker.id}
-                        className="p-2.5 rounded-lg bg-zinc-900 border border-zinc-800 space-y-1.5"
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className="font-mono text-xs font-semibold text-purple-300 flex items-center gap-1.5">
-                            <Bot className="w-3.5 h-3.5 text-purple-400" />
-                            {worker.name}
-                          </span>
-                          <span className="text-[10px] font-mono text-zinc-400">
-                            {worker.mcpTools?.length || 0} tools
-                          </span>
-                        </div>
-                        <div className="text-[11px] text-zinc-400">{worker.role}</div>
-                        <div className="flex flex-wrap gap-1 pt-1">
-                          {worker.mcpTools?.map((t, idx) => (
-                            <span
-                              key={idx}
-                              className="px-1.5 py-0.5 rounded bg-zinc-950 border border-zinc-800 font-mono text-[10px] text-emerald-400"
-                            >
-                              {t}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="space-y-1.5">
-                    {(activePersona?.tools || []).map((toolName, idx) => (
-                      <div
-                        key={idx}
-                        className="p-2.5 rounded-md bg-zinc-900 border border-zinc-800 flex items-start gap-2.5"
-                      >
-                        <div className="w-5 h-5 rounded bg-zinc-800 flex items-center justify-center text-emerald-400 shrink-0 mt-0.5">
-                          <Terminal className="w-3 h-3" />
-                        </div>
-                        <div className="space-y-0.5 min-w-0">
-                          <div className="font-mono text-zinc-200 font-semibold truncate">
-                            {toolName}
-                          </div>
-                          <div className="text-[10px] text-zinc-400">
-                            Exposed via MCP Gateway proxy to worker
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Upstream Tenant Auth Vault (Spokes) */}
-              <div className="space-y-2 pt-2 border-t border-zinc-800">
-                <div className="flex items-center justify-between text-zinc-400 font-mono text-[11px]">
-                  <span>TENANT AUTH VAULT (SPOKES)</span>
-                  <span className="text-zinc-500">AES-256-GCM</span>
-                </div>
-                <div className="space-y-2">
-                  {vaultSpokes.map((spoke) => (
-                    <div
-                      key={spoke.id}
-                      className="p-2.5 rounded-md bg-zinc-900/80 border border-zinc-800 text-[11px] space-y-1.5"
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="font-medium text-white flex items-center gap-1.5">
-                          <Lock className="w-3 h-3 text-emerald-400" />
-                          {spoke.providerName}
-                        </span>
-                        <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/80 px-1.5 py-0.5 rounded border border-emerald-800/40">
-                          Active
-                        </span>
-                      </div>
-                      <div className="text-[10px] text-zinc-400 font-mono truncate">
-                        Account: {spoke.accountLabel}
-                      </div>
-                      <div className="text-[10px] text-zinc-500 font-mono">
-                        Key: {spoke.keyFingerprint}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
             </div>
           )}
 
-          {/* TAB 2: POSTGRESSAVER CHECKPOINTS AUDIT */}
-          {inspectorTab === 'checkpoints' && (
-            <div className="space-y-3 text-xs">
-              <div className="flex items-center justify-between text-zinc-400 font-mono text-[11px]">
-                <span>TIMELINE CHECKPOINT LOGS</span>
-                <span className="text-zinc-500 font-mono">{checkpoints.length} Records</span>
-              </div>
-
-              {checkpoints.length === 0 ? (
-                <div className="text-center py-8 text-zinc-500 text-xs font-mono">
-                  No checkpoints yet for thread {currentThreadId}.
-                </div>
-              ) : (
-                <div className="space-y-2.5">
-                  {checkpoints.map((chk, index) => (
-                    <div
-                      key={chk.checkpointId}
-                      onClick={() => setSelectedCheckpointModal(chk)}
-                      className="p-3 rounded-lg bg-zinc-900 border border-zinc-800 hover:border-emerald-500/60 cursor-pointer transition-all space-y-1.5"
+          {active && transcript.length === 0 && !sending && (
+            <div className="max-w-xl mx-auto text-center pt-10 space-y-4">
+              <h2 className="text-lg font-bold text-white">{active.name}</h2>
+              <p className="text-sm text-zinc-400">
+                Runs on {PROVIDER_LABELS[active.provider]} <code className="text-zinc-300">{active.model}</code> with{' '}
+                {active.allowed_tools.length} tool(s). Each turn is saved as a checkpoint you can inspect or fork.
+              </p>
+              {samplePrompts.length > 0 && (
+                <div className="space-y-2 text-left">
+                  {samplePrompts.map((p) => (
+                    <button
+                      key={p}
+                      onClick={() => handleSend(p)}
+                      className="w-full p-3 rounded-lg bg-zinc-900/60 border border-zinc-800 hover:border-emerald-700 text-sm text-zinc-200 text-left"
                     >
-                      <div className="flex items-center justify-between font-mono text-[11px]">
-                        <span className="text-emerald-400 font-bold">Step #{chk.stepIndex}</span>
-                        <span className="text-zinc-500 text-[10px]">
-                          {new Date(chk.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                        </span>
-                      </div>
-
-                      <div className="flex items-center gap-1.5 text-zinc-200 font-medium">
-                        <span className="text-zinc-400 text-[10px] uppercase font-mono">Persona:</span>
-                        <span className="text-white text-xs">{chk.profileName}</span>
-                      </div>
-
-                      <div className="text-zinc-400 text-[11px] line-clamp-1 italic">
-                        &quot;{chk.userMessage}&quot;
-                      </div>
-
-                      <div className="flex items-center justify-between text-[10px] font-mono text-zinc-500 pt-1 border-t border-zinc-800/60">
-                        <span>Tools: {chk.toolsExecuted?.length || 0} called</span>
-                        <span className="text-emerald-400/90">{chk.checkpointId}</span>
-                      </div>
-                    </div>
+                      {p}
+                    </button>
                   ))}
                 </div>
               )}
             </div>
           )}
 
-          {/* TAB 3: API SPEC & CURL */}
-          {inspectorTab === 'spec' && (
-            <div className="space-y-4 text-xs font-mono">
-              <div className="space-y-1.5">
-                <span className="text-zinc-400 text-[11px] uppercase tracking-wider">
-                  DYNAMIC GENERATION ENDPOINT
-                </span>
-                <div className="p-2.5 bg-zinc-950 border border-zinc-800 rounded-lg text-emerald-400 text-[11px]">
-                  POST /v1/chat/generate
+          {transcript.map((item, i) => {
+            if (item.role === 'tool') return null; // shown under the call that produced it
+            if (item.role === 'user') {
+              return (
+                <div key={i} className="flex justify-end">
+                  <div className="max-w-[75%] px-4 py-2.5 rounded-2xl rounded-br-sm bg-emerald-700/30 border border-emerald-800/60 text-sm whitespace-pre-wrap">
+                    {item.content}
+                  </div>
+                </div>
+              );
+            }
+            return (
+              <div key={i} className="flex gap-3">
+                <div className="w-7 h-7 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center shrink-0">
+                  <Bot className="w-3.5 h-3.5 text-emerald-400" />
+                </div>
+                <div className="max-w-[80%] space-y-2 min-w-0">
+                  {item.content && <div className="text-sm text-zinc-100 whitespace-pre-wrap leading-relaxed">{item.content}</div>}
+                  {item.toolCalls?.map((call) => {
+                    const result = toolResults.get(call.id);
+                    return (
+                      <details key={call.id} className="rounded-lg border border-zinc-800 bg-[#0d1017] text-xs font-mono">
+                        <summary className="px-3 py-2 cursor-pointer flex items-center gap-2 text-zinc-300">
+                          <Wrench className="w-3.5 h-3.5 text-cyan-400" />
+                          {call.name}
+                          {result?.isError ? (
+                            <span className="text-rose-400">failed</span>
+                          ) : result ? (
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                          ) : null}
+                        </summary>
+                        <div className="px-3 pb-3 space-y-2">
+                          <div>
+                            <div className="text-zinc-500 mb-1">input</div>
+                            <pre className="p-2 rounded bg-black/40 overflow-x-auto">{JSON.stringify(call.arguments, null, 2)}</pre>
+                          </div>
+                          {result && (
+                            <div>
+                              <div className="text-zinc-500 mb-1">output</div>
+                              <pre className={`p-2 rounded bg-black/40 overflow-x-auto max-h-64 ${result.isError ? 'text-rose-300' : ''}`}>
+                                {result.content}
+                              </pre>
+                            </div>
+                          )}
+                        </div>
+                      </details>
+                    );
+                  })}
                 </div>
               </div>
+            );
+          })}
 
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between text-zinc-400 text-[11px]">
-                  <span>REQUEST BODY SCHEMA</span>
-                  <button
-                    onClick={copyCurl}
-                    className="text-emerald-400 hover:text-emerald-300 flex items-center gap-1"
-                  >
-                    {copiedCurl ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                    <span>{copiedCurl ? 'Copied' : 'Copy cURL'}</span>
-                  </button>
-                </div>
-                <pre className="p-3 bg-zinc-950 border border-zinc-800 rounded-lg text-[10px] text-zinc-300 overflow-x-auto">
-{`{
-  "thread_id": "${currentThreadId}",
-  "tenant_id": "${tenantId}",
-  "profile_id": "${selectedProfileId}",
-  "message": "What did the lead say?"
-}`}
-                </pre>
-              </div>
-
-              <div className="space-y-1.5">
-                <span className="text-zinc-400 text-[11px]">LANGGRAPH POSTGRESSAVER CONFIG</span>
-                <pre className="p-3 bg-zinc-950 border border-zinc-800 rounded-lg text-[10px] text-zinc-300 overflow-x-auto">
-{`config = {
-  "configurable": {
-    "thread_id": "${currentThreadId}",
-    "tenant_id": "${tenantId}",
-    "profile_id": "${selectedProfileId}"
-  }
-}
-# Hydrates latest checkpoint:
-# ORDER BY checkpoint_id DESC LIMIT 1
-await graph.ainvoke(input, config=config)`}
-                </pre>
-              </div>
+          {sending && (
+            <div className="flex items-center gap-2 text-xs text-zinc-400 font-mono">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" /> Running agent…
             </div>
+          )}
+          {turnError && (
+            <div className="p-3 rounded-lg bg-rose-950/40 border border-rose-900/60 text-xs text-rose-300 flex items-start gap-2">
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+              <span>{turnError}</span>
+            </div>
+          )}
+          <div ref={endRef} />
+        </div>
+
+        <div className="p-4 border-t border-zinc-800 bg-[#0d1017]">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleSend();
+            }}
+            className="flex gap-2"
+          >
+            <input
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              disabled={!active || sending}
+              placeholder={active ? `Message ${active.name}…` : 'Create an instance to start'}
+              className="flex-1 bg-[#090b0f] border border-zinc-700 rounded-lg px-4 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500 disabled:opacity-50"
+            />
+            <button
+              type="submit"
+              disabled={!active || sending || !input.trim()}
+              className="px-4 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold flex items-center gap-2 disabled:opacity-50"
+            >
+              <Send className="w-4 h-4" /> Send
+            </button>
+          </form>
+        </div>
+      </div>
+
+      {/* INSPECTOR */}
+      <div className="w-96 flex flex-col bg-[#0b0d13] shrink-0">
+        <div className="flex border-b border-zinc-800 text-xs font-mono bg-[#0e1118]">
+          {(
+            [
+              ['config', 'Configuration', Settings2],
+              ['checkpoints', `Checkpoints (${checkpoints.length})`, Database],
+              ['api', 'API', Code2],
+            ] as const
+          ).map(([id, label, Icon]) => (
+            <button
+              key={id}
+              onClick={() => setTab(id)}
+              className={`flex-1 py-3 px-2 font-medium border-b-2 flex items-center justify-center gap-1.5 ${
+                tab === id ? 'border-emerald-500 text-emerald-400 bg-zinc-900/50' : 'border-transparent text-zinc-400 hover:text-zinc-200'
+              }`}
+            >
+              <Icon className="w-3.5 h-3.5" />
+              {label}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4 space-y-4 text-xs">
+          {!active && <p className="text-zinc-500">Select or create an instance.</p>}
+
+          {active && tab === 'config' && (
+            <>
+              <section className="space-y-1.5">
+                <h4 className="font-mono uppercase text-zinc-500 text-[10px] tracking-wider">LLM</h4>
+                <p className="text-zinc-200">
+                  {PROVIDER_LABELS[active.provider]} · <code>{active.model}</code>
+                </p>
+                <p className="text-zinc-500">Runs on your organization&apos;s stored {PROVIDER_LABELS[active.provider]} key.</p>
+              </section>
+              <section className="space-y-1.5">
+                <h4 className="font-mono uppercase text-zinc-500 text-[10px] tracking-wider">Context profile</h4>
+                <p className="text-zinc-200">{contextProfile?.name || 'None'}</p>
+              </section>
+              <section className="space-y-1.5">
+                <h4 className="font-mono uppercase text-zinc-500 text-[10px] tracking-wider">MCP profile</h4>
+                <p className="text-zinc-200">{mcpProfile?.name || 'None'}</p>
+                {(mcpProfile?.selectedToolNames || []).length > 0 && (
+                  <div className="space-y-1">
+                    {mcpProfile!.selectedToolNames!.map((t) => (
+                      <div key={t} className="flex items-center justify-between font-mono text-zinc-500">
+                        <span>{t}</span>
+                        <span className="text-[10px] text-amber-500/80">not connected</span>
+                      </div>
+                    ))}
+                    <p className="text-[11px] text-zinc-500 flex gap-1">
+                      <Info className="w-3 h-3 shrink-0 mt-0.5" /> External account tools run once OAuth connections ship.
+                    </p>
+                  </div>
+                )}
+              </section>
+              <section className="space-y-1.5">
+                <h4 className="font-mono uppercase text-zinc-500 text-[10px] tracking-wider">Enabled tools</h4>
+                {active.allowed_tools.length === 0 && <p className="text-zinc-500">No tools: chat only.</p>}
+                {active.allowed_tools.map((name) => {
+                  const t = PLATFORM_TOOL_DEFINITIONS.find((x) => x.name === name);
+                  return (
+                    <div key={name} className="flex items-center justify-between font-mono">
+                      <span className="text-zinc-200">{name}</span>
+                      <span className={`text-[10px] ${t?.sideEffect === 'write' ? 'text-amber-400' : 'text-zinc-500'}`}>{t?.sideEffect}</span>
+                    </div>
+                  );
+                })}
+              </section>
+              {active.forked_from_checkpoint && (
+                <p className="text-zinc-500 flex items-center gap-1">
+                  <GitBranch className="w-3 h-3" /> Forked from another instance&apos;s checkpoint.
+                </p>
+              )}
+            </>
+          )}
+
+          {active && tab === 'checkpoints' && (
+            <>
+              <p className="text-zinc-400 leading-relaxed">
+                A checkpoint is the saved state after one turn: messages, tool calls and token usage. The next turn resumes from
+                the latest one, and you can fork a new instance from any of them.
+              </p>
+              {checkpoints.length === 0 && <p className="text-zinc-500">No turns yet.</p>}
+              {[...checkpoints].reverse().map((c) => (
+                <button
+                  key={c.id}
+                  onClick={() => openCheckpoint(c.id)}
+                  className="w-full text-left p-3 rounded-lg bg-[#0d1017] border border-zinc-800 hover:border-zinc-700 space-y-1"
+                >
+                  <div className="flex items-center justify-between font-mono text-[11px]">
+                    <span className="text-emerald-400">step {c.step_index}</span>
+                    <span className="text-zinc-500">{relativeTime(c.created_at)}</span>
+                  </div>
+                  <p className="text-zinc-200 truncate">{c.user_message}</p>
+                  <p className="text-zinc-500 font-mono text-[10px]">
+                    {c.tools_executed?.length || 0} tool call(s) · {c.usage?.totalTokens ?? 0} tokens
+                    {c.metadata?.forked_from ? ' · forked' : ''}
+                  </p>
+                </button>
+              ))}
+            </>
+          )}
+
+          {active && tab === 'api' && (
+            <>
+              <p className="text-zinc-400 leading-relaxed">
+                Call this instance from your backend with a workspace API key that has the <code className="text-emerald-400">agent:run</code> scope.
+                Your organization comes from the key, so there is no tenant id in the body.
+              </p>
+              {[
+                ['chat', 'Send a message', chatCurl],
+                ['create', 'Create an instance (needs agent:sessions:write)', createCurl],
+              ].map(([id, title, text]) => (
+                <section key={id} className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <h4 className="font-mono uppercase text-zinc-500 text-[10px] tracking-wider">{title}</h4>
+                    <button onClick={() => copy(id, text)} className="flex items-center gap-1 text-emerald-400 hover:text-emerald-300">
+                      {copied === id ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                      {copied === id ? 'Copied' : 'Copy'}
+                    </button>
+                  </div>
+                  <pre className="p-3 rounded-lg bg-black/50 border border-zinc-800 overflow-x-auto text-[11px] text-zinc-300">{text}</pre>
+                </section>
+              ))}
+              <p className="text-zinc-500">
+                The response includes <code>message</code>, <code>tool_executions</code>, <code>checkpoint_id</code> and the full{' '}
+                <code>transcript</code>.
+              </p>
+            </>
           )}
         </div>
       </div>
 
-      {/* Checkpoint Detail Inspector Modal */}
-      {selectedCheckpointModal && (
-        <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4">
-          <div className="bg-[#0e1118] border border-zinc-800 rounded-xl max-w-xl w-full p-5 space-y-4 max-h-[85vh] flex flex-col font-mono text-xs">
-            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+      {modal && (
+        <InstanceModal
+          mode={modal}
+          initial={formFromSession(modal === 'edit' ? active : null)}
+          providers={providers}
+          mcpProfiles={mcpProfiles}
+          contextProfiles={contextProfiles}
+          onCancel={() => setModal(null)}
+          onSubmit={submitInstance}
+        />
+      )}
+
+      {checkpointDetail && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-2xl bg-[#0e131e] border border-zinc-700 rounded-2xl p-6 space-y-4 shadow-2xl max-h-[90vh] flex flex-col">
+            <div className="flex items-start justify-between">
               <div>
-                <h3 className="text-sm font-semibold text-white">
-                  PostgresSaver Checkpoint Snapshot
-                </h3>
-                <span className="text-emerald-400 text-[11px]">
-                  {selectedCheckpointModal.checkpointId}
-                </span>
+                <h3 className="text-base font-bold text-white">Checkpoint · step {checkpointDetail.step_index}</h3>
+                <p className="text-[11px] font-mono text-zinc-500 mt-1">
+                  {new Date(checkpointDetail.created_at).toLocaleString()} · served by {checkpointDetail.metadata?.served_by || '—'} ·{' '}
+                  {checkpointDetail.usage?.totalTokens ?? 0} tokens · {checkpointDetail.usage?.steps ?? 0} model step(s)
+                </p>
               </div>
-              <button
-                onClick={() => setSelectedCheckpointModal(null)}
-                className="text-zinc-400 hover:text-white text-xs px-2 py-1 bg-zinc-800 rounded"
-              >
-                Close
+              <button onClick={() => setCheckpointDetail(null)} className="text-zinc-400 hover:text-white">
+                <X className="w-5 h-5" />
               </button>
             </div>
-
-            <div className="flex-1 overflow-y-auto space-y-3 text-[11px]">
+            <div className="flex-1 overflow-y-auto space-y-3 text-xs">
               <div>
-                <span className="text-zinc-500 uppercase">Profile Active:</span>{' '}
-                <span className="text-zinc-200 font-semibold">{selectedCheckpointModal.profileName}</span>
+                <div className="text-zinc-500 font-mono mb-1">Tool calls</div>
+                {(checkpointDetail.tools_executed || []).length === 0 && <p className="text-zinc-500">None</p>}
+                {(checkpointDetail.tools_executed || []).map((t: any, i: number) => (
+                  <pre key={i} className="p-2 rounded bg-black/40 overflow-x-auto mb-2">
+                    {JSON.stringify(t, null, 2)}
+                  </pre>
+                ))}
               </div>
               <div>
-                <span className="text-zinc-500 uppercase">User Input:</span>
-                <p className="text-zinc-300 bg-zinc-900 p-2 rounded mt-1">
-                  {selectedCheckpointModal.userMessage}
-                </p>
-              </div>
-              <div>
-                <span className="text-zinc-500 uppercase">Assistant Response:</span>
-                <p className="text-zinc-300 bg-zinc-900 p-2 rounded mt-1 whitespace-pre-wrap">
-                  {selectedCheckpointModal.assistantMessage}
-                </p>
-              </div>
-              <div>
-                <span className="text-zinc-500 uppercase">Audit Metadata:</span>
-                <pre className="bg-black/60 p-2 rounded text-zinc-400 text-[10px] mt-1 overflow-x-auto">
-                  {JSON.stringify(selectedCheckpointModal, null, 2)}
+                <div className="text-zinc-500 font-mono mb-1">State after this turn ({checkpointDetail.transcript?.length || 0} messages)</div>
+                <pre className="p-2 rounded bg-black/40 overflow-x-auto max-h-80">
+                  {JSON.stringify(checkpointDetail.transcript, null, 2)}
                 </pre>
               </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-2 border-t border-zinc-800">
+              <button
+                onClick={() => forkFrom(checkpointDetail.id)}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-semibold text-xs"
+              >
+                <GitBranch className="w-3.5 h-3.5" /> Fork new instance from here
+              </button>
             </div>
           </div>
         </div>

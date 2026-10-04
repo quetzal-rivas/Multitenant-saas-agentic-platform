@@ -3,23 +3,25 @@ import { getSupabaseAdminClient } from '@/lib/supabase';
 import type { AuthContext } from '@/lib/auth/require-auth';
 import type { cancelTaskArgs, getTaskArgs, listTasksArgs, scheduleTaskArgs } from '@/lib/mcp/tool-catalog';
 import { assertActiveProfile } from './profiles';
-import { ServiceError } from './errors';
+import { ServiceError, pageInfo } from './errors';
 
 const TASK_COLUMNS = 'id, title, description, status, target_time, metadata, created_at';
 
 type Ctx = Pick<AuthContext, 'tenantId' | 'userId' | 'authMode' | 'apiKeyId'>;
 
 export async function listTasks(ctx: Ctx, args: z.infer<typeof listTasksArgs>) {
+  const limit = args.limit || 20;
+  const offset = args.offset || 0;
   let query = getSupabaseAdminClient()
     .from('supervisor_tasks')
-    .select(TASK_COLUMNS)
+    .select(TASK_COLUMNS, { count: 'exact' })
     .eq('tenant_id', ctx.tenantId)
     .order('target_time', { ascending: true })
-    .limit(args.limit || 20);
+    .range(offset, offset + limit - 1);
   if (args.status) query = query.eq('status', args.status);
-  const { data, error } = await query;
+  const { data, error, count } = await query;
   if (error) throw new Error(`Could not list scheduled tasks: ${error.message}`);
-  return { tasks: data || [] };
+  return { tasks: data || [], ...pageInfo(count, offset, (data || []).length) };
 }
 
 export async function getTask(ctx: Ctx, args: z.infer<typeof getTaskArgs>) {
@@ -30,14 +32,14 @@ export async function getTask(ctx: Ctx, args: z.infer<typeof getTaskArgs>) {
     .eq('tenant_id', ctx.tenantId)
     .maybeSingle();
   if (error) throw new Error(`Could not load task: ${error.message}`);
-  if (!data) throw new ServiceError('Task not found in this organization.', 'NOT_FOUND');
+  if (!data) throw new ServiceError('Task not found in this organization. Call contextcontrol_list_tasks to see valid ids.', 'NOT_FOUND');
   return { task: data };
 }
 
 export async function scheduleTask(ctx: Ctx, args: z.infer<typeof scheduleTaskArgs>) {
   const targetTime = new Date(args.target_time);
   if (targetTime.getTime() <= Date.now()) {
-    throw new ServiceError('target_time must be in the future.', 'INVALID');
+    throw new ServiceError(`target_time must be in the future (server time is ${new Date().toISOString()}).`, 'INVALID');
   }
   if (args.profile_id) await assertActiveProfile(ctx, args.profile_id);
 
@@ -71,6 +73,6 @@ export async function cancelTask(ctx: Ctx, args: z.infer<typeof cancelTaskArgs>)
     .select(TASK_COLUMNS)
     .maybeSingle();
   if (error) throw new Error(`Could not cancel task: ${error.message}`);
-  if (!data) throw new ServiceError('No scheduled (not yet started) task with that id in this organization.', 'NOT_FOUND');
+  if (!data) throw new ServiceError("No task with that id is still 'scheduled'. Call contextcontrol_get_task to check its status; running or finished tasks cannot be cancelled.", 'NOT_FOUND');
   return { task: data };
 }

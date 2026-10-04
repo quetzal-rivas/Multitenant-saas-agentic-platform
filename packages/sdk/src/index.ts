@@ -202,17 +202,17 @@ export class ContextControl {
     this.mcp = new ContextControlMcpClient(options);
     this.profiles = {
       list: async (args = {}) => {
-        const result = await this.mcp.callTool('list_mcp_profiles', args);
+        const result = await this.mcp.callTool('contextcontrol_list_profiles', args);
         return (result.structuredContent as { profiles: McpProfile[] }).profiles;
       },
     };
     this.tasks = {
       list: async (args = {}) => {
-        const result = await this.mcp.callTool('list_scheduled_tasks', args);
+        const result = await this.mcp.callTool('contextcontrol_list_tasks', args);
         return (result.structuredContent as { tasks: ScheduledTask[] }).tasks;
       },
       schedule: async (input) => {
-        const result = await this.mcp.callTool('schedule_deferred_task', {
+        const result = await this.mcp.callTool('contextcontrol_schedule_task', {
           title: input.title,
           instructions: input.instructions,
           target_time: input.targetTime,

@@ -95,7 +95,7 @@ test('SDK maps profile and task helpers to platform MCP tools', async () => {
       }
       if (body.method === 'notifications/initialized') return new Response(null, { status: 202 });
       calls.push(body.params);
-      if (body.params.name === 'list_mcp_profiles') {
+      if (body.params.name === 'contextcontrol_list_profiles') {
         return Response.json({
           jsonrpc: '2.0',
           id: body.id,
@@ -119,9 +119,9 @@ test('SDK maps profile and task helpers to platform MCP tools', async () => {
 
   assert.equal(profiles[0].name, 'Support');
   assert.equal(task.id, 'task-1');
-  assert.equal(calls[0].name, 'list_mcp_profiles');
+  assert.equal(calls[0].name, 'contextcontrol_list_profiles');
   assert.equal(calls[0].arguments.limit, 5);
-  assert.equal(calls[1].name, 'schedule_deferred_task');
+  assert.equal(calls[1].name, 'contextcontrol_schedule_task');
   assert.equal(calls[1].arguments.target_time, '2030-01-01T10:00:00.000Z');
   assert.equal('tenant_id' in calls[1].arguments, false);
 });

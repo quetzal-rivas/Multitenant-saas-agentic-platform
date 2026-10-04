@@ -1,9 +1,12 @@
 export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
+import { demoOnlyGuard } from '@/lib/http/demo-only';
 import { createClient } from '@/utils/supabase/server';
 import { vaultManagerStore } from '@/lib/demo/legacy_mocks/vault-manager';
 
 export async function GET(req: NextRequest) {
+  const blocked = demoOnlyGuard('/api/v1/agent-sessions');
+  if (blocked) return blocked;
   const supabase = await createClient();
   let threadId = 'session_enterprise_001';
   let tenantId = 'tenant_enterprise_corp';
@@ -55,6 +58,8 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const blocked = demoOnlyGuard('/api/v1/agent-sessions');
+  if (blocked) return blocked;
   try {
     const supabase = await createClient();
     const body = await req.json();

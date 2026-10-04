@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Navbar } from '@/components/Navbar';
 import { Sidebar } from '@/components/Sidebar';
 import { ProfilesView } from '@/components/ProfilesView';
@@ -51,14 +51,63 @@ export default function DashboardPage() {
     setActiveTab('builder');
   };
 
+  const [profileSaveError, setProfileSaveError] = useState<string | null>(null);
+  const saveTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
+  // Real accounts load their persisted context profiles; demo mode keeps the local seed.
+  useEffect(() => {
+    if (DEMO) return;
+    fetch('/api/v1/context-profiles', { cache: 'no-store' })
+      .then((res) => (res.ok ? res.json() : Promise.reject(res)))
+      .then((data: { profiles: ContextProfile[] }) => {
+        setProfiles(data.profiles);
+        setSelectedProfile((current) => current ?? data.profiles[0] ?? null);
+      })
+      .catch(() => setProfileSaveError('Could not load context profiles.'));
+  }, []);
+
   const handleUpdateProfile = (updated: ContextProfile) => {
     setProfiles((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
     setSelectedProfile(updated);
+    if (DEMO) return;
+    // ContextBuilder reports every edit; save once typing pauses.
+    const timers = saveTimers.current;
+    clearTimeout(timers.get(updated.id));
+    timers.set(
+      updated.id,
+      setTimeout(async () => {
+        timers.delete(updated.id);
+        const res = await fetch(`/api/v1/context-profiles/${updated.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updated),
+        }).catch(() => null);
+        setProfileSaveError(res?.ok ? null : 'Could not save context profile changes.');
+      }, 800)
+    );
   };
 
-  const handleCreateProfile = (newProfile: ContextProfile) => {
-    setProfiles([newProfile, ...profiles]);
-    setSelectedProfile(newProfile);
+  const handleCreateProfile = async (newProfile: ContextProfile) => {
+    if (DEMO) {
+      setProfiles([newProfile, ...profiles]);
+      setSelectedProfile(newProfile);
+      setActiveTab('builder');
+      return;
+    }
+    const res = await fetch('/api/v1/context-profiles', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newProfile),
+    }).catch(() => null);
+    const data = res?.ok ? await res.json() : null;
+    if (!data?.profile) {
+      const err = res ? await res.json().catch(() => ({})) : {};
+      setProfileSaveError(err.error || 'Could not create context profile.');
+      return;
+    }
+    setProfileSaveError(null);
+    setProfiles((prev) => [data.profile, ...prev]);
+    setSelectedProfile(data.profile);
     setActiveTab('builder');
   };
 
@@ -104,11 +153,15 @@ export default function DashboardPage() {
 
         {/* Content Container */}
         <main className="flex-1 overflow-y-auto bg-[#090b10]">
+          {profileSaveError && (activeTab === 'profiles' || activeTab === 'builder') && (
+            <div className="mx-8 mt-4 px-3 py-2 rounded-lg bg-rose-950/40 border border-rose-900/60 text-xs text-rose-300">
+              {profileSaveError}
+            </div>
+          )}
           {activeTab === 'session-studio' && (
             <AgentSessionStudio
               initialProfileId={studioProfileId}
               initialThreadId={studioThreadId}
-              onOpenTeamBuilder={() => setActiveTab('team-builder')}
             />
           )}
 

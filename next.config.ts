@@ -21,7 +21,8 @@ const nextConfig: NextConfig = {
     ],
   },
   ...(process.env.NEXT_PUBLIC_STATIC_EXPORT === 'true' ? { output: 'export' as const } : {}),
-  trailingSlash: true,
+  // Static export needs folder-style URLs; the SSR deploy must not 308-redirect API POSTs.
+  trailingSlash: process.env.NEXT_PUBLIC_STATIC_EXPORT === 'true',
   transpilePackages: ['motion'],
   webpack: (config, {dev}) => {
     // HMR is disabled in AI Studio via DISABLE_HMR env var.

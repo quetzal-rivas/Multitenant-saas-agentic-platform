@@ -67,7 +67,7 @@ export const McpHubView: React.FC<McpHubViewProps> = ({
 
   // Inspector & Tester state
   const [testerMethod, setTesterMethod] = useState<'tools/list' | 'tools/call' | 'initialize'>('tools/list');
-  const [testerToolName, setTesterToolName] = useState<string>('list_mcp_profiles');
+  const [testerToolName, setTesterToolName] = useState<string>('contextcontrol_list_profiles');
   const [testerArgsJson, setTesterArgsJson] = useState<string>(JSON.stringify({ limit: 20 }, null, 2));
   // Workspace API key used by the tester and client snippets; kept in memory only.
   const [testerApiKey, setTesterApiKey] = useState<string>('');
@@ -388,6 +388,7 @@ export const McpHubView: React.FC<McpHubViewProps> = ({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          Accept: 'application/json, text/event-stream',
           Authorization: `Bearer ${key}`,
         },
         body: JSON.stringify(jsonRpcPayload),

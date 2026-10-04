@@ -976,7 +976,7 @@ function DocPlatformMcp({ copyToClipboard, copiedCode }: any) {
 
         <h3 className="text-xl font-bold text-white font-mono border-b border-zinc-800 pb-2 mt-6">2. Key Capabilities & Architecture</h3>
         <ul className="space-y-3 list-disc pl-5">
-          <li><strong>11 Direct Administrative Controllers:</strong> Exposes highly privileged tools including `create_agent_profile`, `schedule_deferred_task`, `trigger_task_now`, and `inspect_database_schema`.</li>
+          <li><strong>11 Direct Administrative Controllers:</strong> Exposes highly privileged tools including `create_agent_profile`, `contextcontrol_schedule_task`, `trigger_task_now`, and `inspect_database_schema`.</li>
           <li><strong>Dual Transport Adapters:</strong> Connect over persistent HTTP streams (SSE) or a lightweight Stdio wrapper script for local desktop apps.</li>
           <li><strong>Automated Client Configuration Generator:</strong> The UI automatically generates copy-and-paste JSON configurations tailored specifically for popular clients (Cursor, Claude Desktop), pre-injected with the tenant's workspace ID and API tokens.</li>
         </ul>

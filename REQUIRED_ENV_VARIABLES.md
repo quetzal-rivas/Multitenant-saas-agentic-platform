@@ -12,7 +12,7 @@ Add these secrets and variables in your GitHub Repository under **Settings -> Se
 | Secret Name | Description | Example / Format |
 | :--- | :--- | :--- |
 | `AWS_ROLE_TO_ASSUME` | IAM Role ARN configured for GitHub Actions OIDC federation | `arn:aws:iam::123456789012:role/GitHubActionsAmplifyDeployRole` |
-| `AMPLIFY_APP_ID` | AWS Amplify App ID | `d1ct23sivfa3uv` |
+| `AMPLIFY_APP_ID` | AWS Amplify App ID (multitenant-agent-app, us-east-2) | `d1iqgqn47ob84d` |
 | `SUPABASE_ACCESS_TOKEN` | Supabase Personal Access Token (for CLI migrations) | `sbp_...` |
 | `SUPABASE_PROJECT_ID` | Supabase Project Reference ID | `sttaszlypmeusqtqqqyt` |
 | `NEXT_PUBLIC_SUPABASE_URL` | Public Supabase project URL | `https://sttaszlypmeusqtqqqyt.supabase.co` |

@@ -1,0 +1,48 @@
+<!--
+  Platform MCP evaluation (mcp-builder format). Answers assume the data written by
+  evals/platform-mcp/seed.ts and must be re-verified if that seed changes.
+  Every question is read-only and needs several tool calls (profiles are linked to
+  tasks through each task's metadata.profile_id).
+-->
+<evaluation>
+  <qa_pair>
+    <question>Among the organization's archived (inactive) MCP profiles, which one has the largest token budget? Answer with the profile name only.</question>
+    <answer>Legacy Billing Bot</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>How many tasks bound to the "Sales Copilot" profile are still in the scheduled status? Answer with a number.</question>
+    <answer>2</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Of all tasks whose status is scheduled, which one is set to run first? Answer with the task title only.</question>
+    <answer>Weekly pipeline review</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>What is the combined token budget of all active MCP profiles? Answer with a number without separators.</question>
+    <answer>84000</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Which MCP profile is the currently escalated task bound to? Answer with the profile name only.</question>
+    <answer>Support Triage</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>How many tasks, in any status, are bound to profiles that are archived? Answer with a number.</question>
+    <answer>2</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Which API key has a tool whitelist that allows scheduling new tasks? Answer with the key name only.</question>
+    <answer>Zapier bridge</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Which MCP profile has the most tasks bound to it, counting every status? Answer with the profile name only.</question>
+    <answer>Night Auditor</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>How many of the organization's API keys expire before January 1, 2027? Answer with a number.</question>
+    <answer>1</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Considering every MCP profile, active or archived, that has no tasks bound to it, which has the smallest token budget? Answer with the profile name only.</question>
+    <answer>Onboarding Guide</answer>
+  </qa_pair>
+</evaluation>

@@ -156,3 +156,16 @@ export async function requireSessionUser(): Promise<{ userId: string; email: str
   }
   throw new AuthError('Authentication credentials required', 401, 'UNAUTHORIZED');
 }
+
+/** API keys and client tokens must hold `scope`; signed-in members are allowed. */
+export function requireScope(auth: AuthContext, scope: string): void {
+  if (auth.authMode === 'session') return;
+  const granted = auth.scopes || [];
+  const parts = scope.split(':');
+  const ok = granted.some((g) => {
+    if (g === '*' || g === scope) return true;
+    const gp = g.split(':');
+    return gp.length === parts.length && gp.every((p, i) => p === '*' || p === parts[i]);
+  });
+  if (!ok) throw new AuthError(`This API key needs the '${scope}' scope`, 403, 'INSUFFICIENT_SCOPE');
+}

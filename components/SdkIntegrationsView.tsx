@@ -182,7 +182,7 @@ console.log("Status:", scheduledTask.status);`;
       "jsonrpc": "2.0", "method": "notifications/initialized"
     }).raise_for_status()
 
-    task = rpc(2, "tools/call", {"name": "schedule_deferred_task", "arguments": {
+    task = rpc(2, "tools/call", {"name": "contextcontrol_schedule_task", "arguments": {
       "title": "Quarterly Enterprise Renewal & Usage Review",
       "target_time": (datetime.now(timezone.utc) + timedelta(days=3)).isoformat(),
       "instructions": "Review the account and prepare renewal recommendations.",
@@ -200,7 +200,7 @@ console.log("Status:", scheduledTask.status);`;
     "id": 1,
     "method": "tools/call",
     "params": {
-      "name": "schedule_deferred_task",
+      "name": "contextcontrol_schedule_task",
       "arguments": {
         "title": "Quarterly Enterprise Renewal & Usage Review",
         "target_time": "2030-01-01T14:30:00.000Z",

@@ -9,13 +9,17 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "npx tsx --test tests/*.test.ts",
-    "clean": "next clean"
+    "clean": "next clean",
+    "eval:mcp:seed": "tsx --tsconfig tsconfig.json evals/platform-mcp/seed.ts",
+    "eval:mcp": "tsx --tsconfig tsconfig.json scripts/mcp-eval/run.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.131.0",
     "@aws-sdk/client-kms": "^3.1146.0",
     "@aws-sdk/client-lambda": "^3.1144.0",
     "@google/genai": "^2.4.0",
     "@hookform/resolvers": "^5.2.1",
+    "@modelcontextprotocol/sdk": "1.30.1",
     "@supabase/ssr": "^0.12.7",
     "@supabase/supabase-js": "^2.117.2",
     "autoprefixer": "^10.4.21",

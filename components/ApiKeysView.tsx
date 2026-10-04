@@ -62,6 +62,8 @@ const SCOPE_LABELS: Record<string, string> = {
   'mcp:tasks:read': 'Read scheduled tasks',
   'mcp:tasks:write': 'Schedule / cancel tasks',
   'mcp:keys:read': 'List API keys (no secrets)',
+  'agent:run': 'Chat with Agent Studio instances',
+  'agent:sessions:write': 'Create / edit Agent Studio instances',
 };
 
 const SCOPE_CATEGORIES = Array.from(new Set(PLATFORM_MCP_SCOPES_CATALOG.map((t) => t.category)));

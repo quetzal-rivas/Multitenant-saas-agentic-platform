@@ -141,7 +141,8 @@ jobs:
           fi
           AMPLIFY_ID="$APP_ID"
           if [ -z "$AMPLIFY_ID" ]; then
-            AMPLIFY_ID="d1ct23sivfa3uv"
+            # multitenant-agent-app (us-east-2); set the AMPLIFY_APP_ID secret to override.
+            AMPLIFY_ID="d1iqgqn47ob84d"
           fi
 
           AMPLIFY_REPOSITORY="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
@@ -235,17 +236,20 @@ jobs:
           ENDPOINT="${APP_URL%/}/api/mcp/platform"
           echo "Checking $ENDPOINT"
 
-          STATUS=$(curl -s -o /tmp/get.json -w '%{http_code}' "$ENDPOINT")
-          [ "$STATUS" = "200" ] || { echo "GET returned $STATUS"; cat /tmp/get.json; exit 1; }
+          ACCEPT='Accept: application/json, text/event-stream'
+
+          # Stateless Streamable HTTP server: GET has no SSE stream and must answer 405.
+          STATUS=$(curl -s -o /dev/null -w '%{http_code}' "$ENDPOINT")
+          [ "$STATUS" = "405" ] || { echo "GET returned $STATUS (expected 405)"; exit 1; }
 
           STATUS=$(curl -s -o /tmp/unauth.json -w '%{http_code}' -X POST "$ENDPOINT" \
-            -H 'Content-Type: application/json' \
+            -H 'Content-Type: application/json' -H "$ACCEPT" \
             -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}')
           [ "$STATUS" = "401" ] || { echo "Unauthenticated POST returned $STATUS (expected 401)"; cat /tmp/unauth.json; exit 1; }
 
           if [ -n "$MCP_SMOKE_TEST_KEY" ]; then
             RESPONSE=$(curl -sf -X POST "$ENDPOINT" \
-              -H 'Content-Type: application/json' \
+              -H 'Content-Type: application/json' -H "$ACCEPT" \
               -H "Authorization: Bearer $MCP_SMOKE_TEST_KEY" \
               -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci-smoke","version":"1"}}}')
             echo "$RESPONSE" | grep -q '"protocolVersion"' || { echo "initialize failed: $RESPONSE"; exit 1; }

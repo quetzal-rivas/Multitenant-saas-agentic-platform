@@ -38,20 +38,20 @@ function inOneHour(): string {
 }
 
 const EXAMPLE_ARGS: Record<string, () => Record<string, unknown>> = {
-  list_mcp_profiles: () => ({ limit: 20 }),
-  get_mcp_profile: () => ({ profile_id: '00000000-0000-0000-0000-000000000000' }),
-  create_mcp_profile: () => ({ name: 'Support triage', description: 'Inbound ticket routing', token_budget: 16000 }),
-  update_mcp_profile: () => ({ profile_id: '00000000-0000-0000-0000-000000000000', token_budget: 24000 }),
-  archive_mcp_profile: () => ({ profile_id: '00000000-0000-0000-0000-000000000000' }),
-  list_scheduled_tasks: () => ({ status: 'scheduled', limit: 20 }),
-  get_scheduled_task: () => ({ task_id: '00000000-0000-0000-0000-000000000000' }),
-  schedule_deferred_task: () => ({
+  contextcontrol_list_profiles: () => ({ limit: 20 }),
+  contextcontrol_get_profile: () => ({ profile_id: '00000000-0000-0000-0000-000000000000' }),
+  contextcontrol_create_profile: () => ({ name: 'Support triage', description: 'Inbound ticket routing', token_budget: 16000 }),
+  contextcontrol_update_profile: () => ({ profile_id: '00000000-0000-0000-0000-000000000000', token_budget: 24000 }),
+  contextcontrol_archive_profile: () => ({ profile_id: '00000000-0000-0000-0000-000000000000' }),
+  contextcontrol_list_tasks: () => ({ status: 'scheduled', limit: 20 }),
+  contextcontrol_get_task: () => ({ task_id: '00000000-0000-0000-0000-000000000000' }),
+  contextcontrol_schedule_task: () => ({
     title: 'Weekly pipeline review',
     instructions: 'Summarize new leads and flag stalled deals.',
     target_time: inOneHour(),
   }),
-  cancel_scheduled_task: () => ({ task_id: '00000000-0000-0000-0000-000000000000' }),
-  list_api_keys: () => ({}),
+  contextcontrol_cancel_task: () => ({ task_id: '00000000-0000-0000-0000-000000000000' }),
+  contextcontrol_list_api_keys: () => ({}),
 };
 
 let rpcId = 1;
@@ -59,7 +59,12 @@ let rpcId = 1;
 async function callPlatformMcp(apiKey: string, method: string, params?: unknown) {
   const res = await fetch('/api/mcp/platform', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+    headers: {
+      'Content-Type': 'application/json',
+      // Streamable HTTP requires clients to accept both JSON and SSE responses.
+      Accept: 'application/json, text/event-stream',
+      Authorization: `Bearer ${apiKey}`,
+    },
     body: JSON.stringify({ jsonrpc: '2.0', id: rpcId++, method, params }),
   });
   const body = res.status === 202 ? null : await res.json();
@@ -70,8 +75,8 @@ export const PlatformMcpServerView: React.FC<PlatformMcpServerViewProps> = ({ on
   const [apiKey, setApiKey] = useState('');
   const [showKey, setShowKey] = useState(false);
   const [clientType, setClientType] = useState<ClientType>('cursor');
-  const [selectedTool, setSelectedTool] = useState<string>('list_mcp_profiles');
-  const [playgroundArgs, setPlaygroundArgs] = useState(JSON.stringify(EXAMPLE_ARGS.list_mcp_profiles(), null, 2));
+  const [selectedTool, setSelectedTool] = useState<string>('contextcontrol_list_profiles');
+  const [playgroundArgs, setPlaygroundArgs] = useState(JSON.stringify(EXAMPLE_ARGS.contextcontrol_list_profiles(), null, 2));
   const [isCopied, setIsCopied] = useState<string | null>(null);
 
   const [connection, setConnection] = useState<

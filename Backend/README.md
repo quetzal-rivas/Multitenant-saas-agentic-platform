@@ -20,9 +20,9 @@ Does not invoke public HTTP network loops over the open web. Instead, the MCP se
 3. **`list_team_blueprints(tenant_id)`**: Queries active team topologies, supervisor prompts, and assigned toolsets.
 
 ### Category B: Durable Task Control (BullMQ Lifecycle)
-1. **`schedule_deferred_task(title, instructions, targetTime, toolsWhitelist, edgeCasePolicies, tenant_id)`**: Directly schedules an asynchronous task into BullMQ without HTTP overhead. Supports ISO 8601 target times and full `edgeCasePolicies` matrix with ElevenLabs failover.
+1. **`contextcontrol_schedule_task(title, instructions, targetTime, toolsWhitelist, edgeCasePolicies, tenant_id)`**: Directly schedules an asynchronous task into BullMQ without HTTP overhead. Supports ISO 8601 target times and full `edgeCasePolicies` matrix with ElevenLabs failover.
 2. **`cancel_deferred_task(task_id)`**: Drops an active/delayed task from the queue and updates the database.
-3. **`list_scheduled_tasks(tenant_id, status)`**: Inspects scheduled, queued, running, and completed tasks.
+3. **`contextcontrol_list_tasks(tenant_id, status)`**: Inspects scheduled, queued, running, and completed tasks.
 4. **`trigger_task_now(task_id)`**: Forces immediate promotion and execution of a scheduled task.
 
 ### Category C: Database & State Store Governance

@@ -1,17 +1,21 @@
 {
   "mcpServers": {
+    "supabase": {
+      "type": "http",
+      "url": "https://mcp.supabase.com/mcp?project_ref=sttaszlypmeusqtqqqyt&features=docs%2Caccount%2Cdatabase%2Cdebugging%2Cdevelopment%2Cfunctions%2Cbranching%2Cstorage"
+    },
     "platform-control": {
-      "url": "http://localhost:3000/api/mcp/platform/?tenant_id=tenant_enterprise_corp",
+      "type": "http",
+      "url": "http://localhost:3000/api/mcp/platform",
       "headers": {
-        "x-tenant-id": "tenant_enterprise_corp",
-        "x-caller-agent": "workspace-agent"
+        "Authorization": "Bearer ${CONTEXT_CONTROL_API_KEY}"
       }
     },
     "platform-control-aws": {
-      "url": "https://www.contextcontrol.com.mx/api/mcp/platform/?tenant_id=tenant_enterprise_corp",
+      "type": "http",
+      "url": "https://www.contextcontrol.com.mx/api/mcp/platform",
       "headers": {
-        "x-tenant-id": "tenant_enterprise_corp",
-        "x-caller-agent": "workspace-agent"
+        "Authorization": "Bearer ${CONTEXT_CONTROL_API_KEY}"
       }
     }
   }

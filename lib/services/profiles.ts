@@ -8,24 +8,28 @@ import type {
   listProfilesArgs,
   updateProfileArgs,
 } from '@/lib/mcp/tool-catalog';
-import { ServiceError } from './errors';
+import { ServiceError, pageInfo } from './errors';
 
 const PROFILE_COLUMNS = 'id, name, description, token_budget, settings, is_active, created_at, updated_at';
 
 type Ctx = Pick<AuthContext, 'tenantId' | 'userId' | 'authMode' | 'apiKeyId'>;
 
+const NOT_FOUND = 'Profile not found in this organization. Call contextcontrol_list_profiles to see valid ids.';
+
 export async function listProfiles(ctx: Ctx, args: z.infer<typeof listProfilesArgs>) {
+  const limit = args.limit || 20;
+  const offset = args.offset || 0;
   let query = getSupabaseAdminClient()
     .from('mcp_profiles')
-    .select(PROFILE_COLUMNS)
+    .select(PROFILE_COLUMNS, { count: 'exact' })
     .eq('org_id', ctx.tenantId)
     .order('created_at', { ascending: false })
-    .limit(args.limit || 20);
+    .range(offset, offset + limit - 1);
   if (!args.include_inactive) query = query.eq('is_active', true);
 
-  const { data, error } = await query;
+  const { data, error, count } = await query;
   if (error) throw new Error(`Could not list MCP profiles: ${error.message}`);
-  return { profiles: data || [] };
+  return { profiles: data || [], ...pageInfo(count, offset, (data || []).length) };
 }
 
 export async function getProfile(ctx: Ctx, args: z.infer<typeof getProfileArgs>) {
@@ -36,7 +40,7 @@ export async function getProfile(ctx: Ctx, args: z.infer<typeof getProfileArgs>)
     .eq('org_id', ctx.tenantId)
     .maybeSingle();
   if (error) throw new Error(`Could not load MCP profile: ${error.message}`);
-  if (!data) throw new ServiceError('Profile not found in this organization.', 'NOT_FOUND');
+  if (!data) throw new ServiceError(NOT_FOUND, 'NOT_FOUND');
   return { profile: data };
 }
 
@@ -50,7 +54,7 @@ export async function assertActiveProfile(ctx: Ctx, profileId: string): Promise<
     .eq('is_active', true)
     .maybeSingle();
   if (error) throw new Error(`Could not validate MCP profile: ${error.message}`);
-  if (!data) throw new ServiceError('profile_id is not an active profile owned by this organization.', 'NOT_FOUND');
+  if (!data) throw new ServiceError('profile_id is not an active profile in this organization. Call contextcontrol_list_profiles to find one.', 'NOT_FOUND');
 }
 
 export async function createProfile(ctx: Ctx, args: z.infer<typeof createProfileArgs>) {
@@ -67,7 +71,7 @@ export async function createProfile(ctx: Ctx, args: z.infer<typeof createProfile
     })
     .select(PROFILE_COLUMNS)
     .single();
-  if (error?.code === '23505') throw new ServiceError(`A profile named '${args.name}' already exists.`, 'CONFLICT');
+  if (error?.code === '23505') throw new ServiceError(`A profile named '${args.name}' already exists. Choose another name or update the existing profile.`, 'CONFLICT');
   if (error || !data) throw new Error(`Could not create MCP profile: ${error?.message}`);
   return { profile: data };
 }
@@ -87,9 +91,9 @@ export async function updateProfile(ctx: Ctx, args: z.infer<typeof updateProfile
     .eq('org_id', ctx.tenantId)
     .select(PROFILE_COLUMNS)
     .maybeSingle();
-  if (error?.code === '23505') throw new ServiceError(`A profile named '${args.name}' already exists.`, 'CONFLICT');
+  if (error?.code === '23505') throw new ServiceError(`A profile named '${args.name}' already exists. Choose another name or update the existing profile.`, 'CONFLICT');
   if (error) throw new Error(`Could not update MCP profile: ${error.message}`);
-  if (!data) throw new ServiceError('Profile not found in this organization.', 'NOT_FOUND');
+  if (!data) throw new ServiceError(NOT_FOUND, 'NOT_FOUND');
   return { profile: data };
 }
 
@@ -106,6 +110,6 @@ async function updateProfileFields(ctx: Ctx, profileId: string, patch: Record<st
     .select(PROFILE_COLUMNS)
     .maybeSingle();
   if (error) throw new Error(`Could not update MCP profile: ${error.message}`);
-  if (!data) throw new ServiceError('Profile not found in this organization.', 'NOT_FOUND');
+  if (!data) throw new ServiceError(NOT_FOUND, 'NOT_FOUND');
   return { profile: data };
 }

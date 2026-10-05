@@ -291,7 +291,7 @@ export async function runSessionTurn(
 
   const previous = await latestCheckpoint(ctx, session.id);
   const state: LLMMessage[] = [...(previous?.state || []), { role: 'user', content: message }];
-  const toolCtx = { tenantId: ctx.tenantId, userId: ctx.userId, authMode: ctx.authMode, apiKeyId: ctx.apiKeyId };
+  const toolCtx = { tenantId: ctx.tenantId, userId: ctx.userId, authMode: ctx.authMode, apiKeyId: ctx.apiKeyId, teamId: team?.id ?? null };
 
   const runId = `run_${crypto.randomUUID()}`;
   const emit = (event: Parameters<typeof emitRunEvent>[0]) => emitRunEvent(event).catch(() => undefined);

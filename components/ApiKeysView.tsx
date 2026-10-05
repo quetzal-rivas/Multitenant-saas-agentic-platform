@@ -62,6 +62,8 @@ const SCOPE_LABELS: Record<string, string> = {
   'mcp:tasks:read': 'Read scheduled tasks',
   'mcp:tasks:write': 'Schedule / cancel tasks',
   'mcp:keys:read': 'List API keys (no secrets)',
+  'mcp:board:read': 'Read Supervisor Board tasks',
+  'mcp:board:write': 'Post / claim / complete board tasks',
   'agent:run': 'Chat with Agent Studio instances',
   'agent:sessions:write': 'Create / edit Agent Studio instances',
 };

@@ -97,6 +97,48 @@ export const cancelTaskArgs = z.object({ task_id: uuid('Task id of a not-yet-sta
 
 export const listApiKeysArgs = z.object({ response_format: responseFormat }).strict();
 
+// Supervisor Board ---------------------------------------------------------------
+export const BOARD_PRIORITIES = ['low', 'normal', 'high', 'urgent'] as const;
+export const BOARD_STATUSES = ['open', 'claimed', 'done', 'failed', 'cancelled'] as const;
+const boardTaskId = uuid('Board task id');
+const leaseMinutes = z.number().int().min(5).max(240).optional().describe('How long you hold the task before it returns to the board (5-240, default 30).');
+
+export const boardListArgs = z.object({
+  status: z.enum(['claimable', ...BOARD_STATUSES]).optional()
+    .describe("'claimable' = open, or claimed with an expired lease. Omit for all."),
+  assigned_to_me: z.boolean().optional().describe('Only tasks assigned to the calling team.'),
+  priority: z.enum(BOARD_PRIORITIES).optional(),
+  label: z.string().trim().min(1).max(40).optional(),
+  limit,
+  offset,
+  response_format: responseFormat,
+}).strict();
+export const boardGetArgs = z.object({ task_id: boardTaskId }).strict();
+export const boardPostArgs = z.object({
+  title: z.string().trim().min(1).max(200),
+  description: z.string().trim().max(10_000).optional(),
+  priority: z.enum(BOARD_PRIORITIES).optional(),
+  labels: z.array(z.string().trim().min(1).max(40)).max(10).optional(),
+  assigned_team_id: uuid('Team that should do it (omit to let any team claim it)').optional(),
+  due_at: z.string().datetime({ offset: true }).optional(),
+}).strict();
+export const boardClaimArgs = z.object({ task_id: boardTaskId, lease_minutes: leaseMinutes }).strict();
+export const boardRenewArgs = z.object({ task_id: boardTaskId, lease_minutes: leaseMinutes }).strict();
+export const boardCompleteArgs = z.object({
+  task_id: boardTaskId,
+  result: z.string().trim().min(1).max(20_000).describe('What you did and the outcome, for the poster to read.'),
+  result_data: z.record(z.string(), z.unknown()).optional().describe('Optional structured result.'),
+}).strict();
+export const boardFailArgs = z.object({
+  task_id: boardTaskId,
+  reason: z.string().trim().min(1).max(4000),
+  retry: z.boolean().optional().describe('true puts the task back on the board for another attempt.'),
+}).strict();
+export const boardReleaseArgs = z.object({
+  task_id: boardTaskId,
+  note: z.string().trim().max(2000).optional(),
+}).strict();
+
 // ---------------------------------------------------------------------------
 // Outputs (loose objects: records may gain columns without breaking clients)
 // ---------------------------------------------------------------------------
@@ -130,6 +172,20 @@ const apiKeyRecord = z.looseObject({
   expires_at: z.string().nullable().optional(),
   created_at: z.string(),
 });
+const boardTaskRecord = z.looseObject({
+  id: z.string(),
+  title: z.string(),
+  status: z.string(),
+  priority: z.string(),
+  claimable: z.boolean().describe('Whether it can be claimed right now (open, or lease expired).'),
+  lease_expired: z.boolean(),
+  claimed_by: z.string().nullable().optional(),
+  lease_expires_at: z.string().nullable().optional(),
+  assigned_team_id: z.string().nullable().optional(),
+  created_at: z.string(),
+});
+const boardTaskOutput = z.object({ task: boardTaskRecord });
+
 const page = {
   total_count: z.number().describe('Total matching records.'),
   has_more: z.boolean(),
@@ -251,6 +307,88 @@ export const PLATFORM_TOOL_DEFINITIONS = [
     annotations: READ,
     schema: listApiKeysArgs,
     outputSchema: z.object({ keys: z.array(apiKeyRecord) }),
+  },
+  {
+    name: 'contextcontrol_board_list_tasks',
+    title: 'List board tasks',
+    description:
+      "List tasks on your organization's Supervisor Board, urgent and oldest first. Use status='claimable' to find work. Returns { tasks: [{ id, title, status, priority, claimable, lease_expired, claimed_by, ... }], total_count, has_more, next_offset }.",
+    requiredScope: 'mcp:board:read',
+    sideEffect: 'read',
+    annotations: READ,
+    schema: boardListArgs,
+    outputSchema: z.object({ tasks: z.array(boardTaskRecord), ...page }),
+  },
+  {
+    name: 'contextcontrol_board_get_task',
+    title: 'Get board task',
+    description: 'Fetch one board task with its full description, result and event history. Returns { task, events }.',
+    requiredScope: 'mcp:board:read',
+    sideEffect: 'read',
+    annotations: READ,
+    schema: boardGetArgs,
+    outputSchema: z.object({ task: boardTaskRecord, events: z.array(z.looseObject({ event: z.string(), actor: z.string(), created_at: z.string() })) }),
+  },
+  {
+    name: 'contextcontrol_board_post_task',
+    title: 'Post board task',
+    description: 'Post a task for a team to pick up, optionally assigned to one team. Returns { task }.',
+    requiredScope: 'mcp:board:write',
+    sideEffect: 'write',
+    annotations: write(false, false),
+    schema: boardPostArgs,
+    outputSchema: boardTaskOutput,
+  },
+  {
+    name: 'contextcontrol_board_claim_task',
+    title: 'Claim board task',
+    description:
+      'Claim a claimable task for a limited time (lease). Only you can complete, fail, renew or release it while the lease lasts; if it expires the task returns to the board. Returns { task }.',
+    requiredScope: 'mcp:board:write',
+    sideEffect: 'write',
+    annotations: write(false, false),
+    schema: boardClaimArgs,
+    outputSchema: boardTaskOutput,
+  },
+  {
+    name: 'contextcontrol_board_renew_lease',
+    title: 'Renew lease',
+    description: 'Extend your lease on a task you claimed, when the work needs more time. Returns { task }.',
+    requiredScope: 'mcp:board:write',
+    sideEffect: 'write',
+    annotations: write(false, true),
+    schema: boardRenewArgs,
+    outputSchema: boardTaskOutput,
+  },
+  {
+    name: 'contextcontrol_board_complete_task',
+    title: 'Complete board task',
+    description: 'Mark a task you claimed as done and record the result. Returns { task }.',
+    requiredScope: 'mcp:board:write',
+    sideEffect: 'write',
+    annotations: write(false, false),
+    schema: boardCompleteArgs,
+    outputSchema: boardTaskOutput,
+  },
+  {
+    name: 'contextcontrol_board_fail_task',
+    title: 'Fail board task',
+    description: 'Report that a task you claimed could not be done. With retry=true it goes back on the board. Returns { task }.',
+    requiredScope: 'mcp:board:write',
+    sideEffect: 'write',
+    annotations: write(false, false),
+    schema: boardFailArgs,
+    outputSchema: boardTaskOutput,
+  },
+  {
+    name: 'contextcontrol_board_release_task',
+    title: 'Release board task',
+    description: 'Give back a task you claimed without finishing it, so another team can take it. Returns { task }.',
+    requiredScope: 'mcp:board:write',
+    sideEffect: 'write',
+    annotations: write(false, true),
+    schema: boardReleaseArgs,
+    outputSchema: boardTaskOutput,
   },
 ] as const satisfies readonly PlatformToolDefinition[];
 

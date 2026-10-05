@@ -87,6 +87,7 @@ const STEPS = [
 ] as const;
 
 const GOAL_SUGGESTIONS = [
+  'Check the board for claimable tasks assigned to us, claim one, complete it and record the result.',
   'Check scheduled tasks, cancel any that are overdue, and report what changed.',
   'Review MCP profiles and flag any with a token budget above 100k.',
   'Summarize what happened in the workspace since the last heartbeat.',
@@ -627,6 +628,7 @@ export const AgentTeamBuilder: React.FC<AgentTeamBuilderProps> = ({ onLaunchThre
                 </div>
                 <div className="flex items-center gap-3 text-xs">
                   <button onClick={() => setMemberTools(PLATFORM_TOOL_DEFINITIONS.filter((t) => t.sideEffect === 'read').map((t) => t.name))} className="text-zinc-400 hover:text-white">Read-only set</button>
+                  <button onClick={() => setMemberTools(Array.from(new Set([...memberTools, ...PLATFORM_TOOL_DEFINITIONS.filter((t) => t.name.startsWith('contextcontrol_board_')).map((t) => t.name)])))} className="text-zinc-400 hover:text-white">Board worker set</button>
                   <button onClick={() => setMemberTools(PLATFORM_TOOL_DEFINITIONS.map((t) => t.name))} className="text-zinc-400 hover:text-white">All</button>
                   <button onClick={() => setMemberTools([])} className="text-zinc-400 hover:text-white">None</button>
                 </div>

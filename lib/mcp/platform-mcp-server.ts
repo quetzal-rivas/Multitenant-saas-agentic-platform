@@ -6,6 +6,7 @@ import type { AuthContext } from '@/lib/auth/require-auth';
 import { isServiceError } from '@/lib/services/errors';
 import * as profiles from '@/lib/services/profiles';
 import * as tasks from '@/lib/services/tasks';
+import * as board from '@/lib/services/board';
 import {
   PLATFORM_TOOL_DEFINITIONS,
   canonicalToolName,
@@ -23,7 +24,8 @@ export const MCP_SERVER_INFO = { name: 'context-control-mcp-server', title: 'Con
 /** Upper bound for the text part of a tool result; structuredContent is not truncated. */
 export const CHARACTER_LIMIT = 25_000;
 
-type ToolCtx = Pick<AuthContext, 'tenantId' | 'userId' | 'authMode' | 'apiKeyId'>;
+/** `teamId` is set for team runs so board claims are attributed to the team. */
+type ToolCtx = Pick<AuthContext, 'tenantId' | 'userId' | 'authMode' | 'apiKeyId'> & { teamId?: string | null };
 type Row = Record<string, any>;
 
 const TOOL_HANDLERS: Record<PlatformToolName, (ctx: ToolCtx, args: any) => Promise<Record<string, unknown>>> = {
@@ -39,6 +41,14 @@ const TOOL_HANDLERS: Record<PlatformToolName, (ctx: ToolCtx, args: any) => Promi
   contextcontrol_list_api_keys: async (ctx) => ({
     keys: (await listPlatformApiKeys(ctx.tenantId)).map(({ tenant_id: _t, ...key }) => key),
   }),
+  contextcontrol_board_list_tasks: board.listBoardTasks,
+  contextcontrol_board_get_task: board.getBoardTask,
+  contextcontrol_board_post_task: board.postBoardTask,
+  contextcontrol_board_claim_task: board.claimBoardTask,
+  contextcontrol_board_renew_lease: board.renewBoardLease,
+  contextcontrol_board_complete_task: board.completeBoardTask,
+  contextcontrol_board_fail_task: board.failBoardTask,
+  contextcontrol_board_release_task: board.releaseBoardTask,
 };
 
 /**
@@ -69,6 +79,11 @@ function keyLine(k: Row) {
   const tools = k.tools_whitelist?.length ? ` · tools: ${k.tools_whitelist.join(', ')}` : '';
   return `- **${k.name}** \`${k.key_prefix}…\` (${k.environment}) · scopes: ${(k.scopes || []).join(', ')}${tools} · last used ${when(k.last_used_at)}${k.expires_at ? ` · expires ${when(k.expires_at)}` : ''}`;
 }
+function boardLine(t: Row) {
+  const holder = t.status === 'claimed' ? ` · held by ${t.claimed_by}${t.lease_expired ? ' (lease expired, claimable)' : ` until ${when(t.lease_expires_at)}`}` : '';
+  const labels = t.labels?.length ? ` · ${t.labels.join(', ')}` : '';
+  return `- [${t.priority}] **${t.title}** (\`${t.id}\`) · ${t.status}${holder}${labels}`;
+}
 function pageFooter(r: Row) {
   return r.has_more
     ? `\n\nShowing ${r.next_offset} of ${r.total_count}. Pass offset=${r.next_offset} for more.`
@@ -81,10 +96,13 @@ export function renderMarkdown(toolName: PlatformToolName, result: Row): string 
       return result.profiles.length ? `## Profiles\n${result.profiles.map(profileLine).join('\n')}${pageFooter(result)}` : 'No profiles found.';
     case 'contextcontrol_list_tasks':
       return result.tasks.length ? `## Tasks\n${result.tasks.map(taskLine).join('\n')}${pageFooter(result)}` : 'No tasks found.';
+    case 'contextcontrol_board_list_tasks':
+      return result.tasks.length ? `## Board\n${result.tasks.map(boardLine).join('\n')}${pageFooter(result)}` : 'No matching board tasks.';
     case 'contextcontrol_list_api_keys':
       return result.keys.length ? `## API keys\n${result.keys.map(keyLine).join('\n')}` : 'No active API keys.';
     default:
       if (result.profile) return profileLine(result.profile);
+      if (result.task?.claimable !== undefined) return boardLine(result.task);
       if (result.task) return taskLine(result.task);
       return JSON.stringify(result, null, 2);
   }

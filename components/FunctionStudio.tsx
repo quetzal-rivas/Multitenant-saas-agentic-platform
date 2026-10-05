@@ -32,7 +32,26 @@ interface FunctionStudioProps {
 }
 
 export function FunctionStudio({ onToolRegistered }: FunctionStudioProps) {
-  const selectedOrg = 'tenant_enterprise_corp';
+  const selectedOrg = ''; // organization comes from the session on the server
+
+  // The API stores the definition; editor-only fields get local defaults.
+  const withEditorDefaults = (f: any): ServerlessFunction => ({
+    collection: 'Custom',
+    organizationId: '',
+    language: 'python',
+    description: '',
+    outputSchema: { type: 'object', properties: {} },
+    envVars: {},
+    dependencies: [],
+    timeoutSeconds: 15,
+    memoryMb: 128,
+    version: '1.0.0',
+    endpoint: '',
+    mcpToolName: '',
+    testInputJson: '{}',
+    ...f,
+    deployed: false,
+  });
   const [functions, setFunctions] = useState<ServerlessFunction[]>([]);
   const [selectedFn, setSelectedFn] = useState<ServerlessFunction | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -46,9 +65,9 @@ export function FunctionStudio({ onToolRegistered }: FunctionStudioProps) {
   const fetchFunctions = React.useCallback(async () => {
     setIsLoading(true);
     try {
-      const res = await fetch(`/api/functions?organizationId=${selectedOrg}`);
+      const res = await fetch('/api/functions');
       const data = await res.json();
-      const list = data.functions || [];
+      const list = (data.functions || []).map(withEditorDefaults);
       setFunctions(list);
       setSelectedFn((prev) => prev || list[0] || null);
     } catch (e) {
@@ -62,10 +81,10 @@ export function FunctionStudio({ onToolRegistered }: FunctionStudioProps) {
     let ignore = false;
     async function load() {
       try {
-        const res = await fetch(`/api/functions?organizationId=${selectedOrg}`);
+        const res = await fetch('/api/functions');
         const data = await res.json();
         if (!ignore) {
-          const list = data.functions || [];
+          const list = (data.functions || []).map(withEditorDefaults);
           setFunctions(list);
           setSelectedFn((prev) => prev || list[0] || null);
           setIsLoading(false);
@@ -155,10 +174,12 @@ export function FunctionStudio({ onToolRegistered }: FunctionStudioProps) {
 
       const data = await res.json();
       if (data.success) {
-        setSelectedFn(data.function);
-        setFunctions((prev) =>
-          prev.map((f) => (f.id === data.function.id ? data.function : f))
-        );
+        const saved = withEditorDefaults({ ...selectedFn, ...data.function });
+        setSelectedFn(saved);
+        setFunctions((prev) => {
+          const exists = prev.some((f) => f.id === selectedFn.id || f.id === saved.id);
+          return exists ? prev.map((f) => (f.id === selectedFn.id || f.id === saved.id ? saved : f)) : [saved, ...prev];
+        });
         onToolRegistered?.(data.function);
       }
     } catch (err) {
@@ -197,8 +218,8 @@ export function FunctionStudio({ onToolRegistered }: FunctionStudioProps) {
       timeoutSeconds: 15,
       memoryMb: 128,
       version: '1.0.0',
-      endpoint: `https://api.contextcontrol.dev/v1/tools/${newName}/execute`,
-      mcpToolName: `org_custom_${newName}`,
+      endpoint: '',
+      mcpToolName: '',
       deployed: false,
       testInputJson: '{\n  "query": "test calculation"\n}',
       code: `def main(query: str):
@@ -326,15 +347,8 @@ export function FunctionStudio({ onToolRegistered }: FunctionStudioProps) {
             ))}
           </div>
 
-          {/* Pricing & Free Tier Footprint */}
-          <div className="p-3 bg-[#0c121d] border-t border-[#182030] text-[11px] text-slate-400 space-y-1">
-            <div className="flex items-center justify-between text-slate-300 font-semibold">
-              <span>Lambda Free Tier:</span>
-              <span className="text-emerald-400">100% Free</span>
-            </div>
-            <p className="text-[10px] text-slate-500 leading-tight">
-              1,000,000 requests/mo & 3.2M seconds of compute included. Scale-to-zero baseline overhead: $0/mo.
-            </p>
+          <div className="p-3 bg-[#0c121d] border-t border-[#182030] text-[11px] text-slate-500 leading-snug">
+            Functions are saved as drafts. Running and deploying them (sandboxed, then offered to agents as MCP tools) is not available yet.
           </div>
         </div>
 
@@ -351,8 +365,8 @@ export function FunctionStudio({ onToolRegistered }: FunctionStudioProps) {
                     onChange={(e) => updateCurrentFn({ name: e.target.value })}
                     className="bg-transparent text-sm font-bold font-mono text-white outline-none border-b border-transparent hover:border-slate-600 focus:border-emerald-500 transition-colors"
                   />
-                  <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-semibold">
-                    {selectedFn.mcpToolName}
+                  <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-amber-500/10 text-amber-300 border border-amber-500/20 font-semibold">
+                    Draft · not deployed
                   </span>
                   <span className="text-xs text-slate-500 font-mono">v{selectedFn.version}</span>
                 </div>
@@ -366,22 +380,7 @@ export function FunctionStudio({ onToolRegistered }: FunctionStudioProps) {
                     <span>{selectedFn.memoryMb}MB RAM</span>
                   </span>
                   <span className="text-slate-500">|</span>
-                  <button
-                    onClick={copyEndpoint}
-                    className="flex items-center gap-1 text-slate-400 hover:text-white transition-colors"
-                    title="Click to copy public API endpoint"
-                  >
-                    <span>{selectedFn.endpoint}</span>
-                    {copiedEndpoint ? (
-                      <Check className="w-3 h-3 text-emerald-400" />
-                    ) : (
-                      <Copy className="w-3 h-3 text-slate-400" />
-                    )}
-                  </button>
-                  <a href="/endpoints" target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 ml-2 text-indigo-400 hover:text-indigo-300 transition-colors" title="View in API Gateway">
-                    <ExternalLink className="w-3 h-3" />
-                    <span>API Gateway</span>
-                  </a>
+                  <span className="text-slate-500">No public endpoint until deployment is available</span>
                 </div>
               </div>
 
@@ -389,11 +388,12 @@ export function FunctionStudio({ onToolRegistered }: FunctionStudioProps) {
               <div className="flex items-center gap-2">
                 <button
                   onClick={handleTestExecute}
-                  disabled={isExecuting}
+                  disabled
+                  title="Running user code needs a sandbox; coming with the Function Studio rebuild"
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-semibold transition-colors disabled:opacity-50 shadow-sm"
                 >
                   <Play className={`w-3.5 h-3.5 fill-white ${isExecuting ? 'animate-pulse' : ''}`} />
-                  <span>{isExecuting ? 'Executing...' : 'Test Execute'}</span>
+                  <span>Test (coming soon)</span>
                 </button>
 
                 <button
@@ -402,7 +402,7 @@ export function FunctionStudio({ onToolRegistered }: FunctionStudioProps) {
                   className="flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-semibold transition-colors disabled:opacity-50 shadow-sm"
                 >
                   <Save className="w-3.5 h-3.5" />
-                  <span>{isDeploying ? 'Deploying...' : 'Deploy to Lambda / MCP'}</span>
+                  <span>{isDeploying ? 'Saving...' : 'Save draft'}</span>
                 </button>
               </div>
             </div>
@@ -681,7 +681,7 @@ export function FunctionStudio({ onToolRegistered }: FunctionStudioProps) {
                         </>
                       ) : (
                         <div className="text-center py-12 text-slate-500 text-xs">
-                          Click &quot;Test Execute&quot; to invoke the function inside the ephemeral serverless sandbox.
+                          Test runs are not available yet: executing user code requires a sandbox, which comes with the Function Studio rebuild.
                         </div>
                       )}
                     </div>

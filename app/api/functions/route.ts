@@ -1,99 +1,78 @@
+export const dynamic = 'force-dynamic';
+
 import { NextRequest, NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
-import { ServerlessFunction } from '@/lib/types';
+import { z } from 'zod';
+import { requireAuth, requireRole } from '@/lib/auth/require-auth';
+import { getSupabaseAdminClient } from '@/lib/supabase';
+import { errorResponse } from '@/lib/http/route-errors';
+
+/**
+ * Stored function definitions for AI Function Studio. Deployment and execution are
+ * not available yet; this route only lists and saves definitions for the caller's
+ * organization (taken from the session, never from the request).
+ */
+
+const saveBody = z.object({
+  name: z.string().trim().min(1).max(80),
+  code: z.string().min(1).max(100_000),
+  inputSchema: z.record(z.string(), z.unknown()).default({ type: 'object', properties: {} }),
+}).passthrough(); // the editor sends extra UI fields; only the ones above are stored
+
+function slugOf(name: string): string {
+  return name.trim().toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 64);
+}
+
+function toClient(row: any) {
+  return {
+    id: row.id,
+    name: row.name,
+    function_slug: row.function_slug,
+    code: row.code,
+    inputSchema: row.input_schema,
+    status: row.status,
+    deployed: false,
+  };
+}
 
 export async function GET(req: NextRequest) {
   try {
-    const { searchParams } = new URL(req.url);
-    // In a real authenticated scenario, you would extract the token and use a server-side Supabase client.
-    // For this prototype, we're using the mock tenant ID from the request or a default.
-    const org = searchParams.get('organizationId') || 'acme-corp';
-    
-    // Convert mock org name to a mock UUID for the prototype if necessary, 
-    // or just assume org ID matches tenant_id format.
-    const tenantId = org === 'acme-corp' ? '00000000-0000-0000-0000-000000000001' : org;
-
-    const { data, error } = await supabase
+    const auth = await requireAuth(req, 'session');
+    const { data, error } = await getSupabaseAdminClient()
       .from('custom_functions')
-      .select('*')
-      .eq('tenant_id', tenantId);
-
-    if (error) throw error;
-
-    // Map database rows back to the frontend ServerlessFunction format
-    const mappedFunctions = data.map(row => ({
-      id: row.id,
-      name: row.name,
-      function_slug: row.function_slug,
-      code: row.code,
-      inputSchema: row.input_schema,
-      status: row.status,
-      tenant_id: row.tenant_id,
-      // Map other fields needed by the UI
-      endpoint: `https://api.contextcontrol.io/v1/tenants/${row.tenant_id}/tools/${row.function_slug}`,
-      mcpToolName: `org_tool_${row.function_slug}`
-    }));
-
-    return NextResponse.json({
-      functions: mappedFunctions,
-      total: mappedFunctions.length,
-      organization: tenantId,
-    });
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+      .select('id, name, function_slug, code, input_schema, status')
+      .eq('tenant_id', auth.tenantId)
+      .order('name', { ascending: true });
+    if (error) throw new Error(`Could not list functions: ${error.message}`);
+    const functions = (data || []).map(toClient);
+    return NextResponse.json({ functions, total: functions.length });
+  } catch (err) {
+    return errorResponse(err, 'functions:list');
   }
 }
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const {
-      name,
-      organizationId = 'acme-corp',
-      code = '',
-      inputSchema = { type: 'object', properties: {} },
-    } = body;
-
-    if (!name || !code) {
-      return NextResponse.json({ error: 'Function name and code are required' }, { status: 400 });
-    }
-
-    const tenantId = organizationId === 'acme-corp' ? '00000000-0000-0000-0000-000000000001' : organizationId;
-    const functionSlug = name.trim().toLowerCase().replace(/[^a-z0-9_]/g, '_');
-
-    const { data, error } = await supabase
+    const auth = await requireAuth(req, 'session');
+    requireRole(auth, ['owner', 'admin']);
+    const body = saveBody.parse(await req.json());
+    const { data, error } = await getSupabaseAdminClient()
       .from('custom_functions')
-      .upsert({
-        tenant_id: tenantId,
-        function_slug: functionSlug,
-        name: name.trim(),
-        code: code,
-        input_schema: inputSchema,
-        status: 'active'
-      }, { onConflict: 'tenant_id, function_slug' })
-      .select()
+      .upsert(
+        {
+          tenant_id: auth.tenantId,
+          function_slug: slugOf(body.name),
+          name: body.name,
+          code: body.code,
+          input_schema: body.inputSchema,
+          status: 'draft',
+        },
+        { onConflict: 'tenant_id,function_slug' }
+      )
+      .select('id, name, function_slug, code, input_schema, status')
       .single();
-
-    if (error) throw error;
-
-    const endpoint = `https://api.contextcontrol.io/v1/tenants/${tenantId}/tools/${functionSlug}`;
-    const mcpToolName = `org_tool_${functionSlug}`;
-
-    return NextResponse.json({
-      success: true,
-      function: {
-        id: data.id,
-        name: data.name,
-        code: data.code,
-        inputSchema: data.input_schema,
-        status: data.status,
-        endpoint,
-        mcpToolName
-      },
-      mcpToolRegistered: mcpToolName,
-      endpoint,
-    });
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    if (error || !data) throw new Error(`Could not save function: ${error?.message}`);
+    return NextResponse.json({ success: true, function: toClient(data) });
+  } catch (err) {
+    return errorResponse(err, 'functions:save');
   }
 }

@@ -41,6 +41,10 @@ interface BoardTask {
   due_at: string | null;
   completed_at: string | null;
   created_at: string;
+  handoff_note: string | null;
+  late_result: string | null;
+  late_result_by: string | null;
+  handover_requested_by: string | null;
   claimable: boolean;
   lease_expired: boolean;
 }
@@ -90,6 +94,23 @@ function remaining(iso: string | null, now: number): string {
   return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m left` : `${m}m ${String(s).padStart(2, '0')}s left`;
 }
 
+const EVENT_LABELS: Record<string, string> = {
+  lease_expired: 'lease expired',
+  handover_requested: 'asked for a handover',
+  handed_over: 'handed over',
+  late_result: 'sent a late result',
+  note: 'progress note',
+};
+
+/** Turn ISO timestamps inside event notes into readable local times. */
+function readableNote(note: string, actorName: (a: string) => string): string {
+  return note
+    .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})/g, (iso) =>
+      new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+    )
+    .replace(/\b(team|user|api_key|system):[0-9a-f-]{8,}/g, (label) => actorName(label));
+}
+
 const inputCls = 'w-full bg-[#090b0f] border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500';
 
 // ---------------------------------------------------------------------------
@@ -101,6 +122,7 @@ export const SupervisorBoardView: React.FC = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const [viewer, setViewer] = useState<string | null>(null);
 
   const [filterPriority, setFilterPriority] = useState<string>('');
   const [filterTeam, setFilterTeam] = useState<string>('');
@@ -115,21 +137,23 @@ export const SupervisorBoardView: React.FC = () => {
       if (!actor) return '—';
       const [kind, id] = actor.split(':');
       if (kind === 'team') return teamName(id);
-      if (kind === 'user') return 'a person';
+      if (actor === viewer) return 'you';
+      if (kind === 'user') return 'a teammate';
       if (kind === 'api_key') return 'an API key';
       return 'the system';
     },
-    [teamName]
+    [teamName, viewer]
   );
 
   const load = useCallback(async (quiet = false) => {
     if (quiet) setRefreshing(true);
     try {
       const [board, teamList] = await Promise.all([
-        api<{ tasks: BoardTask[] }>('/api/v1/board?limit=100'),
+        api<{ tasks: BoardTask[]; viewer?: string }>('/api/v1/board?limit=100'),
         api<{ teams: Team[] }>('/api/v1/agent-teams').catch(() => ({ teams: [] as Team[] })),
       ]);
       setTasks(board.tasks);
+      setViewer(board.viewer ?? null);
       setTeams(teamList.teams);
       setError(null);
     } catch (err: any) {
@@ -260,6 +284,8 @@ export const SupervisorBoardView: React.FC = () => {
                           {t.status === 'done' && t.completed_at && <div>done {new Date(t.completed_at).toLocaleString()}</div>}
                           {t.status === 'failed' && <div className="text-rose-400 truncate">failed: {t.failure_reason}</div>}
                           {t.status === 'open' && t.attempts > 0 && <div>{t.attempts} previous attempt{t.attempts === 1 ? '' : 's'}</div>}
+                          {t.handover_requested_by && <div className="text-sky-400">{actorName(t.handover_requested_by)} asked for a handover</div>}
+                          {t.late_result && t.status !== 'done' && <div className="text-amber-400">has a late result to review</div>}
                         </div>
                       </button>
                     ))}
@@ -423,6 +449,23 @@ const TaskDrawer: React.FC<{
                 {task.result}
               </div>
             )}
+            {task.handover_requested_by && (
+              <div className="p-3 rounded-lg bg-sky-950/20 border border-sky-900 text-xs text-sky-200">
+                {actorName(task.handover_requested_by)} asked to take this task over. The holder hands it over with a summary on its next board call; otherwise it becomes claimable when the lease ends.
+              </div>
+            )}
+            {task.handoff_note && (
+              <div className="p-3 rounded-lg bg-zinc-900 border border-zinc-800 text-sm text-zinc-200 whitespace-pre-wrap">
+                <div className="text-xs text-zinc-400 mb-1">Latest hand-off note (what the next holder continues from)</div>
+                {task.handoff_note}
+              </div>
+            )}
+            {task.late_result && (
+              <div className="p-3 rounded-lg bg-amber-950/20 border border-amber-900 text-sm text-zinc-200 whitespace-pre-wrap">
+                <div className="text-xs text-amber-400 mb-1">Late result from {actorName(task.late_result_by)} (kept instead of discarded)</div>
+                {task.late_result}
+              </div>
+            )}
             {task.failure_reason && (
               <div className="p-3 rounded-lg bg-rose-950/20 border border-rose-900 text-sm text-rose-200 whitespace-pre-wrap">
                 <div className="text-xs text-rose-400 mb-1">Last failure</div>
@@ -467,8 +510,8 @@ const TaskDrawer: React.FC<{
                   <li key={i} className="flex gap-2">
                     <span className="text-zinc-500 shrink-0 w-28">{new Date(e.created_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
                     <span className="text-zinc-300">
-                      <span className="font-semibold">{e.event.replace('_', ' ')}</span> by {actorName(e.actor)}
-                      {e.note && <span className="text-zinc-500"> · {e.note}</span>}
+                      <span className="font-semibold">{EVENT_LABELS[e.event] ?? e.event}</span> by {actorName(e.actor)}
+                      {e.note && <span className="text-zinc-500"> · {readableNote(e.note, actorName)}</span>}
                     </span>
                   </li>
                 ))}

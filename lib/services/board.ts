@@ -6,10 +6,13 @@ import type {
   boardCompleteArgs,
   boardFailArgs,
   boardGetArgs,
+  boardHandoverArgs,
   boardListArgs,
+  boardNoteArgs,
   boardPostArgs,
   boardReleaseArgs,
   boardRenewArgs,
+  boardRequestHandoverArgs,
 } from '@/lib/mcp/tool-catalog';
 import { ServiceError, pageInfo } from './errors';
 
@@ -18,9 +21,18 @@ import { ServiceError, pageInfo } from './errors';
  * A claim whose lease has passed counts as claimable again; that is computed when
  * tasks are read or claimed, so no background job is needed. Every claim uses
  * compare-and-set, so two callers can never hold the same task.
+ *
+ * In agent runs a claim belongs to the run (`claim_run_id`), so two runs of the same
+ * team cannot both act on it. When a run ends its claims are parked (run id cleared)
+ * and any later run of that team may resume them. Work is never silently discarded:
+ * holders leave progress notes, hand tasks over on request, and a result submitted
+ * after losing the task is kept as a late result for the next holder.
  */
 
-export type BoardCtx = Pick<AuthContext, 'tenantId' | 'userId' | 'authMode' | 'apiKeyId'> & { teamId?: string | null };
+export type BoardCtx = Pick<AuthContext, 'tenantId' | 'userId' | 'authMode' | 'apiKeyId'> & {
+  teamId?: string | null;
+  runId?: string | null;
+};
 
 export const DEFAULT_LEASE_MINUTES = 30;
 /** Boards are small; list views load at most this many matching tasks. */
@@ -28,7 +40,7 @@ const LIST_CAP = 500;
 const PRIORITY_RANK: Record<string, number> = { urgent: 0, high: 1, normal: 2, low: 3 };
 
 const TASK_COLUMNS =
-  'id, title, description, priority, labels, status, assigned_team_id, posted_by, posted_by_team_id, claimed_by, claimed_by_team_id, claimed_at, lease_expires_at, attempts, result, result_data, failure_reason, due_at, completed_at, created_at, updated_at';
+  'id, title, description, priority, labels, status, assigned_team_id, posted_by, posted_by_team_id, claimed_by, claimed_by_team_id, claimed_at, lease_expires_at, attempts, result, result_data, failure_reason, due_at, completed_at, created_at, updated_at, claim_run_id, handoff_note, handover_requested_by, handover_requested_by_team_id, handover_requested_at, late_result, late_result_by';
 
 type Row = Record<string, any>;
 
@@ -44,10 +56,18 @@ function leaseExpired(task: Row, now = new Date()): boolean {
   return task.status === 'claimed' && !!task.lease_expires_at && new Date(task.lease_expires_at) <= now;
 }
 
-/** Task plus derived fields agents and the UI rely on. */
-export function present(task: Row, now = new Date()): Row & { lease_expired: boolean; claimable: boolean } {
+/** Claimed by this actor but no run is working on it (its run ended): the actor may resume it. */
+function parkedFor(task: Row, actor?: string): boolean {
+  return !!actor && task.status === 'claimed' && task.claimed_by === actor && !task.claim_run_id;
+}
+
+/**
+ * Task plus derived fields agents and the UI rely on. With `actor`, `claimable` also
+ * covers tasks parked for that actor (resumable).
+ */
+export function present(task: Row, now = new Date(), actor?: string): Row & { lease_expired: boolean; claimable: boolean } {
   const expired = leaseExpired(task, now);
-  return { ...task, lease_expired: expired, claimable: task.status === 'open' || expired };
+  return { ...task, lease_expired: expired, claimable: task.status === 'open' || expired || parkedFor(task, actor) };
 }
 
 function minutesFromNow(minutes: number, now = new Date()): string {
@@ -84,19 +104,20 @@ async function assertTeam(ctx: BoardCtx, teamId: string) {
 }
 
 /** Apply a guarded update; returns the row, or null when the guard no longer matched. */
-async function guardedUpdate(ctx: BoardCtx, taskId: string, guard: Record<string, string>, patch: Row): Promise<Row | null> {
+async function guardedUpdate(ctx: BoardCtx, taskId: string, guard: Record<string, string | null>, patch: Row): Promise<Row | null> {
   let query = getSupabaseAdminClient()
     .from('board_tasks')
     .update({ ...patch, updated_at: new Date().toISOString() })
     .eq('id', taskId)
     .eq('tenant_id', ctx.tenantId);
-  for (const [column, value] of Object.entries(guard)) query = query.eq(column, value);
+  for (const [column, value] of Object.entries(guard)) query = value === null ? query.is(column, null) : query.eq(column, value);
   const { data, error } = await query.select(TASK_COLUMNS);
   if (error) throw new Error(`Could not update board task: ${error.message}`);
   return data?.[0] ?? null;
 }
 
-const CLEAR_CLAIM = { claimed_by: null, claimed_by_team_id: null, claimed_at: null, lease_expires_at: null };
+const CLEAR_HANDOVER = { handover_requested_by: null, handover_requested_by_team_id: null, handover_requested_at: null };
+const CLEAR_CLAIM = { claimed_by: null, claimed_by_team_id: null, claimed_at: null, lease_expires_at: null, claim_run_id: null, ...CLEAR_HANDOVER };
 
 // ---------------------------------------------------------------------------
 // Reads
@@ -119,11 +140,12 @@ export async function listBoardTasks(ctx: BoardCtx, args: z.infer<typeof boardLi
   const { data, error } = await query;
   if (error) throw new Error(`Could not list board tasks: ${error.message}`);
 
-  let rows = (data || []).map((t) => present(t, now));
+  const actor = boardActor(ctx);
+  let rows = (data || []).map((t) => present(t, now, actor));
   if (args.label) rows = rows.filter((t) => (t.labels || []).includes(args.label));
   if (args.status === 'claimable') {
-    // Claimable for *this* caller: not assigned to a different team.
-    rows = rows.filter((t) => t.claimable && (!t.assigned_team_id || t.assigned_team_id === ctx.teamId));
+    // Claimable for *this* caller: not assigned to a different team (own parked claims included).
+    rows = rows.filter((t) => t.claimable && (!t.assigned_team_id || t.assigned_team_id === ctx.teamId || t.claimed_by === actor));
   }
   const workQueue = args.status === 'claimable' || args.status === 'open';
   rows.sort((a, b) =>
@@ -145,7 +167,7 @@ export async function getBoardTask(ctx: BoardCtx, args: z.infer<typeof boardGetA
     .eq('task_id', args.task_id)
     .eq('tenant_id', ctx.tenantId)
     .order('created_at', { ascending: true });
-  return { task: present(task), events: events || [] };
+  return { task: present(task, new Date(), boardActor(ctx)), events: events || [] };
 }
 
 // ---------------------------------------------------------------------------
@@ -179,18 +201,42 @@ export async function postBoardTask(ctx: BoardCtx, args: z.infer<typeof boardPos
 export async function claimBoardTask(ctx: BoardCtx, args: z.infer<typeof boardClaimArgs>) {
   const now = new Date();
   const actor = boardActor(ctx);
+  const runId = ctx.runId ?? null;
   const task = await loadTask(ctx, args.task_id);
+  const lease = minutesFromNow(args.lease_minutes ?? DEFAULT_LEASE_MINUTES, now);
 
   if (['done', 'failed', 'cancelled'].includes(task.status)) {
     throw new ServiceError(`Task is ${task.status} and cannot be claimed.`, 'CONFLICT');
   }
+
+  // Our own claim: resume it if parked, otherwise explain who is working on it.
+  if (task.status === 'claimed' && task.claimed_by === actor) {
+    if ((task.claim_run_id ?? null) === runId) {
+      throw new ServiceError('You already hold this task. Use contextcontrol_board_renew_lease to extend it.', 'CONFLICT');
+    }
+    if (task.claim_run_id && !leaseExpired(task, now)) {
+      throw new ServiceError(
+        `Another run of your team is working on this task until ${task.lease_expires_at}. Pick other work, or call contextcontrol_board_request_handover.`,
+        'CONFLICT'
+      );
+    }
+    const resumed = await guardedUpdate(
+      ctx,
+      task.id,
+      { status: 'claimed', claimed_by: actor, claim_run_id: task.claim_run_id ?? null },
+      { claim_run_id: runId, lease_expires_at: lease }
+    );
+    if (!resumed) throw new ServiceError('The task changed a moment ago. Fetch it again with contextcontrol_board_get_task.', 'CONFLICT');
+    await logEvent(ctx, task.id, 'resumed', actor, `lease until ${lease}`);
+    return { task: present(resumed, now, actor) };
+  }
+
   if (task.assigned_team_id && task.assigned_team_id !== ctx.teamId) {
     throw new ServiceError('Task is assigned to another team. Call contextcontrol_board_list_tasks with status="claimable" for tasks you can take.', 'FORBIDDEN');
   }
   if (task.status === 'claimed' && !leaseExpired(task, now)) {
-    if (task.claimed_by === actor) throw new ServiceError('You already hold this task. Use contextcontrol_board_renew_lease to extend it.', 'CONFLICT');
     throw new ServiceError(
-      `Task is claimed by ${task.claimed_by} until ${task.lease_expires_at}. Call contextcontrol_board_list_tasks with status="claimable" for other work.`,
+      `Task is claimed by ${task.claimed_by} until ${task.lease_expires_at}. Call contextcontrol_board_list_tasks with status="claimable" for other work, or contextcontrol_board_request_handover to ask for it.`,
       'CONFLICT'
     );
   }
@@ -199,9 +245,11 @@ export async function claimBoardTask(ctx: BoardCtx, args: z.infer<typeof boardCl
     status: 'claimed',
     claimed_by: actor,
     claimed_by_team_id: ctx.teamId ?? null,
+    claim_run_id: runId,
     claimed_at: now.toISOString(),
-    lease_expires_at: minutesFromNow(args.lease_minutes ?? DEFAULT_LEASE_MINUTES, now),
+    lease_expires_at: lease,
     attempts: (task.attempts ?? 0) + 1,
+    ...CLEAR_HANDOVER,
   };
   // Compare-and-set: only succeeds if nobody changed the task since we read it.
   const guard: Record<string, string> = task.status === 'open'
@@ -211,64 +259,208 @@ export async function claimBoardTask(ctx: BoardCtx, args: z.infer<typeof boardCl
   if (!updated) throw new ServiceError('Someone claimed this task a moment ago. Pick another claimable task.', 'CONFLICT');
 
   if (task.status === 'claimed') await logEvent(ctx, task.id, 'lease_expired', task.claimed_by, 'Lease expired; task was reclaimed.');
-  await logEvent(ctx, task.id, 'claimed', actor, `lease until ${claim.lease_expires_at}`);
-  return { task: present(updated) };
+  await logEvent(ctx, task.id, 'claimed', actor, `lease until ${lease}`);
+  return { task: present(updated, now, actor) };
 }
 
-async function holderOnly(ctx: BoardCtx, taskId: string): Promise<{ task: Row; actor: string }> {
+/** True when the caller (this actor and, in agent runs, this run or a parked claim) holds the task. */
+function isHolder(ctx: BoardCtx, task: Row, actor: string): boolean {
+  if (task.status !== 'claimed' || task.claimed_by !== actor) return false;
+  return !task.claim_run_id || task.claim_run_id === (ctx.runId ?? null);
+}
+
+async function holderOnly(ctx: BoardCtx, taskId: string): Promise<{ task: Row; actor: string; guard: Record<string, string | null> }> {
   const actor = boardActor(ctx);
   const task = await loadTask(ctx, taskId);
-  if (task.status !== 'claimed' || task.claimed_by !== actor) {
+  if (!isHolder(ctx, task, actor)) {
+    if (task.status !== 'claimed') {
+      throw new ServiceError(`Task is ${task.status}; claim it first with contextcontrol_board_claim_task.`, 'CONFLICT');
+    }
     throw new ServiceError(
-      task.status === 'claimed'
-        ? `Only the current holder (${task.claimed_by}) can do that.`
-        : `Task is ${task.status}; claim it first with contextcontrol_board_claim_task.`,
-      task.status === 'claimed' ? 'FORBIDDEN' : 'CONFLICT'
+      task.claimed_by === actor
+        ? 'Another run of your team holds this task. Call contextcontrol_board_request_handover, or pick other work.'
+        : `Only the current holder (${task.claimed_by}) can do that. Call contextcontrol_board_request_handover to ask for it.`,
+      'FORBIDDEN'
     );
   }
-  return { task, actor };
+  return { task, actor, guard: { status: 'claimed', claimed_by: actor, claim_run_id: task.claim_run_id ?? null } };
 }
 
+const LOST = 'You no longer hold this task.';
+
 export async function renewBoardLease(ctx: BoardCtx, args: z.infer<typeof boardRenewArgs>) {
-  const { task, actor } = await holderOnly(ctx, args.task_id);
+  const { task, actor, guard } = await holderOnly(ctx, args.task_id);
   const lease = minutesFromNow(args.lease_minutes ?? DEFAULT_LEASE_MINUTES);
-  const updated = await guardedUpdate(ctx, task.id, { status: 'claimed', claimed_by: actor }, { lease_expires_at: lease });
-  if (!updated) throw new ServiceError('You no longer hold this task.', 'CONFLICT');
+  const updated = await guardedUpdate(ctx, task.id, guard, {
+    lease_expires_at: lease,
+    claim_run_id: ctx.runId ?? null,
+    ...(args.note ? { handoff_note: args.note } : {}),
+  });
+  if (!updated) throw new ServiceError(LOST, 'CONFLICT');
   await logEvent(ctx, task.id, 'renewed', actor, `lease until ${lease}`);
-  return { task: present(updated) };
+  if (args.note) await logEvent(ctx, task.id, 'note', actor, args.note);
+  return { task: present(updated, new Date(), actor) };
+}
+
+export async function addBoardNote(ctx: BoardCtx, args: z.infer<typeof boardNoteArgs>) {
+  const { task, actor, guard } = await holderOnly(ctx, args.task_id);
+  const updated = await guardedUpdate(ctx, task.id, guard, { handoff_note: args.note, claim_run_id: ctx.runId ?? null });
+  if (!updated) throw new ServiceError(LOST, 'CONFLICT');
+  await logEvent(ctx, task.id, 'note', actor, args.note);
+  return { task: present(updated, new Date(), actor) };
+}
+
+/** Whether this actor ever held the task (claimed or resumed it). */
+async function everHeld(ctx: BoardCtx, taskId: string, actor: string): Promise<boolean> {
+  const { data } = await getSupabaseAdminClient()
+    .from('board_task_events')
+    .select('event')
+    .eq('task_id', taskId)
+    .eq('tenant_id', ctx.tenantId)
+    .eq('actor', actor);
+  return (data || []).some((e: Row) => e.event === 'claimed' || e.event === 'resumed');
 }
 
 export async function completeBoardTask(ctx: BoardCtx, args: z.infer<typeof boardCompleteArgs>) {
-  const { task, actor } = await holderOnly(ctx, args.task_id);
-  const updated = await guardedUpdate(ctx, task.id, { status: 'claimed', claimed_by: actor }, {
-    status: 'done',
-    result: args.result,
-    result_data: args.result_data ?? null,
-    completed_at: new Date().toISOString(),
-    lease_expires_at: null,
-  });
-  if (!updated) throw new ServiceError('You no longer hold this task.', 'CONFLICT');
-  await logEvent(ctx, task.id, 'completed', actor);
-  return { task: present(updated) };
+  const actor = boardActor(ctx);
+  const task = await loadTask(ctx, args.task_id);
+
+  if (isHolder(ctx, task, actor)) {
+    const updated = await guardedUpdate(ctx, task.id, { status: 'claimed', claimed_by: actor, claim_run_id: task.claim_run_id ?? null }, {
+      status: 'done',
+      result: args.result,
+      result_data: args.result_data ?? null,
+      completed_at: new Date().toISOString(),
+      lease_expires_at: null,
+      ...CLEAR_HANDOVER,
+    });
+    if (updated) {
+      await logEvent(ctx, task.id, 'completed', actor);
+      return { task: present(updated, new Date(), actor), late: false };
+    }
+  }
+
+  if (task.status === 'claimed' && task.claimed_by === actor && task.claim_run_id && !leaseExpired(task)) {
+    throw new ServiceError('Another run of your team holds this task and is still working on it. Pick other work.', 'CONFLICT');
+  }
+  // Not (or no longer) the holder. Keep the work rather than discarding it.
+  if (!(await everHeld(ctx, task.id, actor))) {
+    throw new ServiceError(`Only the current holder (${task.claimed_by ?? 'nobody'}) can complete this task. Claim it first.`, 'FORBIDDEN');
+  }
+  const current = await loadTask(ctx, task.id);
+  if (['done', 'cancelled', 'failed'].includes(current.status)) {
+    await logEvent(ctx, task.id, 'late_result', actor, args.result.slice(0, 4000));
+    return {
+      task: present(current, new Date(), actor),
+      late: true,
+      message: `${LOST} It is already ${current.status}; your result was recorded in the task history. Do not redo it.`,
+    };
+  }
+  const updated = await guardedUpdate(ctx, task.id, { status: current.status }, { late_result: args.result, late_result_by: actor });
+  if (!updated) throw new ServiceError('The task changed a moment ago. Try again.', 'CONFLICT');
+  await logEvent(ctx, task.id, 'late_result', actor, args.result.slice(0, 4000));
+  return {
+    task: present(updated, new Date(), actor),
+    late: true,
+    message: `${LOST} Your result was saved as a late result; whoever holds the task next sees it and can complete with it. Do not redo it.`,
+  };
 }
 
 export async function failBoardTask(ctx: BoardCtx, args: z.infer<typeof boardFailArgs>) {
-  const { task, actor } = await holderOnly(ctx, args.task_id);
+  const { task, actor, guard } = await holderOnly(ctx, args.task_id);
   const patch = args.retry
     ? { status: 'open', failure_reason: args.reason, ...CLEAR_CLAIM }
-    : { status: 'failed', failure_reason: args.reason, completed_at: new Date().toISOString(), lease_expires_at: null };
-  const updated = await guardedUpdate(ctx, task.id, { status: 'claimed', claimed_by: actor }, patch);
-  if (!updated) throw new ServiceError('You no longer hold this task.', 'CONFLICT');
+    : { status: 'failed', failure_reason: args.reason, completed_at: new Date().toISOString(), lease_expires_at: null, ...CLEAR_HANDOVER };
+  const updated = await guardedUpdate(ctx, task.id, guard, patch);
+  if (!updated) throw new ServiceError(LOST, 'CONFLICT');
   await logEvent(ctx, task.id, 'failed', actor, args.retry ? `${args.reason} (back on the board)` : args.reason);
   return { task: present(updated) };
 }
 
 export async function releaseBoardTask(ctx: BoardCtx, args: z.infer<typeof boardReleaseArgs>) {
-  const { task, actor } = await holderOnly(ctx, args.task_id);
-  const updated = await guardedUpdate(ctx, task.id, { status: 'claimed', claimed_by: actor }, { status: 'open', ...CLEAR_CLAIM });
-  if (!updated) throw new ServiceError('You no longer hold this task.', 'CONFLICT');
+  const { task, actor, guard } = await holderOnly(ctx, args.task_id);
+  const updated = await guardedUpdate(ctx, task.id, guard, {
+    status: 'open',
+    ...CLEAR_CLAIM,
+    ...(args.note ? { handoff_note: args.note } : {}),
+  });
+  if (!updated) throw new ServiceError(LOST, 'CONFLICT');
   await logEvent(ctx, task.id, 'released', actor, args.note);
   return { task: present(updated) };
+}
+
+export async function requestBoardHandover(ctx: BoardCtx, args: z.infer<typeof boardRequestHandoverArgs>) {
+  const now = new Date();
+  const actor = boardActor(ctx);
+  const task = await loadTask(ctx, args.task_id);
+  if (task.status !== 'claimed') {
+    throw new ServiceError(`Task is ${task.status}; nobody holds it.${task.status === 'open' ? ' Claim it directly with contextcontrol_board_claim_task.' : ''}`, 'CONFLICT');
+  }
+  if (leaseExpired(task, now)) throw new ServiceError('The lease has expired; claim it directly with contextcontrol_board_claim_task.', 'CONFLICT');
+  if (isHolder(ctx, task, actor)) throw new ServiceError('You already hold this task.', 'CONFLICT');
+  if (task.assigned_team_id && task.assigned_team_id !== ctx.teamId) {
+    throw new ServiceError('Task is assigned to another team.', 'FORBIDDEN');
+  }
+  if (task.handover_requested_by && task.handover_requested_by !== actor) {
+    throw new ServiceError(`${task.handover_requested_by} already asked for this task. Pick other work.`, 'CONFLICT');
+  }
+  const updated = await guardedUpdate(
+    ctx,
+    task.id,
+    { status: 'claimed', claimed_by: task.claimed_by },
+    { handover_requested_by: actor, handover_requested_by_team_id: ctx.teamId ?? null, handover_requested_at: now.toISOString() }
+  );
+  if (!updated) throw new ServiceError('The task changed a moment ago. Fetch it again.', 'CONFLICT');
+  await logEvent(ctx, task.id, 'handover_requested', actor, args.reason);
+  return {
+    task: present(updated, now, actor),
+    message: `Requested. ${task.claimed_by} sees the request on its next board call; otherwise the task becomes claimable at ${task.lease_expires_at}.`,
+  };
+}
+
+export async function handoverBoardTask(ctx: BoardCtx, args: z.infer<typeof boardHandoverArgs>) {
+  const { task, actor, guard } = await holderOnly(ctx, args.task_id);
+  if (!task.handover_requested_by) {
+    throw new ServiceError('Nobody asked for this task. Use contextcontrol_board_release_task with a note to give it back to the board.', 'CONFLICT');
+  }
+  const now = new Date();
+  const updated = await guardedUpdate(ctx, task.id, guard, {
+    claimed_by: task.handover_requested_by,
+    claimed_by_team_id: task.handover_requested_by_team_id ?? null,
+    claim_run_id: null, // parked for the requester: any of its runs resumes it with claim_task
+    claimed_at: now.toISOString(),
+    lease_expires_at: minutesFromNow(DEFAULT_LEASE_MINUTES, now),
+    handoff_note: args.summary,
+    ...CLEAR_HANDOVER,
+  });
+  if (!updated) throw new ServiceError(LOST, 'CONFLICT');
+  await logEvent(ctx, task.id, 'handed_over', actor, `to ${task.handover_requested_by}: ${args.summary}`);
+  return { task: present(updated, now, actor) };
+}
+
+/** Called when an agent run ends: its claims stay with the team but are parked for the next run. */
+export async function parkRunClaims(tenantId: string, runId: string): Promise<void> {
+  await getSupabaseAdminClient()
+    .from('board_tasks')
+    .update({ claim_run_id: null, updated_at: new Date().toISOString() })
+    .eq('tenant_id', tenantId)
+    .eq('status', 'claimed')
+    .eq('claim_run_id', runId);
+}
+
+/** Free check (no LLM): does this team have anything to do on the board? */
+export async function teamHasBoardWork(tenantId: string, teamId: string): Promise<boolean> {
+  const ctx: BoardCtx = { tenantId, userId: 'system', authMode: 'session', teamId };
+  const { total_count } = await listBoardTasks(ctx, { status: 'claimable', limit: 1 });
+  if (total_count > 0) return true;
+  // Tasks the team holds where someone is waiting for a handover.
+  const { data } = await getSupabaseAdminClient()
+    .from('board_tasks')
+    .select('handover_requested_by')
+    .eq('tenant_id', tenantId)
+    .eq('status', 'claimed')
+    .eq('claimed_by', `team:${teamId}`);
+  return (data || []).some((t: Row) => !!t.handover_requested_by);
 }
 
 // ---------------------------------------------------------------------------
@@ -304,7 +496,7 @@ export async function manageBoardTask(ctx: BoardCtx, taskId: string, change: Boa
       break;
     case 'cancel':
       if (task.status === 'done') throw new ServiceError('A completed task cannot be cancelled.', 'CONFLICT');
-      patch = { status: 'cancelled', completed_at: new Date().toISOString(), lease_expires_at: null };
+      patch = { status: 'cancelled', completed_at: new Date().toISOString(), lease_expires_at: null, claim_run_id: null, ...CLEAR_HANDOVER };
       event = 'cancelled';
       note = change.note;
       break;

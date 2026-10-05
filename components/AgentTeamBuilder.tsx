@@ -46,7 +46,7 @@ interface TeamSummary {
   provider: Provider;
   worker_count: number;
   heartbeat_enabled: boolean;
-  heartbeat_last_status: 'ok' | 'error' | 'skipped' | null;
+  heartbeat_last_status: 'ok' | 'error' | 'skipped' | 'idle' | null;
 }
 
 interface TeamRecord {
@@ -54,7 +54,7 @@ interface TeamRecord {
   heartbeat_session_id: string | null;
   heartbeat_next_run_at: string | null;
   heartbeat_last_run_at: string | null;
-  heartbeat_last_status: 'ok' | 'error' | 'skipped' | null;
+  heartbeat_last_status: 'ok' | 'error' | 'skipped' | 'idle' | null;
   heartbeat_last_error: string | null;
   heartbeat_runs_day: string | null;
   heartbeat_runs_today: number;
@@ -124,7 +124,7 @@ function emptySpec(provider: Provider): TeamSpec {
     routing_strategy: 'supervisor_router',
     supervisor: { instructions: '', context_profile_id: null, mcp_profile_id: null, tools: [] },
     workers: [],
-    heartbeat: { enabled: false, goal: '', schedule: null, max_runs_per_day: 48 },
+    heartbeat: { enabled: false, goal: '', schedule: null, max_runs_per_day: 48, wake_when: 'always' },
   };
 }
 
@@ -687,10 +687,21 @@ export const AgentTeamBuilder: React.FC<AgentTeamBuilderProps> = ({ onLaunchThre
                       <textarea className={`${inputCls} min-h-[80px]`} value={draft.heartbeat.goal ?? ''} onChange={(e) => updateHeartbeat({ goal: e.target.value })} />
                       <div className="flex flex-wrap gap-2 mt-2">
                         {GOAL_SUGGESTIONS.map((g) => (
-                          <button key={g} onClick={() => updateHeartbeat({ goal: g })} className="text-[11px] px-2 py-1 rounded-md border border-zinc-800 text-zinc-400 hover:text-white">{g}</button>
+                          <button key={g} onClick={() => updateHeartbeat(g.includes('board') ? { goal: g, wake_when: 'board_has_work' } : { goal: g })} className="text-[11px] px-2 py-1 rounded-md border border-zinc-800 text-zinc-400 hover:text-white">{g}</button>
                         ))}
                       </div>
                       {issueFor('heartbeat.goal') && <p className="text-xs text-rose-400 mt-1">{issueFor('heartbeat.goal')}</p>}
+                    </div>
+
+                    <div>
+                      <label className={labelCls}>When it wakes up</label>
+                      <select className={inputCls} value={draft.heartbeat.wake_when} onChange={(e) => updateHeartbeat({ wake_when: e.target.value as 'always' | 'board_has_work' })}>
+                        <option value="always">Always run the goal</option>
+                        <option value="board_has_work">Only when the board has work for this team (free check, no tokens when idle)</option>
+                      </select>
+                      {draft.heartbeat.wake_when === 'board_has_work' && (
+                        <p className="text-xs text-zinc-500 mt-1">Idle wake-ups are recorded as “idle”, cost nothing and don’t count toward the daily cap.</p>
+                      )}
                     </div>
 
                     <div className="space-y-3">
@@ -820,7 +831,7 @@ export const AgentTeamBuilder: React.FC<AgentTeamBuilderProps> = ({ onLaunchThre
                           <div>Next run: <span className="text-zinc-200">{formatWhen(record.heartbeat_next_run_at, schedule.timezone)}</span></div>
                           <div>Last run: <span className="text-zinc-200">{formatWhen(record.heartbeat_last_run_at, schedule.timezone)}</span>
                             {record.heartbeat_last_status && (
-                              <span className={`ml-1.5 ${record.heartbeat_last_status === 'ok' ? 'text-emerald-400' : record.heartbeat_last_status === 'error' ? 'text-rose-400' : 'text-amber-400'}`}>({record.heartbeat_last_status})</span>
+                              <span className={`ml-1.5 ${record.heartbeat_last_status === 'ok' ? 'text-emerald-400' : record.heartbeat_last_status === 'error' ? 'text-rose-400' : record.heartbeat_last_status === 'idle' ? 'text-zinc-400' : 'text-amber-400'}`}>({record.heartbeat_last_status})</span>
                             )}
                           </div>
                           <div>Runs today: <span className="text-zinc-200">{record.heartbeat_runs_today}/{draft.heartbeat.max_runs_per_day}</span></div>

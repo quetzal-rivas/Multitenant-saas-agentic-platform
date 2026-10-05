@@ -4,6 +4,7 @@ import { localParts, nextRun, type HeartbeatSchedule } from '@/lib/agent/heartbe
 import { runSessionTurn, type RunnerDeps } from '@/lib/agent/session-runner';
 import { ensureHeartbeatSession, getTeam, type AgentTeam } from './teams';
 import { ServiceError } from './errors';
+import { teamHasBoardWork } from './board';
 
 /** Stop starting new runs after this long so the tick request returns in time. */
 const TICK_BUDGET_MS = 15_000;
@@ -11,7 +12,7 @@ const MAX_TEAMS_PER_TICK = 3;
 
 export interface HeartbeatOutcome {
   team_id: string;
-  status: 'ok' | 'error' | 'skipped';
+  status: 'ok' | 'error' | 'skipped' | 'idle';
   detail?: string;
   checkpoint_id?: string;
   next_run_at: string | null;
@@ -48,6 +49,18 @@ export async function runTeamHeartbeat(
       ...(opts.manual ? {} : { heartbeat_next_run_at: next }),
     }).eq('id', team.id).eq('tenant_id', ctx.tenantId);
     return { team_id: team.id, status: 'skipped', detail, next_run_at: next };
+  }
+
+  // Free pre-check: no LLM call when the board has nothing for this team. Idle
+  // wake-ups do not count toward the daily cap. Manual runs always run.
+  if (!opts.manual && team.heartbeat_wake_when === 'board_has_work' && !(await teamHasBoardWork(ctx.tenantId, team.id))) {
+    const detail = 'Nothing on the board for this team; no LLM call made.';
+    await db.from('agent_teams').update({
+      heartbeat_last_run_at: now.toISOString(),
+      heartbeat_last_status: 'idle',
+      heartbeat_last_error: null,
+    }).eq('id', team.id).eq('tenant_id', ctx.tenantId);
+    return { team_id: team.id, status: 'idle', detail, next_run_at: next };
   }
 
   const runCtx = systemCtx(ctx.tenantId);

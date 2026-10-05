@@ -10,6 +10,7 @@ import { contextProfileInstructions, getContextProfile } from '@/lib/services/co
 import { getProfile } from '@/lib/services/profiles';
 import { getTeam, type AgentTeam, type TeamWorker } from '@/lib/services/teams';
 import { ServiceError, isServiceError } from '@/lib/services/errors';
+import { parkRunClaims } from '@/lib/services/board';
 import { emitRunEvent } from './supervisor-graph';
 import { generateLLMResponse, type LLMMessage, type LLMToolDefinition } from './providers/llm-adapter';
 
@@ -291,9 +292,8 @@ export async function runSessionTurn(
 
   const previous = await latestCheckpoint(ctx, session.id);
   const state: LLMMessage[] = [...(previous?.state || []), { role: 'user', content: message }];
-  const toolCtx = { tenantId: ctx.tenantId, userId: ctx.userId, authMode: ctx.authMode, apiKeyId: ctx.apiKeyId, teamId: team?.id ?? null };
-
   const runId = `run_${crypto.randomUUID()}`;
+  const toolCtx = { tenantId: ctx.tenantId, userId: ctx.userId, authMode: ctx.authMode, apiKeyId: ctx.apiKeyId, teamId: team?.id ?? null, runId };
   const emit = (event: Parameters<typeof emitRunEvent>[0]) => emitRunEvent(event).catch(() => undefined);
   await emit({
     run_id: runId,
@@ -398,6 +398,9 @@ export async function runSessionTurn(
       payload: { error: err instanceof Error ? err.message : String(err) },
     });
     throw err;
+  } finally {
+    // Board claims outlive the run; park them so the team's next run can resume them.
+    await parkRunClaims(ctx.tenantId, runId).catch(() => undefined);
   }
 
   const stepIndex = (previous?.stepIndex || 0) + 1;

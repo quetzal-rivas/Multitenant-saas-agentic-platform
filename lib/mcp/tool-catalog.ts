@@ -123,7 +123,18 @@ export const boardPostArgs = z.object({
   due_at: z.string().datetime({ offset: true }).optional(),
 }).strict();
 export const boardClaimArgs = z.object({ task_id: boardTaskId, lease_minutes: leaseMinutes }).strict();
-export const boardRenewArgs = z.object({ task_id: boardTaskId, lease_minutes: leaseMinutes }).strict();
+const progressNote = z.string().trim().min(1).max(2000)
+  .describe("Short progress note: what is done, what is left, where results are. Whoever takes the task next sees the latest note instead of starting over.");
+export const boardRenewArgs = z.object({ task_id: boardTaskId, lease_minutes: leaseMinutes, note: progressNote.optional() }).strict();
+export const boardNoteArgs = z.object({ task_id: boardTaskId, note: progressNote }).strict();
+export const boardRequestHandoverArgs = z.object({
+  task_id: boardTaskId,
+  reason: z.string().trim().max(500).optional().describe('Why you want to take over (shown to the current holder).'),
+}).strict();
+export const boardHandoverArgs = z.object({
+  task_id: boardTaskId,
+  summary: progressNote.describe('Hand-off summary for the requester: what is done, what is left, where partial results are.'),
+}).strict();
 export const boardCompleteArgs = z.object({
   task_id: boardTaskId,
   result: z.string().trim().min(1).max(20_000).describe('What you did and the outcome, for the poster to read.'),
@@ -182,6 +193,9 @@ const boardTaskRecord = z.looseObject({
   claimed_by: z.string().nullable().optional(),
   lease_expires_at: z.string().nullable().optional(),
   assigned_team_id: z.string().nullable().optional(),
+  handoff_note: z.string().nullable().optional().describe('Latest progress or hand-off note from a previous holder. Continue from it.'),
+  late_result: z.string().nullable().optional().describe('Result a previous holder submitted after losing the task. Review it before redoing the work.'),
+  handover_requested_by: z.string().nullable().optional().describe('Someone asked to take this task over. If you hold it, hand it over with contextcontrol_board_handover.'),
   created_at: z.string(),
 });
 const boardTaskOutput = z.object({ task: boardTaskRecord });
@@ -343,7 +357,7 @@ export const PLATFORM_TOOL_DEFINITIONS = [
     name: 'contextcontrol_board_claim_task',
     title: 'Claim board task',
     description:
-      'Claim a claimable task for a limited time (lease). Only you can complete, fail, renew or release it while the lease lasts; if it expires the task returns to the board. Returns { task }.',
+      "Claim a claimable task for a limited time (lease). Only this run can complete, fail, renew or release it while the lease lasts; if it expires the task returns to the board. Also resumes a task your team holds from an earlier run. Read task.handoff_note and task.late_result first: continue from them instead of starting over. Returns { task }.",
     requiredScope: 'mcp:board:write',
     sideEffect: 'write',
     annotations: write(false, false),
@@ -353,7 +367,7 @@ export const PLATFORM_TOOL_DEFINITIONS = [
   {
     name: 'contextcontrol_board_renew_lease',
     title: 'Renew lease',
-    description: 'Extend your lease on a task you claimed, when the work needs more time. Returns { task }.',
+    description: 'Extend your lease on a task you hold, when the work needs more time. Pass note to save progress. If task.handover_requested_by is set afterwards, someone is waiting: hand over with contextcontrol_board_handover. Returns { task }.',
     requiredScope: 'mcp:board:write',
     sideEffect: 'write',
     annotations: write(false, true),
@@ -363,7 +377,7 @@ export const PLATFORM_TOOL_DEFINITIONS = [
   {
     name: 'contextcontrol_board_complete_task',
     title: 'Complete board task',
-    description: 'Mark a task you claimed as done and record the result. Returns { task }.',
+    description: 'Mark a task you hold as done and record the result. If you lost the task (lease expired and someone else took it), your result is kept as a late result for the new holder instead of being discarded. Returns { task, late }.',
     requiredScope: 'mcp:board:write',
     sideEffect: 'write',
     annotations: write(false, false),
@@ -388,6 +402,36 @@ export const PLATFORM_TOOL_DEFINITIONS = [
     sideEffect: 'write',
     annotations: write(false, true),
     schema: boardReleaseArgs,
+    outputSchema: boardTaskOutput,
+  },
+  {
+    name: 'contextcontrol_board_add_note',
+    title: 'Add progress note',
+    description: 'Save a short progress note on a task you hold, so the next holder can continue instead of starting over. Returns { task }.',
+    requiredScope: 'mcp:board:write',
+    sideEffect: 'write',
+    annotations: write(false, false),
+    schema: boardNoteArgs,
+    outputSchema: boardTaskOutput,
+  },
+  {
+    name: 'contextcontrol_board_request_handover',
+    title: 'Request handover',
+    description: 'Ask the current holder of a claimed task to hand it over to you. The holder sees the request and hands over with a summary; if they never answer, the task becomes claimable when the lease expires. Returns { task }.',
+    requiredScope: 'mcp:board:write',
+    sideEffect: 'write',
+    annotations: write(false, true),
+    schema: boardRequestHandoverArgs,
+    outputSchema: boardTaskOutput,
+  },
+  {
+    name: 'contextcontrol_board_handover',
+    title: 'Hand over task',
+    description: 'Give a task you hold to whoever requested a handover, with a summary of what is done and what is left. They continue from your summary. Returns { task }.',
+    requiredScope: 'mcp:board:write',
+    sideEffect: 'write',
+    annotations: write(false, false),
+    schema: boardHandoverArgs,
     outputSchema: boardTaskOutput,
   },
 ] as const satisfies readonly PlatformToolDefinition[];

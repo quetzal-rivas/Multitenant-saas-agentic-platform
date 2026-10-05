@@ -92,8 +92,11 @@ describe('Supervisor Board (fake PostgREST)', () => {
     const taken = await claimBoardTask(asTeam(teamB), { task_id: task.id });
     assert.equal(taken.task.claimed_by, `team:${teamB}`);
     assert.equal(taken.task.attempts, 2);
-    // The previous holder can no longer finish it.
-    await assert.rejects(completeBoardTask(asTeam(teamA), { task_id: task.id, result: 'late' }), /Only the current holder/);
+    // The previous holder can no longer finish it; its result is kept as a late result instead.
+    const late = await completeBoardTask(asTeam(teamA), { task_id: task.id, result: 'late' });
+    assert.equal(late.late, true);
+    assert.equal(late.task.status, 'claimed');
+    assert.equal(late.task.claimed_by, `team:${teamB}`);
     const { events } = await getBoardTask(user, { task_id: task.id });
     assert.ok(events.some((e: any) => e.event === 'lease_expired' && e.actor === `team:${teamA}`));
   });

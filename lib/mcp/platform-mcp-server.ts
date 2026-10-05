@@ -24,8 +24,8 @@ export const MCP_SERVER_INFO = { name: 'context-control-mcp-server', title: 'Con
 /** Upper bound for the text part of a tool result; structuredContent is not truncated. */
 export const CHARACTER_LIMIT = 25_000;
 
-/** `teamId` is set for team runs so board claims are attributed to the team. */
-type ToolCtx = Pick<AuthContext, 'tenantId' | 'userId' | 'authMode' | 'apiKeyId'> & { teamId?: string | null };
+/** `teamId`/`runId` are set for agent runs so board claims belong to the team and the run. */
+type ToolCtx = Pick<AuthContext, 'tenantId' | 'userId' | 'authMode' | 'apiKeyId'> & { teamId?: string | null; runId?: string | null };
 type Row = Record<string, any>;
 
 const TOOL_HANDLERS: Record<PlatformToolName, (ctx: ToolCtx, args: any) => Promise<Record<string, unknown>>> = {
@@ -49,6 +49,9 @@ const TOOL_HANDLERS: Record<PlatformToolName, (ctx: ToolCtx, args: any) => Promi
   contextcontrol_board_complete_task: board.completeBoardTask,
   contextcontrol_board_fail_task: board.failBoardTask,
   contextcontrol_board_release_task: board.releaseBoardTask,
+  contextcontrol_board_add_note: board.addBoardNote,
+  contextcontrol_board_request_handover: board.requestBoardHandover,
+  contextcontrol_board_handover: board.handoverBoardTask,
 };
 
 /**
@@ -82,7 +85,12 @@ function keyLine(k: Row) {
 function boardLine(t: Row) {
   const holder = t.status === 'claimed' ? ` · held by ${t.claimed_by}${t.lease_expired ? ' (lease expired, claimable)' : ` until ${when(t.lease_expires_at)}`}` : '';
   const labels = t.labels?.length ? ` · ${t.labels.join(', ')}` : '';
-  return `- [${t.priority}] **${t.title}** (\`${t.id}\`) · ${t.status}${holder}${labels}`;
+  const extra = [
+    t.handover_requested_by ? `  - Handover requested by ${t.handover_requested_by}` : '',
+    t.handoff_note ? `  - Hand-off note: ${t.handoff_note}` : '',
+    t.late_result ? `  - Late result from ${t.late_result_by}: ${t.late_result}` : '',
+  ].filter(Boolean);
+  return `- [${t.priority}] **${t.title}** (\`${t.id}\`) · ${t.status}${holder}${labels}${extra.length ? `\n${extra.join('\n')}` : ''}`;
 }
 function pageFooter(r: Row) {
   return r.has_more
@@ -102,7 +110,7 @@ export function renderMarkdown(toolName: PlatformToolName, result: Row): string 
       return result.keys.length ? `## API keys\n${result.keys.map(keyLine).join('\n')}` : 'No active API keys.';
     default:
       if (result.profile) return profileLine(result.profile);
-      if (result.task?.claimable !== undefined) return boardLine(result.task);
+      if (result.task?.claimable !== undefined) return `${result.message ? `${result.message}\n` : ''}${boardLine(result.task)}`;
       if (result.task) return taskLine(result.task);
       return JSON.stringify(result, null, 2);
   }

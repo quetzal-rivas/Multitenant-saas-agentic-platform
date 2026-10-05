@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireAuth, requireRole } from '@/lib/auth/require-auth';
 import { errorResponse } from '@/lib/http/route-errors';
 import { boardListArgs, boardPostArgs } from '@/lib/mcp/tool-catalog';
-import { listBoardTasks, postBoardTask } from '@/lib/services/board';
+import { boardActor, listBoardTasks, postBoardTask } from '@/lib/services/board';
 
 /** Board for the signed-in user's organization. Query: status, priority, label, limit, offset. */
 export async function GET(req: NextRequest) {
@@ -18,7 +18,8 @@ export async function GET(req: NextRequest) {
       limit: q.get('limit') ? Number(q.get('limit')) : 100,
       offset: q.get('offset') ? Number(q.get('offset')) : undefined,
     });
-    return NextResponse.json(await listBoardTasks(auth, args));
+    // `viewer` lets the UI show the signed-in user's own actions as "you".
+    return NextResponse.json({ ...(await listBoardTasks(auth, args)), viewer: boardActor(auth) });
   } catch (err) {
     return errorResponse(err, 'board:list');
   }

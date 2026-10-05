@@ -8,6 +8,8 @@ import { PLATFORM_TOOL_DEFINITIONS, canonicalToolName } from '@/lib/mcp/tool-cat
  * exactly what the server will accept. A team with no workers is a single agent.
  */
 
+export const HEARTBEAT_WAKE_WHEN = ['always', 'board_has_work'] as const;
+
 export const TEAM_LLM_PROVIDERS = ['anthropic', 'openai', 'gemini'] as const;
 export const MAX_TEAM_WORKERS = 8;
 const toolNames = PLATFORM_TOOL_DEFINITIONS.map((t) => t.name) as [string, ...string[]];
@@ -50,9 +52,11 @@ export const teamSpecSchema = z
         goal: z.string().trim().max(4000).nullable().optional(),
         schedule: heartbeatScheduleSchema.nullable().optional(),
         max_runs_per_day: z.number().int().min(1).max(288).default(48),
+        wake_when: z.enum(HEARTBEAT_WAKE_WHEN).default('always')
+          .describe("'board_has_work' skips the run (no LLM call) when the board has nothing for this team."),
       })
       .strict()
-      .default({ enabled: false, max_runs_per_day: 48 }),
+      .default({ enabled: false, max_runs_per_day: 48, wake_when: 'always' }),
   })
   .strict()
   .superRefine((spec, ctx) => {

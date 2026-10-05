@@ -12,7 +12,7 @@ import { ServiceError } from './errors';
 type Ctx = Pick<AuthContext, 'tenantId' | 'userId' | 'authMode' | 'apiKeyId'>;
 
 const TEAM_COLUMNS =
-  'id, name, description, provider, model, routing_strategy, supervisor_instructions, supervisor_context_profile_id, supervisor_mcp_profile_id, supervisor_tools, heartbeat_enabled, heartbeat_goal, heartbeat_schedule, heartbeat_max_runs_per_day, heartbeat_session_id, heartbeat_next_run_at, heartbeat_last_run_at, heartbeat_last_status, heartbeat_last_error, heartbeat_runs_day, heartbeat_runs_today, created_at, updated_at';
+  'id, name, description, provider, model, routing_strategy, supervisor_instructions, supervisor_context_profile_id, supervisor_mcp_profile_id, supervisor_tools, heartbeat_enabled, heartbeat_goal, heartbeat_schedule, heartbeat_max_runs_per_day, heartbeat_wake_when, heartbeat_session_id, heartbeat_next_run_at, heartbeat_last_run_at, heartbeat_last_status, heartbeat_last_error, heartbeat_runs_day, heartbeat_runs_today, created_at, updated_at';
 const WORKER_COLUMNS = 'id, name, slug, role, instructions, context_profile_id, mcp_profile_id, tools, model, position';
 
 export interface TeamWorker {
@@ -43,10 +43,11 @@ export interface AgentTeam {
   heartbeat_goal: string | null;
   heartbeat_schedule: HeartbeatSchedule | null;
   heartbeat_max_runs_per_day: number;
+  heartbeat_wake_when: 'always' | 'board_has_work';
   heartbeat_session_id: string | null;
   heartbeat_next_run_at: string | null;
   heartbeat_last_run_at: string | null;
-  heartbeat_last_status: 'ok' | 'error' | 'skipped' | null;
+  heartbeat_last_status: 'ok' | 'error' | 'skipped' | 'idle' | null;
   heartbeat_last_error: string | null;
   heartbeat_runs_day: string | null;
   heartbeat_runs_today: number;
@@ -82,6 +83,7 @@ export function toTeamSpec(team: AgentTeam): TeamSpec {
       goal: team.heartbeat_goal,
       schedule: team.heartbeat_schedule,
       max_runs_per_day: team.heartbeat_max_runs_per_day,
+      wake_when: team.heartbeat_wake_when ?? 'always',
     },
   };
 }
@@ -120,6 +122,7 @@ function teamRow(spec: TeamSpec, existing?: AgentTeam | null) {
     heartbeat_goal: spec.heartbeat.goal ?? null,
     heartbeat_schedule: spec.heartbeat.schedule ?? null,
     heartbeat_max_runs_per_day: spec.heartbeat.max_runs_per_day,
+    heartbeat_wake_when: spec.heartbeat.wake_when,
     // Only re-plan the next run when the schedule itself changed.
     ...(scheduleChanged
       ? { heartbeat_next_run_at: schedule ? nextRun(schedule, new Date()).toISOString() : null }

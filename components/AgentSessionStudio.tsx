@@ -32,6 +32,8 @@ type Provider = 'anthropic' | 'openai' | 'gemini';
 interface AgentSession {
   id: string;
   name: string;
+  agent_type?: 'single' | 'team';
+  team_id?: string | null;
   provider: Provider;
   model: string;
   mcp_profile_id: string | null;
@@ -126,6 +128,8 @@ function relativeTime(iso: string): string {
 // ---------------------------------------------------------------------------
 
 interface InstanceFormValues {
+  /** When set, the instance runs this team (configured in Team Builder). */
+  team_id: string;
   name: string;
   provider: Provider;
   model: string;
@@ -140,9 +144,10 @@ const InstanceModal: React.FC<{
   providers: ProviderInfo[];
   mcpProfiles: NamedOption[];
   contextProfiles: NamedOption[];
+  teams: NamedOption[];
   onCancel: () => void;
   onSubmit: (values: InstanceFormValues) => Promise<void>;
-}> = ({ mode, initial, providers, mcpProfiles, contextProfiles, onCancel, onSubmit }) => {
+}> = ({ mode, initial, providers, mcpProfiles, contextProfiles, teams, onCancel, onSubmit }) => {
   const [values, setValues] = useState<InstanceFormValues>(initial);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -196,6 +201,31 @@ const InstanceModal: React.FC<{
                 className="w-full bg-[#090b0f] border border-zinc-700 rounded-lg px-3 py-2 font-mono text-white focus:outline-none focus:border-emerald-500"
               />
             </label>
+
+            {mode === 'create' && teams.length > 0 && (
+              <label className="block space-y-1">
+                <span className="font-mono text-zinc-300">Run a team (optional)</span>
+                <select
+                  value={values.team_id}
+                  onChange={(e) => set('team_id', e.target.value)}
+                  className="w-full bg-[#090b0f] border border-zinc-700 rounded-lg px-3 py-2 font-mono text-white"
+                >
+                  <option value="">No: configure a single agent here</option>
+                  {teams.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+
+            {values.team_id ? (
+              <p className="text-[11px] text-zinc-400">
+                This instance runs the team as configured in Team Builder: its LLM, supervisor, workers and tools. Edit the team there.
+              </p>
+            ) : (
+              <>
 
             <div className="grid grid-cols-2 gap-3">
               <label className="block space-y-1">
@@ -298,6 +328,9 @@ const InstanceModal: React.FC<{
               )}
             </div>
 
+              </>
+            )}
+
             {error && <p className="text-rose-400 font-mono">{error}</p>}
           </div>
         )}
@@ -309,7 +342,7 @@ const InstanceModal: React.FC<{
           {!noProviders && (
             <button
               onClick={submit}
-              disabled={saving || !values.name.trim() || !values.model.trim()}
+              disabled={saving || !values.name.trim() || (!values.team_id && !values.model.trim())}
               className="px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold text-xs disabled:opacity-50"
             >
               {saving ? 'Saving…' : mode === 'create' ? 'Create instance' : 'Save changes'}
@@ -333,6 +366,7 @@ export const AgentSessionStudio: React.FC<AgentSessionStudioProps> = ({ initialT
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [mcpProfiles, setMcpProfiles] = useState<NamedOption[]>([]);
   const [contextProfiles, setContextProfiles] = useState<NamedOption[]>([]);
+  const [teams, setTeams] = useState<NamedOption[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -373,6 +407,7 @@ export const AgentSessionStudio: React.FC<AgentSessionStudioProps> = ({ initialT
           api<{ providers: ProviderInfo[] }>('/api/v1/llm-providers'),
           api<{ profiles: NamedOption[] }>('/api/mcp/profiles').catch(() => ({ profiles: [] })),
           api<{ profiles: NamedOption[] }>('/api/v1/context-profiles').catch(() => ({ profiles: [] })),
+          api<{ teams: NamedOption[] }>('/api/v1/agent-teams').then((r) => setTeams(r.teams)).catch(() => undefined),
         ]);
         setProviders(prov.providers);
         setMcpProfiles(mcp.profiles);
@@ -444,6 +479,7 @@ export const AgentSessionStudio: React.FC<AgentSessionStudioProps> = ({ initialT
     const firstConfigured = providers.find((p) => p.configured) || providers[0];
     return s
       ? {
+          team_id: s.team_id || '',
           name: s.name,
           provider: s.provider,
           model: s.model,
@@ -452,6 +488,7 @@ export const AgentSessionStudio: React.FC<AgentSessionStudioProps> = ({ initialT
           allowed_tools: s.allowed_tools,
         }
       : {
+          team_id: '',
           name: '',
           provider: firstConfigured?.id || 'anthropic',
           model: firstConfigured?.defaultModel || '',
@@ -467,7 +504,13 @@ export const AgentSessionStudio: React.FC<AgentSessionStudioProps> = ({ initialT
       context_profile_id: values.context_profile_id || null,
       allowed_tools: values.allowed_tools,
     };
-    if (modal === 'create') {
+    if (modal === 'create' && values.team_id) {
+      const { session } = await api<{ session: AgentSession }>(`/api/v1/agent-teams/${values.team_id}/sessions`, {
+        method: 'POST',
+        body: JSON.stringify({ name: values.name.trim() }),
+      });
+      await loadSessions(session.id);
+    } else if (modal === 'create') {
       const { session } = await api<{ session: AgentSession }>('/api/v1/agent-sessions', {
         method: 'POST',
         body: JSON.stringify({ name: values.name.trim(), provider: values.provider, model: values.model.trim(), ...attachments }),
@@ -476,7 +519,7 @@ export const AgentSessionStudio: React.FC<AgentSessionStudioProps> = ({ initialT
     } else if (active) {
       await api(`/api/v1/agent-sessions/${active.id}`, {
         method: 'PATCH',
-        body: JSON.stringify({ name: values.name.trim(), ...attachments }),
+        body: JSON.stringify(active.team_id ? { name: values.name.trim() } : { name: values.name.trim(), ...attachments }),
       });
       await loadSessions(active.id);
     }
@@ -627,8 +670,12 @@ export const AgentSessionStudio: React.FC<AgentSessionStudioProps> = ({ initialT
             <div className="max-w-xl mx-auto text-center pt-10 space-y-4">
               <h2 className="text-lg font-bold text-white">{active.name}</h2>
               <p className="text-sm text-zinc-400">
-                Runs on {PROVIDER_LABELS[active.provider]} <code className="text-zinc-300">{active.model}</code> with{' '}
-                {active.allowed_tools.length} tool(s). Each turn is saved as a checkpoint you can inspect or fork.
+                {active.team_id ? (
+                  <>Runs the team <span className="text-zinc-200">{teams.find((t) => t.id === active.team_id)?.name ?? '…'}</span>: a supervisor that can delegate to its workers. </>
+                ) : (
+                  <>Runs on {PROVIDER_LABELS[active.provider]} <code className="text-zinc-300">{active.model}</code> with {active.allowed_tools.length} tool(s). </>
+                )}
+                Each turn is saved as a checkpoint you can inspect or fork.
               </p>
               {samplePrompts.length > 0 && (
                 <div className="space-y-2 text-left">
@@ -796,8 +843,13 @@ export const AgentSessionStudio: React.FC<AgentSessionStudioProps> = ({ initialT
                 )}
               </section>
               <section className="space-y-1.5">
-                <h4 className="font-mono uppercase text-zinc-500 text-[10px] tracking-wider">Enabled tools</h4>
-                {active.allowed_tools.length === 0 && <p className="text-zinc-500">No tools: chat only.</p>}
+                <h4 className="font-mono uppercase text-zinc-500 text-[10px] tracking-wider">{active.team_id ? 'Team' : 'Enabled tools'}</h4>
+                {active.team_id && (
+                  <p className="text-zinc-300">
+                    {teams.find((t) => t.id === active.team_id)?.name ?? 'Team'}: supervisor, workers and tools are configured in Team Builder.
+                  </p>
+                )}
+                {!active.team_id && active.allowed_tools.length === 0 && <p className="text-zinc-500">No tools: chat only.</p>}
                 {active.allowed_tools.map((name) => {
                   const t = PLATFORM_TOOL_DEFINITIONS.find((x) => x.name === name);
                   return (
@@ -880,6 +932,7 @@ export const AgentSessionStudio: React.FC<AgentSessionStudioProps> = ({ initialT
           providers={providers}
           mcpProfiles={mcpProfiles}
           contextProfiles={contextProfiles}
+          teams={teams}
           onCancel={() => setModal(null)}
           onSubmit={submitInstance}
         />

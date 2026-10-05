@@ -1,1528 +1,906 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Users,
   Bot,
   Plus,
   Trash2,
   CheckCircle2,
-  Sparkles,
-  ShieldCheck,
-  Server,
-  Database,
-  ArrowRight,
-  RefreshCw,
-  Layers,
-  ChevronRight,
-  ExternalLink,
-  Code2,
-  Check,
-  Zap,
-  DollarSign,
-  Mail,
-  FileText,
   AlertTriangle,
+  Loader2,
+  Save,
   Play,
+  Clock,
   Copy,
-  Sliders,
-  Radio,
-  SlidersHorizontal,
-  BookmarkCheck,
-  Key,
+  Check,
+  Code2,
   Wrench,
-  Search,
-  CheckSquare,
-  Square,
-  Filter,
+  HeartPulse,
+  ArrowRight,
+  Download,
+  Upload,
 } from 'lucide-react';
-import { McpServerProfile } from '@/lib/demo/legacy_mocks/types';
-import { ContextProfile } from '@/lib/types';
-import { McpProfileManager } from '@/lib/demo/legacy_mocks/profile-manager';
-import { INITIAL_PROFILES } from '@/lib/demo';
-import { AuthenticatedMcpTool, PLATFORM_MCP_TOOLS_CATALOG } from '@/lib/demo/legacy_mocks/team-blueprint-manager';
+import { PLATFORM_TOOL_DEFINITIONS } from '@/lib/mcp/tool-catalog';
+import { MAX_TEAM_WORKERS, TEAM_LLM_PROVIDERS, teamSpecSchema, workerSlug, type TeamSpec } from '@/lib/agent/team-spec';
+import {
+  DEFAULT_HEARTBEAT_SCHEDULE,
+  MIN_HEARTBEAT_MINUTES,
+  describeSchedule,
+  heartbeatScheduleSchema,
+  previewRuns,
+  type HeartbeatSchedule,
+} from '@/lib/agent/heartbeat-schedule';
 
+// ---------------------------------------------------------------------------
+// Types and helpers
+// ---------------------------------------------------------------------------
 
-interface WorkerForm {
+type Provider = (typeof TEAM_LLM_PROVIDERS)[number];
+type Worker = TeamSpec['workers'][number];
+
+interface TeamSummary {
   id: string;
   name: string;
-  role: string;
-  mcpProfileId?: string;
-  contextProfileSlug?: string;
-  avatarIcon: string;
-  skills: string[]; // Assigned capability skill ids
+  description: string | null;
+  provider: Provider;
+  worker_count: number;
+  heartbeat_enabled: boolean;
+  heartbeat_last_status: 'ok' | 'error' | 'skipped' | null;
 }
 
-interface TeamProfile {
+interface TeamRecord {
   id: string;
-  tenantId: string;
+  heartbeat_session_id: string | null;
+  heartbeat_next_run_at: string | null;
+  heartbeat_last_run_at: string | null;
+  heartbeat_last_status: 'ok' | 'error' | 'skipped' | null;
+  heartbeat_last_error: string | null;
+  heartbeat_runs_day: string | null;
+  heartbeat_runs_today: number;
+}
+
+interface NamedOption {
+  id: string;
   name: string;
-  supervisorPrompt?: string;
-  supervisorSkills?: string[];
-  supervisorMcpProfileId?: string;
-  supervisorContextProfileSlug?: string;
-  routingStrategy: string;
-  workers: {
-    id: string;
-    name: string;
-    role: string;
-    skills?: string[];
-    mcpTools?: string[];
-    mcpProfileId?: string;
-    contextProfileSlug?: string;
-    avatarIcon: string;
-  }[];
-  createdAt: string;
 }
 
-interface ThreadInstance {
-  id: string;
-  tenantId: string;
-  profileId: string;
-  threadId: string;
-  title: string;
-  totalSteps: number;
-  lastActive: string;
-  createdAt: string;
+interface ProviderInfo {
+  id: Provider;
+  configured: boolean;
+  defaultModel: string;
 }
 
 interface AgentTeamBuilderProps {
-  tenantId?: string;
-  onLaunchThread?: (profileId: string, threadId: string) => void;
+  /** Opens an Agent Studio instance (team id, session id). */
+  onLaunchThread?: (teamId: string, sessionId: string) => void;
 }
 
-const PRESET_TEMPLATES = [
-  {
-    name: 'Front Desk & Voice Concierge Team',
-    supervisorMcpProfileId: 'mcp-profile-sales',
-    supervisorContextProfileSlug: 'sales-agent',
-    supervisorSkills: ['crm.search_contact', 'gmail.send_draft', 'slack.post_incident_alert'],
-    routingStrategy: 'supervisor_router',
-    workers: [
-      {
-        id: 'wkr_crm_preset',
-        name: 'CRM Specialist',
-        role: 'Lead Enrichment & CRM Operations',
-        mcpProfileId: 'mcp-profile-sales',
-        contextProfileSlug: 'sales-agent',
-        skills: ['crm.search_contact', 'crm.add_lead', 'crm.tag_contact', 'crm.update_deal_stage'],
-        avatarIcon: 'bot',
-      },
-      {
-        id: 'wkr_billing_preset',
-        name: 'Billing Clerk',
-        role: 'Invoicing & Stripe Audit',
-        mcpProfileId: 'mcp-profile-sales',
-        contextProfileSlug: 'customer-support',
-        skills: ['stripe.get_invoice', 'stripe.pay', 'stripe.refund_status'],
-        avatarIcon: 'dollar',
-      },
-    ],
-  },
-  {
-    name: 'Night Audit & SRE Operations Team',
-    supervisorMcpProfileId: 'mcp-profile-dev',
-    supervisorContextProfileSlug: 'code-reviewer',
-    supervisorSkills: ['slack.post_incident_alert', 'postgres.execute_read_query'],
-    routingStrategy: 'supervisor_router',
-    workers: [
-      {
-        id: 'wkr_db_preset',
-        name: 'Database Auditor',
-        role: 'PostgreSQL Consistency Inspector',
-        mcpProfileId: 'mcp-profile-dev',
-        contextProfileSlug: 'code-reviewer',
-        skills: ['postgres.describe_table', 'postgres.execute_read_query'],
-        avatarIcon: 'database',
-      },
-      {
-        id: 'wkr_pager_preset',
-        name: 'Incident Dispatcher',
-        role: 'Ops Alert & Escalations',
-        mcpProfileId: 'mcp-profile-dev',
-        contextProfileSlug: 'executive-briefing',
-        skills: ['slack.post_incident_alert', 'gmail.send_draft'],
-        avatarIcon: 'shield',
-      },
-    ],
-  },
-  {
-    name: 'Enterprise Outbound & Research Team',
-    supervisorMcpProfileId: 'mcp-profile-exec',
-    supervisorContextProfileSlug: 'executive-briefing',
-    supervisorSkills: ['gmail.send_draft', 'notion.search_pages'],
-    routingStrategy: 'supervisor_router',
-    workers: [
-      {
-        id: 'wkr_lead_preset',
-        name: 'Lead Research Specialist',
-        role: 'CRM Account Insights',
-        mcpProfileId: 'mcp-profile-sales',
-        contextProfileSlug: 'sales-agent',
-        skills: ['crm.search_contact', 'crm.add_lead', 'notion.search_pages'],
-        avatarIcon: 'bot',
-      },
-      {
-        id: 'wkr_mail_preset',
-        name: 'Communications Clerk',
-        role: 'Gmail Outreach & Follow-up',
-        mcpProfileId: 'mcp-profile-exec',
-        contextProfileSlug: 'customer-support',
-        skills: ['gmail.send_draft', 'slack.post_incident_alert'],
-        avatarIcon: 'mail',
-      },
-    ],
-  },
+const PROVIDER_LABELS: Record<Provider, string> = { anthropic: 'Anthropic', openai: 'OpenAI', gemini: 'Google Gemini' };
+const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const STEPS = [
+  { num: 1, label: 'Team & supervisor' },
+  { num: 2, label: 'Workers' },
+  { num: 3, label: 'Tools' },
+  { num: 4, label: 'Heartbeat' },
+  { num: 5, label: 'Review & JSON' },
+] as const;
+
+const GOAL_SUGGESTIONS = [
+  'Check scheduled tasks, cancel any that are overdue, and report what changed.',
+  'Review MCP profiles and flag any with a token budget above 100k.',
+  'Summarize what happened in the workspace since the last heartbeat.',
 ];
 
-export const AgentTeamBuilder: React.FC<AgentTeamBuilderProps> = ({
-  tenantId = 'tenant_enterprise_corp',
-  onLaunchThread,
-}) => {
-  const [activeStep, setActiveStep] = useState<number>(1);
-  const [existingTeams, setExistingTeams] = useState<TeamProfile[]>([]);
-  const [threadInstances, setThreadInstances] = useState<ThreadInstance[]>([]);
-  const [mcpProfilesList, setMcpProfilesList] = useState<McpServerProfile[]>(() =>
-    McpProfileManager.listProfiles()
-  );
-  const [contextProfilesList, setContextProfilesList] = useState<ContextProfile[]>(INITIAL_PROFILES);
-  const [skillsCatalog, setSkillsCatalog] = useState<AuthenticatedMcpTool[]>(PLATFORM_MCP_TOOLS_CATALOG);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [isPublishing, setIsPublishing] = useState<boolean>(false);
-  const [publishSuccess, setPublishSuccess] = useState<string | null>(null);
+const CRON_PRESETS = [
+  { label: 'Weekdays 09:00', expression: '0 9 * * 1-5' },
+  { label: 'Every hour', expression: '0 * * * *' },
+  { label: 'Mondays 08:00', expression: '0 8 * * 1' },
+  { label: 'Every 30 min, office hours', expression: '*/30 9-17 * * 1-5' },
+];
 
-  // Blueprint Form State (Profiles-Centric)
-  const [teamName, setTeamName] = useState<string>('Front Desk Automation Team');
-  const [supervisorMcpProfileId, setSupervisorMcpProfileId] = useState<string>('mcp-profile-sales');
-  const [supervisorContextProfileSlug, setSupervisorContextProfileSlug] = useState<string>('sales-agent');
-  const [supervisorSkills, setSupervisorSkills] = useState<string[]>([
-    'crm.search_contact',
-    'slack.post_incident_alert',
-  ]);
-  const [routingStrategy, setRoutingStrategy] = useState<string>('supervisor_router');
+function browserTimeZone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || DEFAULT_HEARTBEAT_SCHEDULE.timezone;
+  } catch {
+    return DEFAULT_HEARTBEAT_SCHEDULE.timezone;
+  }
+}
 
-  // Heartbeat Config State
-  const [heartbeatEnabled, setHeartbeatEnabled] = useState<boolean>(false);
-  const [heartbeatRateMinutes, setHeartbeatRateMinutes] = useState<number>(15);
-  const [heartbeatGoal, setHeartbeatGoal] = useState<string>('Monitor the supervisor board and claim new tasks.');
+function timeZones(): string[] {
+  try {
+    return (Intl as any).supportedValuesOf('timeZone') as string[];
+  } catch {
+    return ['UTC', 'America/Mexico_City', 'America/New_York', 'America/Los_Angeles', 'Europe/Madrid'];
+  }
+}
 
-  const [workers, setWorkers] = useState<WorkerForm[]>([
-    {
-      id: 'wkr_crm_01',
-      name: 'CRM Specialist',
-      role: 'Lead Enrichment & CRM Operations',
-      mcpProfileId: 'mcp-profile-sales',
-      contextProfileSlug: 'sales-agent',
-      skills: ['crm.search_contact', 'crm.add_lead', 'crm.tag_contact'],
-      avatarIcon: 'bot',
-    },
-    {
-      id: 'wkr_billing_01',
-      name: 'Billing Clerk',
-      role: 'Invoicing & Stripe Audit',
-      mcpProfileId: 'mcp-profile-sales',
-      contextProfileSlug: 'customer-support',
-      skills: ['stripe.get_invoice', 'stripe.pay', 'stripe.refund_status'],
-      avatarIcon: 'dollar',
-    },
-  ]);
-
-  // Target selected in Step 3: 'supervisor' or worker id
-  const [selectedTargetId, setSelectedTargetId] = useState<string>('supervisor');
-  const [skillSearchQuery, setSkillSearchQuery] = useState<string>('');
-  const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('all');
-  const [spawnedThreadId, setSpawnedThreadId] = useState<string | null>(null);
-  const [activeView, setActiveView] = useState<'builder' | 'instances'>('builder');
-  const [refreshTrigger, setRefreshTrigger] = useState<number>(0);
-
-  // Fetch initial profiles catalog, skills catalog, and existing team blueprints
-  useEffect(() => {
-    let ignore = false;
-
-    async function loadData() {
-      try {
-        // 1. Fetch available MCP profiles, Context profiles, and Skills
-        const catalogRes = await fetch('/api/v1/profiles/assigned-catalog');
-        if (catalogRes.ok) {
-          const catalogData = await catalogRes.json();
-          if (!ignore) {
-            if (catalogData.mcp_profiles && catalogData.mcp_profiles.length > 0) {
-              setMcpProfilesList(catalogData.mcp_profiles);
-            }
-            if (catalogData.context_profiles && catalogData.context_profiles.length > 0) {
-              setContextProfilesList(catalogData.context_profiles);
-            }
-            if (catalogData.skills_catalog && catalogData.skills_catalog.length > 0) {
-              setSkillsCatalog(catalogData.skills_catalog);
-            }
-          }
-        }
-
-        // 2. Fetch existing team blueprints and instances
-        const teamsRes = await fetch(`/api/v1/teams?tenant_id=${tenantId}`);
-        if (teamsRes.ok) {
-          const teamsData = await teamsRes.json();
-          if (!ignore) {
-            setExistingTeams(teamsData.teams || []);
-            setThreadInstances(teamsData.all_instances || []);
-          }
-        }
-      } catch (err) {
-        console.error('Failed to load profiles catalog or team blueprints:', err);
-      } finally {
-        if (!ignore) {
-          setIsLoading(false);
-        }
-      }
-    }
-
-    loadData();
-
-    return () => {
-      ignore = true;
-    };
-  }, [tenantId, refreshTrigger]);
-
-  // Add Worker
-  const handleAddWorker = () => {
-    const newWorkerId = `wkr_custom_${Date.now()}`;
-    const defaultMcp = mcpProfilesList[0]?.id || 'mcp-profile-sales';
-    const defaultCtx = contextProfilesList[0]?.slug || 'sales-agent';
-    const newWorker: WorkerForm = {
-      id: newWorkerId,
-      name: `Specialist Worker ${workers.length + 1}`,
-      role: 'Operational Specialist',
-      mcpProfileId: defaultMcp,
-      contextProfileSlug: defaultCtx,
-      skills: ['crm.search_contact'],
-      avatarIcon: 'bot',
-    };
-    setWorkers([...workers, newWorker]);
+function emptySpec(provider: Provider): TeamSpec {
+  return {
+    name: '',
+    description: '',
+    llm: { provider },
+    routing_strategy: 'supervisor_router',
+    supervisor: { instructions: '', context_profile_id: null, mcp_profile_id: null, tools: [] },
+    workers: [],
+    heartbeat: { enabled: false, goal: '', schedule: null, max_runs_per_day: 48 },
   };
+}
 
-  // Remove Worker
-  const handleRemoveWorker = (index: number) => {
-    if (workers.length <= 1) return;
-    const removedId = workers[index].id;
-    const updated = workers.filter((_, i) => i !== index);
-    setWorkers(updated);
-    if (selectedTargetId === removedId) {
-      setSelectedTargetId('supervisor');
-    }
-  };
-
-  // Update Worker Field
-  const handleUpdateWorker = (index: number, field: keyof WorkerForm, value: any) => {
-    const updated = [...workers];
-    updated[index] = { ...updated[index], [field]: value };
-    setWorkers(updated);
-  };
-
-  // Load Preset Blueprint
-  const handleLoadPreset = (preset: (typeof PRESET_TEMPLATES)[0]) => {
-    setTeamName(preset.name);
-    setSupervisorMcpProfileId(preset.supervisorMcpProfileId);
-    setSupervisorContextProfileSlug(preset.supervisorContextProfileSlug);
-    setSupervisorSkills(preset.supervisorSkills || []);
-    setRoutingStrategy(preset.routingStrategy);
-    setWorkers(
-      preset.workers.map((w) => ({
-        id: w.id,
-        name: w.name,
-        role: w.role,
-        mcpProfileId: w.mcpProfileId,
-        contextProfileSlug: w.contextProfileSlug,
-        skills: w.skills || [],
-        avatarIcon: w.avatarIcon || 'bot',
-      }))
-    );
-    setSelectedTargetId('supervisor');
-    setPublishSuccess(null);
-  };
-
-  // Toggle Skill for Supervisor
-  const handleToggleSupervisorSkill = (skillId: string) => {
-    setSupervisorSkills((prev) =>
-      prev.includes(skillId) ? prev.filter((id) => id !== skillId) : [...prev, skillId]
-    );
-  };
-
-  // Toggle Skill for a specific Worker
-  const handleToggleWorkerSkill = (workerId: string, skillId: string) => {
-    setWorkers((prev) =>
-      prev.map((w) => {
-        if (w.id !== workerId) return w;
-        const hasSkill = w.skills.includes(skillId);
-        return {
-          ...w,
-          skills: hasSkill ? w.skills.filter((id) => id !== skillId) : [...w.skills, skillId],
-        };
-      })
-    );
-  };
-
-  // Bulk select all / deselect all skills for current target
-  const handleBulkToggleCurrentTarget = (skillsToToggle: string[], selectAll: boolean) => {
-    if (selectedTargetId === 'supervisor') {
-      if (selectAll) {
-        setSupervisorSkills((prev) => Array.from(new Set([...prev, ...skillsToToggle])));
-      } else {
-        setSupervisorSkills((prev) => prev.filter((id) => !skillsToToggle.includes(id)));
-      }
-    } else {
-      setWorkers((prev) =>
-        prev.map((w) => {
-          if (w.id !== selectedTargetId) return w;
-          const nextSkills = selectAll
-            ? Array.from(new Set([...w.skills, ...skillsToToggle]))
-            : w.skills.filter((id) => !skillsToToggle.includes(id));
-          return { ...w, skills: nextSkills };
-        })
-      );
-    }
-  };
-
-  // Publish Team Blueprint to Supabase
-  const handlePublishBlueprint = async () => {
-    setIsPublishing(true);
-    setPublishSuccess(null);
-    try {
-      const payload = {
-        name: teamName,
-        supervisor_prompt: "You are the corporate front desk supervisor. Route caller identity verification and lead updates to the CRM Specialist first.",
-        routing_strategy: routingStrategy,
-        heartbeat_enabled: heartbeatEnabled,
-        heartbeat_rate_minutes: heartbeatRateMinutes,
-        heartbeat_goal: heartbeatGoal,
-        workers: workers.map((w) => ({
-          name: w.name,
-          role: w.role,
-          skills: w.skills,
-          mcp_tools: w.skills,
-          mcp_profile_id: w.mcpProfileId,
-          context_profile_slug: w.contextProfileSlug,
-          avatar_icon: w.avatarIcon,
-        })),
-      };
-
-      const res = await fetch('/api/mcp/profiles', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        setPublishSuccess(`Team Blueprint '${data.profile.name}' published to Postgres successfully!`);
-        setRefreshTrigger((prev) => prev + 1);
-      } else {
-        const err = await res.json();
-        alert(`Failed to publish team blueprint: ${err.error}`);
-      }
-    } catch (e: any) {
-      alert(`Publish error: ${e.message}`);
-    } finally {
-      setIsPublishing(false);
-    }
-  };
-
-  // Spawn Fresh Thread Instance for this Team Blueprint
-  const handleSpawnFreshSession = async (targetProfileId?: string) => {
-    const profileIdToUse = targetProfileId || existingTeams[0]?.id || 'team_front_desk_automation';
-    try {
-      const res = await fetch('/api/v1/threads/spawn', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          profile_id: profileIdToUse,
-          tenant_id: tenantId,
-          title: `Session with ${teamName}`,
-        }),
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        setSpawnedThreadId(data.thread_id);
-        setRefreshTrigger((prev) => prev + 1);
-
-        if (onLaunchThread) {
-          onLaunchThread(profileIdToUse, data.thread_id);
-        }
-      }
-    } catch (err) {
-      console.error('Failed to spawn thread instance:', err);
-    }
-  };
-
-  const supervisorMcpProfile = mcpProfilesList.find(
-    (p) => p.id === supervisorMcpProfileId || p.slug === supervisorMcpProfileId
-  );
-  const supervisorContextProfile = contextProfilesList.find(
-    (p) => p.slug === supervisorContextProfileSlug || p.id === supervisorContextProfileSlug
-  );
-
-  // Categories list for skills filter
-  const skillCategories = Array.from(new Set(skillsCatalog.map((s) => s.category)));
-
-  // Filtered skills list
-  const filteredSkills = skillsCatalog.filter((skill) => {
-    const matchesCategory = selectedCategoryFilter === 'all' || skill.category === selectedCategoryFilter;
-    const matchesSearch =
-      !skillSearchQuery.trim() ||
-      skill.displayName.toLowerCase().includes(skillSearchQuery.toLowerCase()) ||
-      skill.description.toLowerCase().includes(skillSearchQuery.toLowerCase()) ||
-      skill.id.toLowerCase().includes(skillSearchQuery.toLowerCase()) ||
-      skill.spoke.toLowerCase().includes(skillSearchQuery.toLowerCase());
-    return matchesCategory && matchesSearch;
+function formatWhen(iso: string | null, tz?: string) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleString(undefined, {
+    timeZone: tz,
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
   });
+}
 
-  // Current active target object and assigned skills for Step 3
-  const isSupervisorTarget = selectedTargetId === 'supervisor';
-  const currentWorkerTarget = workers.find((w) => w.id === selectedTargetId) || workers[0];
-  const currentTargetSkills = isSupervisorTarget
-    ? supervisorSkills
-    : currentWorkerTarget
-    ? currentWorkerTarget.skills
-    : [];
+async function api<T>(url: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(url, { ...init, headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) }, cache: 'no-store' });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const issues = Array.isArray(body?.issues) ? ` (${body.issues.map((i: any) => `${i.path}: ${i.message}`).join('; ')})` : '';
+    throw new Error((body?.error || `Request failed (${res.status})`) + issues);
+  }
+  return body as T;
+}
+
+const inputCls =
+  'w-full bg-[#090b0f] border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500';
+const labelCls = 'block text-xs font-semibold text-zinc-400 mb-1';
+
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
+
+export const AgentTeamBuilder: React.FC<AgentTeamBuilderProps> = ({ onLaunchThread }) => {
+  const [teams, setTeams] = useState<TeamSummary[]>([]);
+  const [providers, setProviders] = useState<ProviderInfo[]>([]);
+  const [contextProfiles, setContextProfiles] = useState<NamedOption[]>([]);
+  const [mcpProfiles, setMcpProfiles] = useState<NamedOption[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const [selectedId, setSelectedId] = useState<string | null>(null); // null = new team
+  const [record, setRecord] = useState<TeamRecord | null>(null);
+  const [draft, setDraft] = useState<TeamSpec>(() => emptySpec('gemini'));
+  const [step, setStep] = useState<number>(1);
+  const [toolTarget, setToolTarget] = useState<string>('supervisor'); // 'supervisor' | worker index
+  const [busy, setBusy] = useState<'save' | 'archive' | 'run' | 'launch' | null>(null);
+  const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
+  const [jsonText, setJsonText] = useState('');
+  const [jsonError, setJsonError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const configured = providers.filter((p) => p.configured);
+
+  const loadTeams = useCallback(async () => {
+    const { teams: list } = await api<{ teams: TeamSummary[] }>('/api/v1/agent-teams');
+    setTeams(list);
+    return list;
+  }, []);
+
+  const openTeam = useCallback(async (id: string) => {
+    const { team, spec } = await api<{ team: TeamRecord; spec: TeamSpec }>(`/api/v1/agent-teams/${id}`);
+    setSelectedId(id);
+    setRecord(team);
+    setDraft(spec);
+    setToolTarget('supervisor');
+    setNotice(null);
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const [prov, ctx, mcp] = await Promise.all([
+          api<{ providers: ProviderInfo[] }>('/api/v1/llm-providers'),
+          api<{ profiles: NamedOption[] }>('/api/v1/context-profiles').catch(() => ({ profiles: [] })),
+          api<{ profiles: NamedOption[] }>('/api/mcp/profiles').catch(() => ({ profiles: [] })),
+        ]);
+        setProviders(prov.providers);
+        setContextProfiles(ctx.profiles);
+        setMcpProfiles(mcp.profiles);
+        const firstConfigured = prov.providers.find((p) => p.configured)?.id ?? 'gemini';
+        setDraft(emptySpec(firstConfigured));
+        const list = await loadTeams();
+        if (list[0]) await openTeam(list[0].id);
+      } catch (err: any) {
+        setNotice({ ok: false, text: err?.message || 'Could not load Team Builder' });
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [loadTeams, openTeam]);
+
+  // Keep the JSON view in sync with the form (the form is the source of truth).
+  useEffect(() => {
+    setJsonText(JSON.stringify(draft, null, 2));
+    setJsonError(null);
+  }, [draft]);
+
+  const validation = useMemo(() => teamSpecSchema.safeParse(draft), [draft]);
+  const issues = validation.success ? [] : validation.error.issues;
+  const issueFor = (prefix: string) =>
+    issues.find((i) => i.path.join('.').startsWith(prefix))?.message;
+
+  const update = (patch: Partial<TeamSpec>) => setDraft((d) => ({ ...d, ...patch }));
+  const updateSupervisor = (patch: Partial<TeamSpec['supervisor']>) => setDraft((d) => ({ ...d, supervisor: { ...d.supervisor, ...patch } }));
+  const updateWorker = (index: number, patch: Partial<Worker>) =>
+    setDraft((d) => ({ ...d, workers: d.workers.map((w, i) => (i === index ? { ...w, ...patch } : w)) }));
+  const updateHeartbeat = (patch: Partial<TeamSpec['heartbeat']>) => setDraft((d) => ({ ...d, heartbeat: { ...d.heartbeat, ...patch } }));
+  const schedule = draft.heartbeat.schedule;
+  const updateSchedule = (next: HeartbeatSchedule) => updateHeartbeat({ schedule: next });
+
+  const newTeam = () => {
+    setSelectedId(null);
+    setRecord(null);
+    setDraft(emptySpec(configured[0]?.id ?? 'gemini'));
+    setStep(1);
+    setToolTarget('supervisor');
+    setNotice(null);
+  };
+
+  const addWorker = () => {
+    if (draft.workers.length >= MAX_TEAM_WORKERS) return;
+    update({
+      workers: [
+        ...draft.workers,
+        { name: `Worker ${draft.workers.length + 1}`, role: '', instructions: '', context_profile_id: null, mcp_profile_id: null, tools: [], model: null },
+      ],
+    });
+  };
+
+  const removeWorker = (index: number) => {
+    update({ workers: draft.workers.filter((_, i) => i !== index) });
+    if (toolTarget === String(index)) setToolTarget('supervisor');
+  };
+
+  const save = async () => {
+    if (!validation.success) {
+      setNotice({ ok: false, text: `Fix before saving: ${issues[0]?.path.join('.')}: ${issues[0]?.message}` });
+      return;
+    }
+    setBusy('save');
+    setNotice(null);
+    try {
+      const { team } = selectedId
+        ? await api<{ team: TeamRecord & { id: string } }>(`/api/v1/agent-teams/${selectedId}`, { method: 'PUT', body: JSON.stringify(validation.data) })
+        : await api<{ team: TeamRecord & { id: string } }>('/api/v1/agent-teams', { method: 'POST', body: JSON.stringify(validation.data) });
+      await loadTeams();
+      await openTeam(team.id);
+      setNotice({ ok: true, text: 'Team saved.' });
+    } catch (err: any) {
+      setNotice({ ok: false, text: err?.message || 'Could not save team' });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const archive = async () => {
+    if (!selectedId || !confirm(`Archive "${draft.name}"? Its heartbeat stops; instances keep their history.`)) return;
+    setBusy('archive');
+    try {
+      await api(`/api/v1/agent-teams/${selectedId}`, { method: 'DELETE' });
+      const list = await loadTeams();
+      if (list[0]) await openTeam(list[0].id);
+      else newTeam();
+    } catch (err: any) {
+      setNotice({ ok: false, text: err?.message || 'Could not archive team' });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const launch = async () => {
+    if (!selectedId) return;
+    setBusy('launch');
+    try {
+      const { session } = await api<{ session: { id: string } }>(`/api/v1/agent-teams/${selectedId}/sessions`, { method: 'POST', body: '{}' });
+      onLaunchThread?.(selectedId, session.id);
+    } catch (err: any) {
+      setNotice({ ok: false, text: err?.message || 'Could not start an instance' });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const runNow = async () => {
+    if (!selectedId) return;
+    setBusy('run');
+    setNotice(null);
+    try {
+      const { outcome, team } = await api<{ outcome: { status: string; detail?: string }; team: TeamRecord }>(
+        `/api/v1/agent-teams/${selectedId}/heartbeat`,
+        { method: 'POST', body: '{}' }
+      );
+      setRecord(team);
+      setNotice({
+        ok: outcome.status === 'ok',
+        text: outcome.status === 'ok' ? 'Heartbeat ran. Open the heartbeat instance to read the result.' : `Heartbeat ${outcome.status}: ${outcome.detail}`,
+      });
+    } catch (err: any) {
+      setNotice({ ok: false, text: err?.message || 'Heartbeat failed' });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const applyJson = () => {
+    try {
+      const parsed = teamSpecSchema.safeParse(JSON.parse(jsonText));
+      if (!parsed.success) {
+        setJsonError(parsed.error.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`).join('\n'));
+        return;
+      }
+      setDraft(parsed.data);
+      setNotice({ ok: true, text: 'JSON applied to the form. Save to store it.' });
+    } catch (err: any) {
+      setJsonError(`Not valid JSON: ${err?.message}`);
+    }
+  };
+
+  const copyJson = () => {
+    navigator.clipboard.writeText(JSON.stringify(draft, null, 2));
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const downloadJson = () => {
+    const blob = new Blob([JSON.stringify(draft, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${workerSlug(draft.name || 'team') || 'team'}.team.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+
+  const preview = useMemo(() => {
+    if (!schedule) return { runs: [] as Date[], error: null as string | null };
+    const parsed = heartbeatScheduleSchema.safeParse(schedule);
+    if (!parsed.success) return { runs: [], error: parsed.error.issues[0]?.message ?? 'Invalid schedule' };
+    try {
+      return { runs: previewRuns(parsed.data, new Date(), 5), error: null };
+    } catch (err: any) {
+      return { runs: [], error: err?.message || 'Invalid schedule' };
+    }
+  }, [schedule]);
+
+  // ---------------------------------------------------------------------------
+
+  if (loading) {
+    return (
+      <div className="h-full flex items-center justify-center text-sm text-zinc-400 gap-2">
+        <Loader2 className="w-4 h-4 animate-spin" /> Loading Team Builder…
+      </div>
+    );
+  }
+
+  const memberTools = toolTarget === 'supervisor' ? draft.supervisor.tools : draft.workers[Number(toolTarget)]?.tools ?? [];
+  const setMemberTools = (tools: string[]) =>
+    toolTarget === 'supervisor' ? updateSupervisor({ tools }) : updateWorker(Number(toolTarget), { tools });
 
   return (
-    <div className="p-8 max-w-7xl mx-auto space-y-8 font-sans">
-      {/* Top Header & Architecture Banner */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-zinc-800 pb-6">
-        <div>
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-xl bg-emerald-950/60 border border-emerald-800/80 text-emerald-400">
-              <Users className="w-6 h-6" />
-            </div>
-            <div>
-              <h1 className="text-xl font-bold text-white tracking-tight">
-                Agent Team Blueprint Builder
-              </h1>
-              <p className="text-xs text-zinc-400 mt-0.5">
-                Profiles & Skills Architecture: Assign MCP & Context Profiles in Steps 1–2, and configure Skill checkboxes across Supervisor and Workers in Step 3.
-              </p>
-            </div>
-          </div>
+    <div className="h-full flex bg-[#090b10] text-zinc-100 overflow-hidden">
+      {/* Team list */}
+      <aside className="w-64 shrink-0 border-r border-zinc-800 bg-[#0d1017] flex flex-col">
+        <div className="p-4 border-b border-zinc-800 flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-white flex items-center gap-2">
+            <Users className="w-4 h-4 text-emerald-400" /> Teams
+          </h2>
+          <button onClick={newTeam} className="p-1.5 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white" title="New team">
+            <Plus className="w-3.5 h-3.5" />
+          </button>
         </div>
-
-        {/* View Toggle / Active Threads counter */}
-        <div className="flex items-center gap-3">
-          <div className="flex items-center p-1 bg-zinc-900 border border-zinc-800 rounded-lg">
+        <div className="flex-1 overflow-y-auto p-2 space-y-1">
+          {teams.length === 0 && <p className="text-xs text-zinc-500 p-2">No teams yet. Create your first one.</p>}
+          {teams.map((t) => (
             <button
-              onClick={() => setActiveView('builder')}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${
-                activeView === 'builder'
-                  ? 'bg-emerald-600 text-white shadow-sm'
-                  : 'text-zinc-400 hover:text-white'
+              key={t.id}
+              onClick={() => openTeam(t.id)}
+              className={`w-full text-left p-2.5 rounded-lg border text-xs ${
+                selectedId === t.id ? 'bg-emerald-950/30 border-emerald-800' : 'border-transparent hover:bg-zinc-900'
               }`}
             >
-              Blueprint Builder
+              <div className="font-semibold text-white truncate">{t.name}</div>
+              <div className="text-zinc-500 mt-0.5 flex items-center gap-1.5">
+                {t.worker_count === 0 ? 'Single agent' : `${t.worker_count} worker${t.worker_count === 1 ? '' : 's'}`}
+                {t.heartbeat_enabled && (
+                  <span className={`flex items-center gap-0.5 ${t.heartbeat_last_status === 'error' ? 'text-rose-400' : 'text-emerald-400'}`}>
+                    · <HeartPulse className="w-3 h-3" />
+                  </span>
+                )}
+              </div>
             </button>
-            <button
-              onClick={() => setActiveView('instances')}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all flex items-center gap-1.5 ${
-                activeView === 'instances'
-                  ? 'bg-emerald-600 text-white shadow-sm'
-                  : 'text-zinc-400 hover:text-white'
-              }`}
-            >
-              <span>Deployed Blueprints</span>
-              <span className="px-1.5 py-0.5 text-[10px] rounded-full bg-zinc-800 text-emerald-400 font-mono">
-                {existingTeams.length}
-              </span>
-            </button>
-          </div>
+          ))}
         </div>
-      </div>
+      </aside>
 
-      {activeView === 'instances' ? (
-        /* INSTANCES / PUBLISHED TEAMS VIEW */
-        <div className="space-y-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-sm font-semibold text-white uppercase tracking-wider font-mono">
-                Published Team Blueprints (PostgreSQL Profiles)
-              </h2>
-              <p className="text-xs text-zinc-400 mt-1">
-                Static multi-agent team designs stored in the database. Each blueprint can be instantiated into dynamic session threads.
-              </p>
-            </div>
-            <button
-              onClick={() => setActiveView('builder')}
-              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              Build New Team
+      {/* Editor */}
+      <main className="flex-1 flex flex-col min-w-0">
+        <header className="px-6 py-4 border-b border-zinc-800 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 className="text-lg font-semibold text-white">{selectedId ? draft.name || 'Untitled team' : 'New team'}</h1>
+            <p className="text-xs text-zinc-400">
+              A supervisor that can delegate to workers. With no workers it is a single agent.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            {selectedId && (
+              <>
+                <button onClick={launch} disabled={busy !== null} className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-zinc-700 text-xs text-zinc-200 hover:bg-zinc-800 disabled:opacity-50">
+                  {busy === 'launch' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ArrowRight className="w-3.5 h-3.5" />} Open in Agent Studio
+                </button>
+                <button onClick={archive} disabled={busy !== null} className="p-2 rounded-lg border border-zinc-800 text-zinc-400 hover:text-rose-400 disabled:opacity-50" title="Archive team">
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </>
+            )}
+            <button onClick={save} disabled={busy !== null} className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold disabled:opacity-50">
+              {busy === 'save' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />} Save team
             </button>
           </div>
+        </header>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {existingTeams.map((team) => (
-              <div
-                key={team.id}
-                className="p-5 rounded-2xl bg-zinc-900/60 border border-zinc-800 hover:border-zinc-700 transition-all flex flex-col justify-between space-y-4"
-              >
-                <div className="space-y-3">
-                  <div className="flex items-start justify-between">
+        {configured.length === 0 && (
+          <div className="mx-6 mt-4 p-3 rounded-lg bg-amber-950/40 border border-amber-900/60 text-xs text-amber-200">
+            No LLM key is stored yet. Add one in Account &amp; Billing → LLM keys; teams run on your own key.
+          </div>
+        )}
+        {notice && (
+          <div className={`mx-6 mt-4 p-3 rounded-lg text-xs flex items-start gap-2 border ${notice.ok ? 'bg-emerald-950/30 border-emerald-900 text-emerald-200' : 'bg-rose-950/40 border-rose-900/60 text-rose-300'}`}>
+            {notice.ok ? <CheckCircle2 className="w-3.5 h-3.5 mt-0.5" /> : <AlertTriangle className="w-3.5 h-3.5 mt-0.5" />}
+            <span className="break-words">{notice.text}</span>
+          </div>
+        )}
+
+        {/* Steps */}
+        <nav className="px-6 pt-4 flex flex-wrap gap-2">
+          {STEPS.map((s) => (
+            <button
+              key={s.num}
+              onClick={() => setStep(s.num)}
+              className={`px-3 py-1.5 rounded-full text-xs border ${step === s.num ? 'bg-emerald-600 border-emerald-500 text-white' : 'border-zinc-700 text-zinc-400 hover:text-zinc-200'}`}
+            >
+              {s.num}. {s.label}
+            </button>
+          ))}
+        </nav>
+
+        <div className="flex-1 overflow-y-auto p-6">
+          <div className="max-w-3xl space-y-5">
+            {/* STEP 1 */}
+            {step === 1 && (
+              <section className="space-y-4">
+                <div className="grid sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className={labelCls}>Team name</label>
+                    <input className={inputCls} value={draft.name} onChange={(e) => update({ name: e.target.value })} placeholder="e.g. Ops Team" />
+                    {issueFor('name') && <p className="text-xs text-rose-400 mt-1">{issueFor('name')}</p>}
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
                     <div>
-                      <span className="text-[10px] font-mono uppercase text-emerald-400 font-semibold px-2 py-0.5 rounded bg-emerald-950/60 border border-emerald-900/60">
-                        {team.routingStrategy}
-                      </span>
-                      <h3 className="text-sm font-bold text-white mt-2">{team.name}</h3>
-                    </div>
-                    <div className="w-8 h-8 rounded-lg bg-zinc-800 border border-zinc-700 flex items-center justify-center text-zinc-300">
-                      <Users className="w-4 h-4 text-emerald-400" />
-                    </div>
-                  </div>
-
-                  <div className="text-xs text-zinc-400 space-y-1.5 bg-zinc-950/60 p-3 rounded-xl border border-zinc-800/80">
-                    <div className="text-[11px] font-semibold text-zinc-300 flex items-center gap-1">
-                      <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-                      Supervisor Profiles & Skills:
-                    </div>
-                    <div className="text-[11px] text-zinc-400 pl-4 space-y-0.5">
-                      <div>MCP: <span className="text-white font-mono">{team.supervisorMcpProfileId || 'mcp-profile-sales'}</span></div>
-                      <div>Context: <span className="text-emerald-400 font-mono">{team.supervisorContextProfileSlug || 'sales-agent'}</span></div>
-                      <div>Skills: <span className="text-amber-400 font-mono">{team.supervisorSkills?.length || 0} assigned</span></div>
-                    </div>
-                  </div>
-
-                  {/* Workers list */}
-                  <div className="space-y-1.5">
-                    <span className="text-[11px] font-mono text-zinc-500 uppercase">
-                      Workers Assigned ({team.workers.length})
-                    </span>
-                    <div className="space-y-1">
-                      {team.workers.map((w) => (
-                        <div
-                          key={w.id}
-                          className="flex items-center justify-between text-xs p-2 rounded-lg bg-zinc-950 border border-zinc-800/60"
-                        >
-                          <div className="flex items-center gap-2">
-                            <Bot className="w-3.5 h-3.5 text-emerald-400" />
-                            <span className="text-zinc-200 font-medium">{w.name}</span>
-                          </div>
-                          <div className="flex items-center gap-1 text-[10px] font-mono">
-                            <span className="text-amber-400 bg-amber-950/50 px-1.5 py-0.5 rounded border border-amber-800/40">
-                              {(w.skills || w.mcpTools || []).length} skills
-                            </span>
-                            <span className="text-emerald-400 bg-emerald-950/50 px-1.5 py-0.5 rounded border border-emerald-800/40">
-                              {w.mcpProfileId || 'default-mcp'}
-                            </span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="pt-3 border-t border-zinc-800/80 flex items-center justify-between">
-                  <span className="text-[10px] font-mono text-zinc-500">
-                    Created {new Date(team.createdAt).toLocaleDateString()}
-                  </span>
-                  <button
-                    onClick={() => handleSpawnFreshSession(team.id)}
-                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all shadow-md shadow-emerald-900/20"
-                  >
-                    <Play className="w-3 h-3" />
-                    Launch Thread
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      ) : (
-        /* Blueprint Multi-Step Builder */
-        <div className="space-y-8">
-          {/* Preset Quick Load Bar */}
-          <div className="p-3.5 rounded-xl bg-zinc-900/60 border border-zinc-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="flex items-center gap-2 text-xs text-zinc-400">
-              <Sparkles className="w-4 h-4 text-emerald-400" />
-              <span>Load Pre-Configured Enterprise Templates:</span>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              {PRESET_TEMPLATES.map((tpl, i) => (
-                <button
-                  key={i}
-                  onClick={() => handleLoadPreset(tpl)}
-                  className="px-2.5 py-1.5 rounded-md text-xs font-medium bg-zinc-800/80 hover:bg-zinc-700 text-zinc-200 border border-zinc-700/60 transition-all flex items-center gap-1.5"
-                >
-                  <Zap className="w-3 h-3 text-emerald-400" />
-                  {tpl.name.split(' ')[0]} {tpl.name.split(' ')[1]}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Stepper Navigation */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-            {[
-              { num: 1, title: 'Team Blueprint', desc: 'Name, Strategy & Supervisor Profiles' },
-              { num: 2, title: 'Worker Factory', desc: 'Specialists & Profile Bindings' },
-              { num: 3, title: 'Skills Assignment', desc: 'Capability Checkboxes (Supervisor & Workers)' },
-              { num: 4, title: 'Publish & Spawn', desc: 'Commit to Postgres & Run' },
-            ].map((step) => (
-              <button
-                key={step.num}
-                onClick={() => setActiveStep(step.num)}
-                className={`p-3.5 rounded-xl text-left border transition-all ${
-                  activeStep === step.num
-                    ? 'bg-zinc-900 border-emerald-500 shadow-md shadow-emerald-950/20'
-                    : 'bg-zinc-900/40 border-zinc-800/80 hover:border-zinc-700'
-                }`}
-              >
-                <div className="flex items-center gap-2.5">
-                  <div
-                    className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold font-mono ${
-                      activeStep === step.num
-                        ? 'bg-emerald-600 text-white'
-                        : 'bg-zinc-800 text-zinc-400'
-                    }`}
-                  >
-                    {step.num}
-                  </div>
-                  <div>
-                    <h4 className="text-xs font-bold text-white leading-none">{step.title}</h4>
-                    <p className="text-[10px] text-zinc-400 mt-1 leading-tight">{step.desc}</p>
-                  </div>
-                </div>
-              </button>
-            ))}
-          </div>
-
-          {/* STEP 1: Team Blueprint & Supervisor Profiles */}
-          {activeStep === 1 && (
-            <div className="p-6 rounded-2xl bg-zinc-900/50 border border-zinc-800 space-y-6">
-              <div className="border-b border-zinc-800 pb-4">
-                <h3 className="text-base font-semibold text-white flex items-center gap-2">
-                  <Users className="w-4 h-4 text-emerald-400" />
-                  Step 1: Configure Team Blueprint & Supervisor Profiles
-                </h3>
-                <p className="text-xs text-zinc-400 mt-1">
-                  Define the team identity and assign dedicated MCP Server and Context Control profiles to the Supervisor node.
-                </p>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="space-y-2">
-                  <label className="text-xs font-semibold uppercase font-mono text-zinc-400">
-                    Team Blueprint Name
-                  </label>
-                  <input
-                    type="text"
-                    value={teamName}
-                    onChange={(e) => setTeamName(e.target.value)}
-                    placeholder="e.g. Front Desk Automation Team"
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500 font-sans"
-                  />
-                  <p className="text-[11px] text-zinc-500">
-                    Saved in <code className="text-zinc-400">profiles.name</code> scoped under your tenant.
-                  </p>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-xs font-semibold uppercase font-mono text-zinc-400">
-                    Routing Engine Strategy
-                  </label>
-                  <select
-                    value={routingStrategy}
-                    onChange={(e) => setRoutingStrategy(e.target.value)}
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500 font-sans"
-                  >
-                    <option value="supervisor_router">Supervisor Directed Router (LangGraph Node)</option>
-                    <option value="hierarchical">Hierarchical Delegator (Manager & Sub-agents)</option>
-                    <option value="sequential">Sequential Pipeline (Step-by-step Triage)</option>
-                  </select>
-                  <p className="text-[11px] text-zinc-500">
-                    Determines how the supervisor node orchestrates worker sub-graphs.
-                  </p>
-                </div>
-              </div>
-
-              {/* Supervisor Profiles Assignment */}
-              <div className="p-5 rounded-xl bg-zinc-950/80 border border-zinc-800/80 space-y-4">
-                <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-                  <div className="flex items-center gap-2">
-                    <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                    <span className="text-xs font-semibold uppercase font-mono text-zinc-200">
-                      Supervisor Profiles Assignment
-                    </span>
-                  </div>
-                  <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-900/60">
-                    Supervisor Node
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* Supervisor MCP Profile */}
-                  <div className="space-y-2">
-                    <label className="text-xs font-semibold text-zinc-300 flex items-center gap-1.5">
-                      <Server className="w-3.5 h-3.5 text-cyan-400" />
-                      MCP Server Profile (Supervisor)
-                    </label>
-                    <select
-                      value={supervisorMcpProfileId}
-                      onChange={(e) => setSupervisorMcpProfileId(e.target.value)}
-                      className="w-full bg-zinc-900 border border-zinc-700/80 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500 font-mono"
-                    >
-                      {mcpProfilesList.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name} ({p.selectedToolNames?.length || 0} tools)
-                        </option>
-                      ))}
-                    </select>
-                    {supervisorMcpProfile && (
-                      <p className="text-[11px] text-zinc-400">
-                        {supervisorMcpProfile.description}
-                      </p>
-                    )}
-                  </div>
-
-                  {/* Supervisor Context Control Profile */}
-                  <div className="space-y-2">
-                    <label className="text-xs font-semibold text-zinc-300 flex items-center gap-1.5">
-                      <Layers className="w-3.5 h-3.5 text-emerald-400" />
-                      Context Control Profile (Supervisor)
-                    </label>
-                    <select
-                      value={supervisorContextProfileSlug}
-                      onChange={(e) => setSupervisorContextProfileSlug(e.target.value)}
-                      className="w-full bg-zinc-900 border border-zinc-700/80 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500 font-mono"
-                    >
-                      {contextProfilesList.map((cp) => (
-                        <option key={cp.id} value={cp.slug}>
-                          {cp.name} (v{cp.version})
-                        </option>
-                      ))}
-                    </select>
-                    {supervisorContextProfile && (
-                      <p className="text-[11px] text-zinc-400">
-                        {supervisorContextProfile.description}
-                      </p>
-                    )}
-                  </div>
-                </div>
-
-                <div className="p-3 rounded-lg bg-zinc-900/60 border border-zinc-800 text-xs text-zinc-400 flex items-start gap-2">
-                  <Sparkles className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                  <span>
-                    <strong>Architecture Note:</strong> The supervisor inherits governance, memory budgets, and authorized routing tools directly from these assigned profiles. In Step 3, you will configure specific skills using checkboxes.
-                  </span>
-                </div>
-              </div>
-
-              <div className="flex justify-end pt-4 border-t border-zinc-800">
-                <button
-                  onClick={() => setActiveStep(2)}
-                  className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg flex items-center gap-2 transition-all shadow-md shadow-emerald-900/20"
-                >
-                  Proceed to Worker Factory
-                  <ArrowRight className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* STEP 2: Worker Factory */}
-          {activeStep === 2 && (
-            <div className="p-6 rounded-2xl bg-zinc-900/50 border border-zinc-800 space-y-6">
-              <div className="flex items-center justify-between border-b border-zinc-800 pb-4">
-                <div>
-                  <h3 className="text-base font-semibold text-white flex items-center gap-2">
-                    <Bot className="w-4 h-4 text-emerald-400" />
-                    Step 2: Worker Factory (Staff Members & Profile Assignment)
-                  </h3>
-                  <p className="text-xs text-zinc-400 mt-1">
-                    Assemble specialized workers for this team and bind them to their respective MCP and Context Control profiles.
-                  </p>
-                </div>
-                <button
-                  onClick={handleAddWorker}
-                  className="px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-all border border-zinc-700"
-                >
-                  <Plus className="w-3.5 h-3.5 text-emerald-400" />
-                  Add Specialist Worker
-                </button>
-              </div>
-
-              {/* Workers Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {workers.map((worker, index) => {
-                  return (
-                    <div
-                      key={worker.id}
-                      className="p-4 rounded-xl border bg-zinc-950/60 border-zinc-800 hover:border-zinc-700 transition-all space-y-3"
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <div className="w-7 h-7 rounded-lg bg-emerald-950 border border-emerald-800/60 flex items-center justify-center text-emerald-400 font-bold text-xs">
-                            {index + 1}
-                          </div>
-                          <span className="text-xs font-mono font-semibold text-white">
-                            Worker #{index + 1}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          {workers.length > 1 && (
-                            <button
-                              onClick={() => handleRemoveWorker(index)}
-                              className="p-1 text-zinc-500 hover:text-red-400 rounded hover:bg-zinc-800 transition-all"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="space-y-3">
-                        <div>
-                          <label className="text-[11px] font-mono text-zinc-400 uppercase">Worker Name</label>
-                          <input
-                            type="text"
-                            value={worker.name}
-                            onChange={(e) => handleUpdateWorker(index, 'name', e.target.value)}
-                            placeholder="e.g. CRM Specialist"
-                            className="w-full bg-zinc-950 border border-zinc-800 rounded px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500 mt-1"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="text-[11px] font-mono text-zinc-400 uppercase">Operational Role</label>
-                          <input
-                            type="text"
-                            value={worker.role}
-                            onChange={(e) => handleUpdateWorker(index, 'role', e.target.value)}
-                            placeholder="e.g. Invoicing & Payment Specialist"
-                            className="w-full bg-zinc-950 border border-zinc-800 rounded px-2.5 py-1.5 text-xs text-zinc-300 focus:outline-none focus:border-emerald-500 mt-1"
-                          />
-                        </div>
-
-                        {/* Assigned Profiles Controls */}
-                        <div className="pt-2 border-t border-zinc-800/80 space-y-2">
-                          <div>
-                            <span className="text-[10px] font-mono text-zinc-400 uppercase flex items-center gap-1">
-                              <Server className="w-3 h-3 text-cyan-400" />
-                              Assigned MCP Server Profile:
-                            </span>
-                            <select
-                              value={worker.mcpProfileId || mcpProfilesList[0]?.id}
-                              onChange={(e) => handleUpdateWorker(index, 'mcpProfileId', e.target.value)}
-                              className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-cyan-300 font-mono mt-1"
-                            >
-                              {mcpProfilesList.map((p) => (
-                                <option key={p.id} value={p.id}>
-                                  {p.name} ({p.selectedToolNames?.length || 0} tools)
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-
-                          <div>
-                            <span className="text-[10px] font-mono text-zinc-400 uppercase flex items-center gap-1">
-                              <Layers className="w-3 h-3 text-emerald-400" />
-                              Assigned Context Control Profile:
-                            </span>
-                            <select
-                              value={worker.contextProfileSlug || contextProfilesList[0]?.slug}
-                              onChange={(e) => handleUpdateWorker(index, 'contextProfileSlug', e.target.value)}
-                              className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-emerald-300 font-mono mt-1"
-                            >
-                              {contextProfilesList.map((cp) => (
-                                <option key={cp.id} value={cp.slug}>
-                                  {cp.name} (v{cp.version})
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              <div className="flex justify-between pt-4 border-t border-zinc-800">
-                <button
-                  onClick={() => setActiveStep(1)}
-                  className="px-4 py-2 bg-zinc-800 text-zinc-300 text-xs font-semibold rounded-lg hover:bg-zinc-700 transition-all"
-                >
-                  Back to Blueprint
-                </button>
-                <button
-                  onClick={() => setActiveStep(3)}
-                  className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg flex items-center gap-2 transition-all shadow-md shadow-emerald-900/20"
-                >
-                  Proceed to Skills Assignment
-                  <ArrowRight className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* STEP 3: Skills Assignment (Checkboxes for Supervisor & Workers) */}
-          {activeStep === 3 && (
-            <div className="p-6 rounded-2xl bg-zinc-900/50 border border-zinc-800 space-y-6">
-              <div className="border-b border-zinc-800 pb-4">
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-                  <div>
-                    <h3 className="text-base font-semibold text-white flex items-center gap-2">
-                      <Wrench className="w-4 h-4 text-emerald-400" />
-                      Step 3: Skills Assignment (Supervisor & Workers Checkboxes)
-                    </h3>
-                    <p className="text-xs text-zinc-400 mt-1">
-                      Assign operational skills to the supervisor router and individual specialist workers using capability checkboxes.
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-zinc-400 font-mono">
-                      Target:{' '}
-                      <strong className="text-emerald-400">
-                        {isSupervisorTarget ? 'Supervisor Router' : currentWorkerTarget?.name}
-                      </strong>
-                    </span>
-                    <span className="px-2 py-0.5 rounded-full bg-emerald-950 border border-emerald-800 text-emerald-300 text-[11px] font-mono">
-                      {currentTargetSkills.length} selected
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Target Selector Tabs: Supervisor & Workers */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-mono uppercase text-zinc-400">
-                    Select Target Node to Assign Skills:
-                  </span>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() =>
-                        handleBulkToggleCurrentTarget(
-                          filteredSkills.map((s) => s.id),
-                          true
-                        )
-                      }
-                      className="px-2.5 py-1 text-[11px] font-medium bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded border border-zinc-700 flex items-center gap-1 transition-all"
-                    >
-                      <CheckSquare className="w-3 h-3 text-emerald-400" />
-                      Select Filtered
-                    </button>
-                    <button
-                      onClick={() =>
-                        handleBulkToggleCurrentTarget(
-                          filteredSkills.map((s) => s.id),
-                          false
-                        )
-                      }
-                      className="px-2.5 py-1 text-[11px] font-medium bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded border border-zinc-700 flex items-center gap-1 transition-all"
-                    >
-                      <Square className="w-3 h-3 text-zinc-400" />
-                      Clear Filtered
-                    </button>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2 overflow-x-auto pb-1">
-                  {/* Supervisor Target Tab */}
-                  <button
-                    onClick={() => setSelectedTargetId('supervisor')}
-                    className={`px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-2.5 transition-all shrink-0 border ${
-                      isSupervisorTarget
-                        ? 'bg-emerald-950/80 border-emerald-500 text-white shadow-md shadow-emerald-950/40'
-                        : 'bg-zinc-950/70 text-zinc-400 border-zinc-800 hover:text-white hover:border-zinc-700'
-                    }`}
-                  >
-                    <ShieldCheck
-                      className={`w-4 h-4 ${isSupervisorTarget ? 'text-emerald-400' : 'text-zinc-500'}`}
-                    />
-                    <div className="text-left">
-                      <div className="leading-tight">Supervisor Router</div>
-                      <div className="text-[10px] font-normal text-zinc-400 font-mono">
-                        {supervisorSkills.length} skills active
-                      </div>
-                    </div>
-                  </button>
-
-                  {/* Worker Target Tabs */}
-                  {workers.map((w, idx) => {
-                    const isSelected = selectedTargetId === w.id;
-                    return (
-                      <button
-                        key={w.id}
-                        onClick={() => setSelectedTargetId(w.id)}
-                        className={`px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-2.5 transition-all shrink-0 border ${
-                          isSelected
-                            ? 'bg-emerald-950/80 border-emerald-500 text-white shadow-md shadow-emerald-950/40'
-                            : 'bg-zinc-950/70 text-zinc-400 border-zinc-800 hover:text-white hover:border-zinc-700'
-                        }`}
+                      <label className={labelCls}>LLM provider</label>
+                      <select
+                        className={inputCls}
+                        value={draft.llm.provider}
+                        onChange={(e) => update({ llm: { provider: e.target.value as Provider } })}
                       >
-                        <Bot
-                          className={`w-4 h-4 ${isSelected ? 'text-emerald-400' : 'text-zinc-500'}`}
-                        />
-                        <div className="text-left">
-                          <div className="leading-tight">{w.name}</div>
-                          <div className="text-[10px] font-normal text-zinc-400 font-mono">
-                            Worker #{idx + 1} • {w.skills.length} skills
-                          </div>
-                        </div>
-                      </button>
-                    );
-                  })}
+                        {providers.map((p) => (
+                          <option key={p.id} value={p.id} disabled={!p.configured}>
+                            {PROVIDER_LABELS[p.id]}{p.configured ? '' : ' (no key)'}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className={labelCls}>Model</label>
+                      <input
+                        className={inputCls}
+                        value={draft.llm.model ?? ''}
+                        onChange={(e) => update({ llm: { ...draft.llm, model: e.target.value || undefined } })}
+                        placeholder={providers.find((p) => p.id === draft.llm.provider)?.defaultModel}
+                      />
+                    </div>
+                  </div>
                 </div>
-              </div>
-
-              {/* Target Quick Context Banner */}
-              <div className="p-3.5 rounded-xl bg-zinc-950 border border-zinc-800 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
-                <div className="flex items-center gap-2">
-                  {isSupervisorTarget ? (
-                    <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                  ) : (
-                    <Bot className="w-4 h-4 text-emerald-400" />
-                  )}
-                  <span className="text-zinc-300">
-                    Configuring skills for:{' '}
-                    <strong className="text-white">
-                      {isSupervisorTarget ? 'Supervisor Node' : `${currentWorkerTarget?.name} (${currentWorkerTarget?.role})`}
-                    </strong>
-                  </span>
+                <div>
+                  <label className={labelCls}>Purpose (optional)</label>
+                  <input className={inputCls} value={draft.description ?? ''} onChange={(e) => update({ description: e.target.value })} placeholder="What this team is for" />
                 </div>
-                <div className="flex items-center gap-3 text-zinc-400 font-mono text-[11px]">
-                  <span>
-                    MCP Profile:{' '}
-                    <strong className="text-cyan-400">
-                      {isSupervisorTarget ? supervisorMcpProfileId : currentWorkerTarget?.mcpProfileId}
-                    </strong>
-                  </span>
-                  <span>•</span>
-                  <span>
-                    Context Profile:{' '}
-                    <strong className="text-emerald-400">
-                      {isSupervisorTarget ? supervisorContextProfileSlug : currentWorkerTarget?.contextProfileSlug}
-                    </strong>
-                  </span>
-                </div>
-              </div>
-
-              {/* Filter & Search Bar */}
-              <div className="flex flex-col sm:flex-row items-center gap-3 pt-2">
-                <div className="relative flex-1 w-full">
-                  <Search className="w-4 h-4 text-zinc-400 absolute left-3 top-2.5" />
-                  <input
-                    type="text"
-                    value={skillSearchQuery}
-                    onChange={(e) => setSkillSearchQuery(e.target.value)}
-                    placeholder="Search skills by name, spoke (e.g. hubspot, stripe, postgres), or description..."
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-9 pr-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500 font-sans"
+                <div>
+                  <label className={labelCls}>Supervisor instructions</label>
+                  <textarea
+                    className={`${inputCls} min-h-[110px]`}
+                    value={draft.supervisor.instructions ?? ''}
+                    onChange={(e) => updateSupervisor({ instructions: e.target.value })}
+                    placeholder="How the supervisor should behave, decide and delegate."
                   />
                 </div>
-                <div className="flex items-center gap-1.5 overflow-x-auto w-full sm:w-auto">
-                  <button
-                    onClick={() => setSelectedCategoryFilter('all')}
-                    className={`px-2.5 py-1.5 rounded-lg text-xs font-mono transition-all shrink-0 ${
-                      selectedCategoryFilter === 'all'
-                        ? 'bg-zinc-800 text-white font-semibold'
-                        : 'bg-zinc-950 text-zinc-400 hover:text-white'
-                    }`}
-                  >
-                    All ({skillsCatalog.length})
+                <div className="grid sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className={labelCls}>Supervisor context profile</label>
+                    <select className={inputCls} value={draft.supervisor.context_profile_id ?? ''} onChange={(e) => updateSupervisor({ context_profile_id: e.target.value || null })}>
+                      <option value="">None</option>
+                      {contextProfiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className={labelCls}>Supervisor MCP profile</label>
+                    <select className={inputCls} value={draft.supervisor.mcp_profile_id ?? ''} onChange={(e) => updateSupervisor({ mcp_profile_id: e.target.value || null })}>
+                      <option value="">None</option>
+                      {mcpProfiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                  </div>
+                </div>
+                {contextProfiles.length === 0 && mcpProfiles.length === 0 && (
+                  <p className="text-xs text-zinc-500">You have no context or MCP profiles yet; that is fine. Create them in Profiles or MCP Hub and attach them later.</p>
+                )}
+              </section>
+            )}
+
+            {/* STEP 2 */}
+            {step === 2 && (
+              <section className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm text-zinc-400">
+                    Each worker becomes a tool the supervisor can call (<code className="text-emerald-400">delegate_to_&lt;name&gt;</code>). Workers only see the task they are given.
+                  </p>
+                  <button onClick={addWorker} disabled={draft.workers.length >= MAX_TEAM_WORKERS} className="shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-xs disabled:opacity-50">
+                    <Plus className="w-3.5 h-3.5" /> Add worker
                   </button>
-                  {skillCategories.map((cat) => (
+                </div>
+                {draft.workers.length === 0 && (
+                  <div className="p-6 rounded-xl border border-dashed border-zinc-700 text-center text-sm text-zinc-500">
+                    No workers: this team runs as a single agent. Add workers to let the supervisor delegate.
+                  </div>
+                )}
+                {draft.workers.map((w, i) => (
+                  <div key={i} className="p-4 rounded-xl border border-zinc-800 bg-[#0d1017] space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-mono text-zinc-500 flex items-center gap-1.5">
+                        <Bot className="w-3.5 h-3.5 text-cyan-400" /> delegate_to_{workerSlug(w.name) || '…'}
+                      </span>
+                      <button onClick={() => removeWorker(i)} className="p-1 text-zinc-500 hover:text-rose-400" title="Remove worker">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    <div className="grid sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className={labelCls}>Name</label>
+                        <input className={inputCls} value={w.name} onChange={(e) => updateWorker(i, { name: e.target.value })} />
+                        {issueFor(`workers.${i}.name`) && <p className="text-xs text-rose-400 mt-1">{issueFor(`workers.${i}.name`)}</p>}
+                      </div>
+                      <div>
+                        <label className={labelCls}>Role (what the supervisor sees)</label>
+                        <input className={inputCls} value={w.role} onChange={(e) => updateWorker(i, { role: e.target.value })} placeholder="e.g. Finds and summarizes scheduled tasks" />
+                        {issueFor(`workers.${i}.role`) && <p className="text-xs text-rose-400 mt-1">Role is required</p>}
+                      </div>
+                    </div>
+                    <div>
+                      <label className={labelCls}>Instructions (optional)</label>
+                      <textarea className={`${inputCls} min-h-[70px]`} value={w.instructions ?? ''} onChange={(e) => updateWorker(i, { instructions: e.target.value })} />
+                    </div>
+                    <div className="grid sm:grid-cols-3 gap-3">
+                      <div>
+                        <label className={labelCls}>Context profile</label>
+                        <select className={inputCls} value={w.context_profile_id ?? ''} onChange={(e) => updateWorker(i, { context_profile_id: e.target.value || null })}>
+                          <option value="">None</option>
+                          {contextProfiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className={labelCls}>MCP profile</label>
+                        <select className={inputCls} value={w.mcp_profile_id ?? ''} onChange={(e) => updateWorker(i, { mcp_profile_id: e.target.value || null })}>
+                          <option value="">None</option>
+                          {mcpProfiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className={labelCls}>Model override</label>
+                        <input className={inputCls} value={w.model ?? ''} onChange={(e) => updateWorker(i, { model: e.target.value || null })} placeholder="Team default" />
+                      </div>
+                    </div>
+                    <button onClick={() => { setToolTarget(String(i)); setStep(3); }} className="text-xs text-emerald-400 hover:text-emerald-300">
+                      {w.tools.length} tool{w.tools.length === 1 ? '' : 's'} assigned · edit tools →
+                    </button>
+                  </div>
+                ))}
+              </section>
+            )}
+
+            {/* STEP 3 */}
+            {step === 3 && (
+              <section className="space-y-4">
+                <div className="flex flex-wrap gap-2">
+                  {[{ id: 'supervisor', label: 'Supervisor' }, ...draft.workers.map((w, i) => ({ id: String(i), label: w.name || `Worker ${i + 1}` }))].map((m) => (
                     <button
-                      key={cat}
-                      onClick={() => setSelectedCategoryFilter(cat)}
-                      className={`px-2.5 py-1.5 rounded-lg text-xs font-mono transition-all shrink-0 ${
-                        selectedCategoryFilter === cat
-                          ? 'bg-zinc-800 text-emerald-400 font-semibold border border-zinc-700'
-                          : 'bg-zinc-950 text-zinc-400 hover:text-white border border-zinc-800/80'
-                      }`}
+                      key={m.id}
+                      onClick={() => setToolTarget(m.id)}
+                      className={`px-3 py-1.5 rounded-lg text-xs border ${toolTarget === m.id ? 'bg-zinc-800 border-zinc-600 text-white' : 'border-zinc-800 text-zinc-400'}`}
                     >
-                      {cat}
+                      {m.label}
                     </button>
                   ))}
                 </div>
-              </div>
-
-              {/* Skills Checkboxes Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {filteredSkills.map((skill) => {
-                  const isChecked = isSupervisorTarget
-                    ? supervisorSkills.includes(skill.id)
-                    : currentWorkerTarget
-                    ? currentWorkerTarget.skills.includes(skill.id)
-                    : false;
-
-                  const spokeColor =
-                    skill.spoke === 'hubspot'
-                      ? 'text-orange-400 bg-orange-950/40 border-orange-900/60'
-                      : skill.spoke === 'stripe'
-                      ? 'text-indigo-400 bg-indigo-950/40 border-indigo-900/60'
-                      : skill.spoke === 'postgres'
-                      ? 'text-blue-400 bg-blue-950/40 border-blue-900/60'
-                      : skill.spoke === 'slack'
-                      ? 'text-purple-400 bg-purple-950/40 border-purple-900/60'
-                      : skill.spoke === 'google_workspace'
-                      ? 'text-red-400 bg-red-950/40 border-red-900/60'
-                      : skill.spoke === 'notion'
-                      ? 'text-zinc-300 bg-zinc-800/60 border-zinc-700/60'
-                      : 'text-emerald-400 bg-emerald-950/40 border-emerald-900/60';
-
-                  return (
-                    <label
-                      key={skill.id}
-                      onClick={() => {
-                        if (isSupervisorTarget) {
-                          handleToggleSupervisorSkill(skill.id);
-                        } else if (currentWorkerTarget) {
-                          handleToggleWorkerSkill(currentWorkerTarget.id, skill.id);
-                        }
-                      }}
-                      className={`p-3.5 rounded-xl border cursor-pointer transition-all flex items-start gap-3 select-none ${
-                        isChecked
-                          ? 'bg-emerald-950/30 border-emerald-500/80 shadow-sm shadow-emerald-950/30'
-                          : 'bg-zinc-950/70 border-zinc-800 hover:border-zinc-700'
-                      }`}
-                    >
-                      <div className="pt-0.5 shrink-0">
-                        <div
-                          className={`w-4 h-4 rounded flex items-center justify-center border transition-all ${
-                            isChecked
-                              ? 'bg-emerald-600 border-emerald-500 text-white'
-                              : 'bg-zinc-900 border-zinc-700 text-transparent'
-                          }`}
-                        >
-                          <Check className="w-3 h-3 stroke-[3]" />
-                        </div>
-                      </div>
-
-                      <div className="flex-1 space-y-1.5 min-w-0">
-                        <div className="flex items-center justify-between gap-1">
-                          <h4 className="text-xs font-semibold text-white truncate">
-                            {skill.displayName}
-                          </h4>
-                          <span
-                            className={`text-[9px] font-mono uppercase px-1.5 py-0.5 rounded border shrink-0 ${spokeColor}`}
-                          >
-                            {skill.spoke}
-                          </span>
-                        </div>
-                        <p className="text-[11px] text-zinc-400 leading-snug line-clamp-2">
-                          {skill.description}
-                        </p>
-                        <div className="flex items-center justify-between pt-1">
-                          <span className="text-[10px] font-mono text-zinc-500">{skill.id}</span>
-                          <span className="text-[9px] font-mono text-emerald-400/80">
-                            {skill.category}
-                          </span>
-                        </div>
-                      </div>
-                    </label>
-                  );
-                })}
-              </div>
-
-              {filteredSkills.length === 0 && (
-                <div className="p-8 text-center border border-dashed border-zinc-800 rounded-xl text-zinc-500 text-xs">
-                  No skills matched your search criteria or category filter.
+                <div className="flex items-center gap-3 text-xs">
+                  <button onClick={() => setMemberTools(PLATFORM_TOOL_DEFINITIONS.filter((t) => t.sideEffect === 'read').map((t) => t.name))} className="text-zinc-400 hover:text-white">Read-only set</button>
+                  <button onClick={() => setMemberTools(PLATFORM_TOOL_DEFINITIONS.map((t) => t.name))} className="text-zinc-400 hover:text-white">All</button>
+                  <button onClick={() => setMemberTools([])} className="text-zinc-400 hover:text-white">None</button>
                 </div>
-              )}
-
-              {/* Skills Overview Matrix Table (Supervisor + All Workers) */}
-              <div className="p-4 rounded-xl bg-zinc-950 border border-zinc-800 space-y-3">
-                <div className="flex items-center justify-between border-b border-zinc-800/80 pb-2">
-                  <span className="text-xs font-mono font-semibold uppercase text-zinc-300">
-                    Assigned Skills Matrix Summary
-                  </span>
-                  <span className="text-[10px] font-mono text-zinc-500">
-                    Live Checkbox State
-                  </span>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {/* Supervisor Node Summary */}
-                  <div
-                    onClick={() => setSelectedTargetId('supervisor')}
-                    className={`p-3 rounded-lg border cursor-pointer transition-all ${
-                      isSupervisorTarget
-                        ? 'bg-zinc-900 border-emerald-500'
-                        : 'bg-zinc-900/40 border-zinc-800 hover:border-zinc-700'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between mb-1.5">
-                      <div className="flex items-center gap-1.5 text-xs font-semibold text-white">
-                        <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-                        <span>Supervisor</span>
-                      </div>
-                      <span className="text-[10px] font-mono text-amber-400">
-                        {supervisorSkills.length} skills
-                      </span>
-                    </div>
-                    <div className="flex flex-wrap gap-1">
-                      {supervisorSkills.length > 0 ? (
-                        supervisorSkills.slice(0, 3).map((s) => (
-                          <span
-                            key={s}
-                            className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 border border-zinc-700"
-                          >
-                            {s.split('.')[1] || s}
-                          </span>
-                        ))
-                      ) : (
-                        <span className="text-[10px] text-zinc-500 italic">No skills assigned</span>
-                      )}
-                      {supervisorSkills.length > 3 && (
-                        <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-zinc-800 text-emerald-400">
-                          +{supervisorSkills.length - 3} more
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Workers Summaries */}
-                  {workers.map((w, idx) => {
-                    const isSelected = selectedTargetId === w.id;
+                <div className="space-y-2">
+                  {PLATFORM_TOOL_DEFINITIONS.map((t) => {
+                    const on = memberTools.includes(t.name);
                     return (
-                      <div
-                        key={w.id}
-                        onClick={() => setSelectedTargetId(w.id)}
-                        className={`p-3 rounded-lg border cursor-pointer transition-all ${
-                          isSelected
-                            ? 'bg-zinc-900 border-emerald-500'
-                            : 'bg-zinc-900/40 border-zinc-800 hover:border-zinc-700'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between mb-1.5">
-                          <div className="flex items-center gap-1.5 text-xs font-semibold text-white">
-                            <Bot className="w-3.5 h-3.5 text-emerald-400" />
-                            <span className="truncate">{w.name}</span>
-                          </div>
-                          <span className="text-[10px] font-mono text-amber-400">
-                            {w.skills.length} skills
-                          </span>
-                        </div>
-                        <div className="flex flex-wrap gap-1">
-                          {w.skills.length > 0 ? (
-                            w.skills.slice(0, 3).map((s) => (
-                              <span
-                                key={s}
-                                className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 border border-zinc-700"
-                              >
-                                {s.split('.')[1] || s}
-                              </span>
-                            ))
-                          ) : (
-                            <span className="text-[10px] text-zinc-500 italic">No skills assigned</span>
-                          )}
-                          {w.skills.length > 3 && (
-                            <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-zinc-800 text-emerald-400">
-                              +{w.skills.length - 3} more
-                            </span>
-                          )}
-                        </div>
-                      </div>
+                      <label key={t.name} className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer ${on ? 'bg-emerald-950/20 border-emerald-900' : 'border-zinc-800 hover:border-zinc-700'}`}>
+                        <input
+                          type="checkbox"
+                          checked={on}
+                          onChange={() => setMemberTools(on ? memberTools.filter((n) => n !== t.name) : [...memberTools, t.name])}
+                          className="mt-0.5 rounded bg-zinc-900 border-zinc-700 text-emerald-500"
+                        />
+                        <span className="flex-1">
+                          <span className="font-mono text-xs text-white">{t.name}</span>
+                          <span className={`ml-2 text-[10px] px-1.5 py-0.5 rounded border ${t.sideEffect === 'write' ? 'text-amber-300 border-amber-800' : 'text-zinc-400 border-zinc-700'}`}>{t.sideEffect}</span>
+                          <span className="block text-xs text-zinc-400 mt-0.5">{t.description}</span>
+                        </span>
+                      </label>
                     );
                   })}
                 </div>
-              </div>
-
-              <div className="flex justify-between pt-4 border-t border-zinc-800">
-                <button
-                  onClick={() => setActiveStep(2)}
-                  className="px-4 py-2 bg-zinc-800 text-zinc-300 text-xs font-semibold rounded-lg hover:bg-zinc-700 transition-all"
-                >
-                  Back to Workers
-                </button>
-                <button
-                  onClick={() => setActiveStep(4)}
-                  className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg flex items-center gap-2 transition-all shadow-md shadow-emerald-900/20"
-                >
-                  Review & Publish Blueprint
-                  <ArrowRight className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* STEP 4: Review, Publish to Supabase & Dynamic Thread Instance */}
-          {activeStep === 4 && (
-            <div className="p-6 rounded-2xl bg-zinc-900/50 border border-zinc-800 space-y-6">
-              <div className="border-b border-zinc-800 pb-4">
-                <h3 className="text-base font-semibold text-white flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                  Step 4: Blueprint Review & Supabase Commitment
-                </h3>
-                <p className="text-xs text-zinc-400 mt-1">
-                  Verify the relational schema representation. Upon publishing, the blueprint is stored in <code className="text-emerald-400">profiles</code> and <code className="text-emerald-400">profile_workers</code> with assigned profiles and skill capabilities.
-                </p>
-              </div>
-
-              {publishSuccess && (
-                <div className="p-4 rounded-xl bg-emerald-950/40 border border-emerald-600/50 text-emerald-300 flex items-center justify-between">
-                  <div className="flex items-center gap-2 text-xs">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                    <span>{publishSuccess}</span>
-                  </div>
-                  <button
-                    onClick={() => handleSpawnFreshSession()}
-                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-semibold flex items-center gap-1.5 transition-all"
-                  >
-                    <Play className="w-3.5 h-3.5" />
-                    Launch Interactive Session Now
-                  </button>
-                </div>
-              )}
-
-              {/* Proactive Heartbeat Config (Agent Toggle UI) */}
-              <div className="p-5 rounded-xl bg-zinc-950 border border-zinc-800 space-y-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Radio className="w-4 h-4 text-emerald-400" />
-                    <span className="text-sm font-semibold text-white">Enable Proactive Heartbeat Scheduler</span>
-                  </div>
-                  <button
-                    onClick={() => setHeartbeatEnabled(!heartbeatEnabled)}
-                    className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${
-                      heartbeatEnabled ? 'bg-emerald-500' : 'bg-zinc-700'
-                    }`}
-                  >
-                    <span
-                      className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
-                        heartbeatEnabled ? 'translate-x-4' : 'translate-x-1'
-                      }`}
-                    />
-                  </button>
-                </div>
-                
-                {heartbeatEnabled && (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-3 border-t border-zinc-800/80">
-                    <div className="space-y-2">
-                      <label className="text-xs font-semibold text-zinc-400">Heartbeat Rate (Minutes)</label>
-                      <input
-                        type="number"
-                        value={heartbeatRateMinutes}
-                        onChange={(e) => setHeartbeatRateMinutes(parseInt(e.target.value) || 15)}
-                        className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500"
-                        min={1}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-xs font-semibold text-zinc-400">Baseline Heartbeat Goal / Prompt</label>
-                      <input
-                        type="text"
-                        value={heartbeatGoal}
-                        onChange={(e) => setHeartbeatGoal(e.target.value)}
-                        className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500"
-                        placeholder="e.g. Check for open alerts and reply to emails"
-                      />
-                    </div>
-                  </div>
+                {toolTarget === 'supervisor' && draft.workers.length > 0 && (
+                  <p className="text-xs text-zinc-500 flex items-center gap-1.5">
+                    <Wrench className="w-3.5 h-3.5" /> The supervisor also gets one delegate tool per worker automatically.
+                  </p>
                 )}
-              </div>
+                <p className="text-xs text-zinc-500">
+                  External tools (Gmail, CRM, Slack…) appear here once account connections ship; the platform tools above are what exists today.
+                </p>
+              </section>
+            )}
 
-              {/* Summary Card */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="p-4 rounded-xl bg-zinc-950 border border-zinc-800 space-y-2">
-                  <span className="text-[11px] font-mono text-zinc-500 uppercase">Team Blueprint</span>
-                  <h4 className="text-sm font-semibold text-white">{teamName}</h4>
-                  <div className="text-xs text-zinc-400 space-y-1">
-                    <div>MCP Profile: <span className="text-cyan-400 font-mono">{supervisorMcpProfileId}</span></div>
-                    <div>Context Profile: <span className="text-emerald-400 font-mono">{supervisorContextProfileSlug}</span></div>
-                    <div>Strategy: <span className="text-white font-mono">{routingStrategy}</span></div>
-                    <div>Supervisor Skills: <span className="text-amber-400 font-mono">{supervisorSkills.length} assigned</span></div>
+            {/* STEP 4 */}
+            {step === 4 && (
+              <section className="space-y-5">
+                <div className="p-4 rounded-xl border border-zinc-800 bg-[#0d1017] flex items-center justify-between">
+                  <div>
+                    <div className="text-sm font-semibold text-white flex items-center gap-2"><HeartPulse className="w-4 h-4 text-emerald-400" /> Proactive heartbeat</div>
+                    <p className="text-xs text-zinc-400 mt-0.5">On a schedule, the team wakes up and works on the goal by itself. Each run is saved in a dedicated heartbeat instance.</p>
                   </div>
+                  <button
+                    onClick={() => updateHeartbeat({ enabled: !draft.heartbeat.enabled, schedule: draft.heartbeat.schedule ?? { ...DEFAULT_HEARTBEAT_SCHEDULE, timezone: browserTimeZone() } })}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${draft.heartbeat.enabled ? 'bg-emerald-500' : 'bg-zinc-700'}`}
+                    aria-label="Toggle heartbeat"
+                  >
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${draft.heartbeat.enabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                  </button>
                 </div>
 
-                <div className="p-4 rounded-xl bg-zinc-950 border border-zinc-800 space-y-2">
-                  <span className="text-[11px] font-mono text-zinc-500 uppercase">Staff Workers ({workers.length})</span>
-                  <div className="space-y-1.5">
-                    {workers.map((w) => (
-                      <div key={w.id} className="text-xs text-zinc-300 flex items-center justify-between">
-                        <span>{w.name}</span>
-                        <div className="flex items-center gap-1 font-mono text-[10px]">
-                          <span className="text-amber-400">{w.skills.length} skills</span>
-                          <span className="text-zinc-600">•</span>
-                          <span className="text-cyan-400">{w.mcpProfileId}</span>
+                {draft.heartbeat.enabled && schedule && (
+                  <>
+                    <div>
+                      <label className={labelCls}>Goal (the prompt each run starts with)</label>
+                      <textarea className={`${inputCls} min-h-[80px]`} value={draft.heartbeat.goal ?? ''} onChange={(e) => updateHeartbeat({ goal: e.target.value })} />
+                      <div className="flex flex-wrap gap-2 mt-2">
+                        {GOAL_SUGGESTIONS.map((g) => (
+                          <button key={g} onClick={() => updateHeartbeat({ goal: g })} className="text-[11px] px-2 py-1 rounded-md border border-zinc-800 text-zinc-400 hover:text-white">{g}</button>
+                        ))}
+                      </div>
+                      {issueFor('heartbeat.goal') && <p className="text-xs text-rose-400 mt-1">{issueFor('heartbeat.goal')}</p>}
+                    </div>
+
+                    <div className="space-y-3">
+                      <label className={labelCls}>Schedule</label>
+                      <div className="inline-flex rounded-lg border border-zinc-700 overflow-hidden text-xs">
+                        {(['interval', 'weekly', 'cron'] as const).map((mode) => (
+                          <button
+                            key={mode}
+                            onClick={() => {
+                              const tz = schedule.timezone;
+                              updateSchedule(
+                                mode === 'interval'
+                                  ? { mode, every: 15, unit: 'minutes', timezone: tz }
+                                  : mode === 'weekly'
+                                  ? { mode, days: [1, 2, 3, 4, 5], times: ['09:00'], timezone: tz }
+                                  : { mode, expression: '0 9 * * 1-5', timezone: tz }
+                              );
+                            }}
+                            className={`px-3 py-1.5 ${schedule.mode === mode ? 'bg-emerald-600 text-white' : 'text-zinc-400 hover:bg-zinc-800'}`}
+                          >
+                            {mode === 'interval' ? 'Repeat every…' : mode === 'weekly' ? 'Days & times' : 'Cron'}
+                          </button>
+                        ))}
+                      </div>
+
+                      {schedule.mode === 'interval' && (
+                        <div className="space-y-3 p-4 rounded-xl border border-zinc-800">
+                          <div className="flex items-center gap-2 text-sm">
+                            <span className="text-zinc-400">Every</span>
+                            <input type="number" min={1} className={`${inputCls} w-24`} value={schedule.every} onChange={(e) => updateSchedule({ ...schedule, every: Math.max(1, Number(e.target.value) || 1) })} />
+                            <select className={`${inputCls} w-32`} value={schedule.unit} onChange={(e) => updateSchedule({ ...schedule, unit: e.target.value as 'minutes' | 'hours' | 'days' })}>
+                              <option value="minutes">minutes</option>
+                              <option value="hours">hours</option>
+                              <option value="days">days</option>
+                            </select>
+                          </div>
+                          <label className="flex items-center gap-2 text-xs text-zinc-300">
+                            <input
+                              type="checkbox"
+                              checked={!!schedule.active_hours}
+                              onChange={(e) => updateSchedule({ ...schedule, active_hours: e.target.checked ? { start: '09:00', end: '18:00' } : undefined })}
+                              className="rounded bg-zinc-900 border-zinc-700 text-emerald-500"
+                            />
+                            Only during active hours
+                          </label>
+                          {schedule.active_hours && (
+                            <div className="flex items-center gap-2 text-sm">
+                              <input type="time" className={`${inputCls} w-32`} value={schedule.active_hours.start} onChange={(e) => updateSchedule({ ...schedule, active_hours: { ...schedule.active_hours!, start: e.target.value } })} />
+                              <span className="text-zinc-500">to</span>
+                              <input type="time" className={`${inputCls} w-32`} value={schedule.active_hours.end} onChange={(e) => updateSchedule({ ...schedule, active_hours: { ...schedule.active_hours!, end: e.target.value } })} />
+                            </div>
+                          )}
+                          <DayPicker
+                            label="Only on these days"
+                            value={schedule.active_days ?? [0, 1, 2, 3, 4, 5, 6]}
+                            onChange={(days) => updateSchedule({ ...schedule, active_days: days.length === 7 ? undefined : days })}
+                          />
+                        </div>
+                      )}
+
+                      {schedule.mode === 'weekly' && (
+                        <div className="space-y-3 p-4 rounded-xl border border-zinc-800">
+                          <DayPicker label="Days" value={schedule.days} onChange={(days) => days.length && updateSchedule({ ...schedule, days })} />
+                          <div>
+                            <span className={labelCls}>Times</span>
+                            <div className="flex flex-wrap items-center gap-2">
+                              {schedule.times.map((t, i) => (
+                                <span key={i} className="flex items-center gap-1">
+                                  <input type="time" className={`${inputCls} w-28`} value={t} onChange={(e) => updateSchedule({ ...schedule, times: schedule.times.map((x, j) => (j === i ? e.target.value : x)) })} />
+                                  {schedule.times.length > 1 && (
+                                    <button onClick={() => updateSchedule({ ...schedule, times: schedule.times.filter((_, j) => j !== i) })} className="text-zinc-500 hover:text-rose-400"><Trash2 className="w-3.5 h-3.5" /></button>
+                                  )}
+                                </span>
+                              ))}
+                              <button onClick={() => updateSchedule({ ...schedule, times: [...schedule.times, '14:00'] })} className="text-xs text-emerald-400 hover:text-emerald-300">+ time</button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {schedule.mode === 'cron' && (
+                        <div className="space-y-2 p-4 rounded-xl border border-zinc-800">
+                          <input className={`${inputCls} font-mono`} value={schedule.expression} onChange={(e) => updateSchedule({ ...schedule, expression: e.target.value })} placeholder="minute hour day month weekday" />
+                          <div className="flex flex-wrap gap-2">
+                            {CRON_PRESETS.map((p) => (
+                              <button key={p.expression} onClick={() => updateSchedule({ ...schedule, expression: p.expression })} className="text-[11px] px-2 py-1 rounded-md border border-zinc-800 text-zinc-400 hover:text-white">{p.label}</button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="grid sm:grid-cols-2 gap-4">
+                        <div>
+                          <label className={labelCls}>Time zone</label>
+                          <select className={inputCls} value={schedule.timezone} onChange={(e) => updateSchedule({ ...schedule, timezone: e.target.value })}>
+                            {timeZones().map((tz) => <option key={tz} value={tz}>{tz}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <label className={labelCls}>Max runs per day (budget guard)</label>
+                          <input type="number" min={1} max={288} className={inputCls} value={draft.heartbeat.max_runs_per_day} onChange={(e) => updateHeartbeat({ max_runs_per_day: Math.min(288, Math.max(1, Number(e.target.value) || 1)) })} />
                         </div>
                       </div>
-                    ))}
-                  </div>
-                </div>
+                    </div>
 
-                <div className="p-4 rounded-xl bg-zinc-950 border border-zinc-800 space-y-2">
-                  <span className="text-[11px] font-mono text-zinc-500 uppercase">Execution Model</span>
-                  <div className="text-xs text-zinc-300 space-y-1">
-                    <div>• <strong>Blueprints</strong>: Stored in Postgres</div>
-                    <div>• <strong>Profiles</strong>: Assigned in Steps 1 & 2</div>
-                    <div>• <strong>Skills</strong>: Checkbox Assigned in Step 3</div>
-                    <div>• <strong>Instances</strong>: Dynamic LangGraph Threads</div>
-                  </div>
-                </div>
-              </div>
+                    <div className="p-4 rounded-xl border border-zinc-800 bg-[#0d1017] space-y-2">
+                      <div className="text-xs font-semibold text-zinc-300 flex items-center gap-1.5"><Clock className="w-3.5 h-3.5 text-emerald-400" /> {preview.error ? 'Schedule problem' : describeSchedule(schedule)}</div>
+                      {preview.error ? (
+                        <p className="text-xs text-rose-400">{preview.error}</p>
+                      ) : (
+                        <ol className="text-xs text-zinc-400 space-y-0.5 list-decimal list-inside">
+                          {preview.runs.map((r) => <li key={r.toISOString()}>{formatWhen(r.toISOString(), schedule.timezone)}</li>)}
+                        </ol>
+                      )}
+                      <p className="text-[11px] text-zinc-500">Minimum spacing is {MIN_HEARTBEAT_MINUTES} minutes. Times are in {schedule.timezone}.</p>
+                    </div>
 
-              {/* Schema JSON Payload */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-mono uppercase text-zinc-400">
-                    Relational Blueprint Payload (Supabase Schema Compliant)
-                  </span>
-                  <span className="text-[10px] font-mono text-cyan-400">
-                    INSERT INTO profiles & profile_workers
-                  </span>
-                </div>
-                <pre className="p-4 rounded-xl bg-zinc-950 border border-zinc-800 font-mono text-xs text-emerald-400 overflow-x-auto max-h-56">
-                  {JSON.stringify(
-                    {
-                      profile: {
-                        name: teamName,
-                        tenant_id: tenantId,
-                        supervisor_mcp_profile_id: supervisorMcpProfileId,
-                        supervisor_context_profile_slug: supervisorContextProfileSlug,
-                        supervisor_skills: supervisorSkills,
-                        routing_strategy: routingStrategy,
-                      },
-                      workers: workers.map((w) => ({
-                        name: w.name,
-                        role: w.role,
-                        skills: w.skills,
-                        mcp_profile_id: w.mcpProfileId,
-                        context_profile_slug: w.contextProfileSlug,
-                      })),
-                    },
-                    null,
-                    2
-                  )}
-                </pre>
-              </div>
-
-              <div className="flex items-center justify-between pt-4 border-t border-zinc-800">
-                <button
-                  onClick={() => setActiveStep(3)}
-                  className="px-4 py-2 bg-zinc-800 text-zinc-300 text-xs font-semibold rounded-lg hover:bg-zinc-700 transition-all"
-                >
-                  Back to Skills Assignment
-                </button>
-                <div className="flex items-center gap-3">
-                  <button
-                    disabled={isPublishing}
-                    onClick={handlePublishBlueprint}
-                    className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-emerald-800 text-white text-xs font-semibold rounded-lg flex items-center gap-2 transition-all shadow-md shadow-emerald-900/30"
-                  >
-                    {isPublishing ? (
-                      <>
-                        <RefreshCw className="w-4 h-4 animate-spin" />
-                        Committing to Supabase...
-                      </>
-                    ) : (
-                      <>
-                        <Database className="w-4 h-4" />
-                        Publish Team Blueprint to Postgres
-                      </>
+                    {record && selectedId && (
+                      <div className="p-4 rounded-xl border border-zinc-800 space-y-2 text-xs">
+                        <div className="flex items-center justify-between">
+                          <span className="font-semibold text-zinc-300">Status</span>
+                          <button onClick={runNow} disabled={busy !== null} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50">
+                            {busy === 'run' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />} Run now
+                          </button>
+                        </div>
+                        <div className="grid sm:grid-cols-2 gap-2 text-zinc-400">
+                          <div>Next run: <span className="text-zinc-200">{formatWhen(record.heartbeat_next_run_at, schedule.timezone)}</span></div>
+                          <div>Last run: <span className="text-zinc-200">{formatWhen(record.heartbeat_last_run_at, schedule.timezone)}</span>
+                            {record.heartbeat_last_status && (
+                              <span className={`ml-1.5 ${record.heartbeat_last_status === 'ok' ? 'text-emerald-400' : record.heartbeat_last_status === 'error' ? 'text-rose-400' : 'text-amber-400'}`}>({record.heartbeat_last_status})</span>
+                            )}
+                          </div>
+                          <div>Runs today: <span className="text-zinc-200">{record.heartbeat_runs_today}/{draft.heartbeat.max_runs_per_day}</span></div>
+                          {record.heartbeat_session_id && onLaunchThread && (
+                            <button onClick={() => onLaunchThread(selectedId, record.heartbeat_session_id!)} className="text-left text-emerald-400 hover:text-emerald-300">Open heartbeat instance →</button>
+                          )}
+                        </div>
+                        {record.heartbeat_last_error && <p className="text-rose-400 break-words">{record.heartbeat_last_error}</p>}
+                        <p className="text-[11px] text-zinc-500">Save after changing the schedule; the next run is re-planned on save.</p>
+                      </div>
                     )}
-                  </button>
+                  </>
+                )}
+              </section>
+            )}
+
+            {/* STEP 5 */}
+            {step === 5 && (
+              <section className="space-y-4">
+                <div className="p-4 rounded-xl border border-zinc-800 bg-[#0d1017] text-sm space-y-1">
+                  <div className="text-white font-semibold">{draft.name || 'Untitled team'}</div>
+                  <div className="text-zinc-400 text-xs">
+                    {PROVIDER_LABELS[draft.llm.provider]} · {draft.llm.model || providers.find((p) => p.id === draft.llm.provider)?.defaultModel} ·{' '}
+                    {draft.workers.length ? `supervisor + ${draft.workers.length} worker${draft.workers.length === 1 ? '' : 's'}` : 'single agent'} ·{' '}
+                    {draft.heartbeat.enabled && draft.heartbeat.schedule ? `heartbeat ${describeSchedule(draft.heartbeat.schedule)}` : 'no heartbeat'}
+                  </div>
+                  {issues.length > 0 ? (
+                    <ul className="text-xs text-rose-400 mt-2 space-y-0.5">
+                      {issues.map((i, n) => <li key={n}>• {i.path.join('.') || 'team'}: {i.message}</li>)}
+                    </ul>
+                  ) : (
+                    <p className="text-xs text-emerald-400 mt-2 flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5" /> Ready to save</p>
+                  )}
                 </div>
-              </div>
-            </div>
-          )}
+
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-xs font-semibold text-zinc-300 flex items-center gap-1.5"><Code2 className="w-3.5 h-3.5 text-emerald-400" /> Team as code</span>
+                    <div className="flex items-center gap-2 text-xs">
+                      <button onClick={copyJson} className="flex items-center gap-1 text-zinc-400 hover:text-white">{copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />} Copy</button>
+                      <button onClick={downloadJson} className="flex items-center gap-1 text-zinc-400 hover:text-white"><Download className="w-3.5 h-3.5" /> Download</button>
+                      <button onClick={applyJson} className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-zinc-800 hover:bg-zinc-700 text-white"><Upload className="w-3.5 h-3.5" /> Apply JSON to form</button>
+                    </div>
+                  </div>
+                  <textarea
+                    className={`${inputCls} font-mono text-xs min-h-[360px]`}
+                    value={jsonText}
+                    onChange={(e) => { setJsonText(e.target.value); setJsonError(null); }}
+                    spellCheck={false}
+                  />
+                  {jsonError && <pre className="text-xs text-rose-400 whitespace-pre-wrap">{jsonError}</pre>}
+                  <p className="text-[11px] text-zinc-500">
+                    Paste or edit a team here, apply it, then Save. The same JSON works with <code>POST /api/v1/agent-teams</code>. Profile ids must belong to this organization.
+                  </p>
+                </div>
+              </section>
+            )}
+          </div>
         </div>
-      )}
+      </main>
     </div>
   );
 };
+
+const DayPicker: React.FC<{ label: string; value: number[]; onChange: (days: number[]) => void }> = ({ label, value, onChange }) => (
+  <div>
+    <span className={labelCls}>{label}</span>
+    <div className="flex flex-wrap gap-1.5">
+      {DAY_LABELS.map((d, i) => {
+        const on = value.includes(i);
+        return (
+          <button
+            key={d}
+            onClick={() => onChange(on ? value.filter((x) => x !== i) : [...value, i].sort())}
+            className={`w-11 py-1 rounded-md text-xs border ${on ? 'bg-emerald-600 border-emerald-500 text-white' : 'border-zinc-700 text-zinc-400'}`}
+          >
+            {d}
+          </button>
+        );
+      })}
+      <button onClick={() => onChange([1, 2, 3, 4, 5])} className="text-[11px] text-zinc-400 hover:text-white ml-1">Weekdays</button>
+      <button onClick={() => onChange([0, 1, 2, 3, 4, 5, 6])} className="text-[11px] text-zinc-400 hover:text-white">Every day</button>
+    </div>
+  </div>
+);

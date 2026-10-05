@@ -166,10 +166,7 @@ export default function DashboardPage() {
           )}
 
           {activeTab === 'team-builder' && (
-            <AgentTeamBuilder
-              tenantId="00000000-0000-0000-0000-000000000001"
-              onLaunchThread={handleLaunchThread}
-            />
+            <AgentTeamBuilder onLaunchThread={handleLaunchThread} />
           )}
 
           {activeTab === 'calendar' && (

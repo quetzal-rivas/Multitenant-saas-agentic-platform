@@ -24,6 +24,8 @@ export const createSessionBody = z.object({
   mcp_profile_id: z.string().uuid().nullable().optional(),
   context_profile_id: z.string().uuid().nullable().optional(),
   allowed_tools: z.array(z.enum(toolNames)).max(50).optional(),
+  /** Run a team (supervisor + workers) instead of a single configured agent. */
+  team_id: z.string().uuid().nullable().optional(),
 }).strict();
 
 // Provider and model are fixed once a conversation exists: replaying one provider's
@@ -41,14 +43,15 @@ export const forkSessionBody = z.object({
 }).strict();
 
 const SESSION_COLUMNS =
-  'id, name, agent_type, provider, model, mcp_profile_id, context_profile_id, allowed_tools, forked_from_checkpoint, created_at, last_active_at';
+  'id, name, agent_type, team_id, provider, model, mcp_profile_id, context_profile_id, allowed_tools, forked_from_checkpoint, created_at, last_active_at';
 const CHECKPOINT_SUMMARY_COLUMNS =
   'id, checkpoint_id, session_id, parent_id, step_index, user_message, assistant_message, tools_executed, usage, metadata, created_at';
 
 export interface AgentSession {
   id: string;
   name: string;
-  agent_type: 'single';
+  agent_type: 'single' | 'team';
+  team_id: string | null;
   provider: LLMProvider;
   model: string;
   mcp_profile_id: string | null;
@@ -105,17 +108,29 @@ export async function createSession(ctx: Ctx, raw: unknown, extra: { forkedFrom?
     );
   }
   await assertAttachments(ctx, body.mcp_profile_id, body.context_profile_id);
+  if (body.team_id) {
+    const { data: team } = await getSupabaseAdminClient()
+      .from('agent_teams')
+      .select('id')
+      .eq('id', body.team_id)
+      .eq('tenant_id', ctx.tenantId)
+      .is('archived_at', null)
+      .maybeSingle();
+    if (!team) throw new ServiceError('Team not found in this organization.', 'NOT_FOUND');
+  }
 
   const { data, error } = await getSupabaseAdminClient()
     .from('agent_sessions')
     .insert({
       tenant_id: ctx.tenantId,
+      agent_type: body.team_id ? 'team' : 'single',
+      team_id: body.team_id || null,
       name: body.name,
       provider: body.provider,
       model: body.model || DEFAULT_MODELS[body.provider],
       mcp_profile_id: body.mcp_profile_id || null,
       context_profile_id: body.context_profile_id || null,
-      allowed_tools: body.allowed_tools ?? DEFAULT_SESSION_TOOLS,
+      allowed_tools: body.team_id ? [] : body.allowed_tools ?? DEFAULT_SESSION_TOOLS,
       forked_from_checkpoint: extra.forkedFrom || null,
       created_by: ctx.authMode === 'session' ? ctx.userId : null,
     })
@@ -241,7 +256,8 @@ export async function forkSession(ctx: Ctx, raw: unknown) {
       model: source.model,
       mcp_profile_id: source.mcp_profile_id,
       context_profile_id: source.context_profile_id,
-      allowed_tools: source.allowed_tools,
+      allowed_tools: source.team_id ? undefined : source.allowed_tools,
+      team_id: source.team_id,
     },
     { forkedFrom: checkpoint.id as string }
   );

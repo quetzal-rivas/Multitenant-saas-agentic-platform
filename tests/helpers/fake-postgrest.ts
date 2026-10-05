@@ -17,6 +17,7 @@ function matches(row: Row, params: URLSearchParams): boolean {
     const value = row[col];
     if (op === 'eq' && String(value) !== raw) return false;
     if (op === 'is' && raw === 'null' && value !== null && value !== undefined) return false;
+    if (op === 'lte' && !(value !== null && value !== undefined && String(value) <= raw)) return false;
   }
   return true;
 }
@@ -89,6 +90,11 @@ export async function fakePostgrest(input: RequestInfo | URL, init?: RequestInit
     const updated = rows.filter((r) => matches(r, url.searchParams));
     updated.forEach((r) => Object.assign(r, patch));
     return respond(updated.map((r) => project(r, select)), accept);
+  }
+  if (method === 'DELETE') {
+    const removed = rows.filter((r) => matches(r, url.searchParams));
+    tables[table] = rows.filter((r) => !removed.includes(r));
+    return respond(removed.map((r) => project(r, select)), accept);
   }
   return new Response('unsupported', { status: 500 });
 }

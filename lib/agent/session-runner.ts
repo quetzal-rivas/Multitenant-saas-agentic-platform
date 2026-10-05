@@ -8,11 +8,14 @@ import { PLATFORM_TOOL_DEFINITIONS, canonicalToolName, getAuthorizedPlatformTool
 import { getSession, latestCheckpoint, toTranscript, type AgentSession } from '@/lib/services/agent-sessions';
 import { contextProfileInstructions, getContextProfile } from '@/lib/services/context-profiles';
 import { getProfile } from '@/lib/services/profiles';
+import { getTeam, type AgentTeam, type TeamWorker } from '@/lib/services/teams';
 import { ServiceError, isServiceError } from '@/lib/services/errors';
 import { emitRunEvent } from './supervisor-graph';
 import { generateLLMResponse, type LLMMessage, type LLMToolDefinition } from './providers/llm-adapter';
 
 export const MAX_AGENT_STEPS = 8;
+/** Steps a worker may take per delegated task (workers cannot delegate further). */
+export const MAX_WORKER_STEPS = 6;
 const MAX_TOOL_RESULT_CHARS = 20_000;
 
 export interface ToolExecutionRecord {
@@ -22,6 +25,8 @@ export interface ToolExecutionRecord {
   output: unknown;
   isError: boolean;
   latencyMs: number;
+  /** Set when a team worker (not the supervisor) made the call. */
+  worker?: string;
 }
 
 export interface TurnResult {
@@ -51,40 +56,83 @@ export function resolveSessionTools(session: Pick<AgentSession, 'allowed_tools'>
   return sessionTools.filter((t) => keyTools.has(t.name));
 }
 
+async function contextProfileSection(ctx: Ctx, id: string | null): Promise<string | null> {
+  if (!id) return null;
+  try {
+    const profile = await getContextProfile(ctx, id);
+    const instructions = contextProfileInstructions(profile);
+    return instructions ? `## Context profile: ${profile.name}\n${instructions}` : null;
+  } catch (err) {
+    if (!isServiceError(err)) throw err; // archived/removed profile: run without it
+    return null;
+  }
+}
+
+async function mcpProfileSection(ctx: Ctx, id: string | null): Promise<string | null> {
+  if (!id) return null;
+  try {
+    const { profile } = await getProfile(ctx, { profile_id: id });
+    const external: string[] = (profile.settings as any)?.selectedToolNames || [];
+    return (
+      `## MCP profile: ${profile.name}\n${profile.description || ''}`.trim() +
+      (external.length
+        ? `\nThis profile lists external tools (${external.join(', ')}) whose accounts are not connected yet; they are unavailable in this session.`
+        : '')
+    );
+  } catch (err) {
+    if (!isServiceError(err)) throw err;
+    return null;
+  }
+}
+
+const GROUNDING =
+  'Use the provided tools to read or change organization data instead of guessing. ' +
+  'If a request needs a capability you have no tool for, say so plainly. Never invent tool results, ids, or records.';
+
 async function buildSystemPrompt(ctx: Ctx, session: AgentSession): Promise<string> {
   const sections = [
     `You are "${session.name}", an assistant operating inside a Context Control organization.`,
-    'Use the provided tools to read or change organization data instead of guessing. ' +
-      'If a request needs a capability you have no tool for, say so plainly. ' +
-      'Never invent tool results, ids, or records.',
+    GROUNDING,
+    await contextProfileSection(ctx, session.context_profile_id),
+    await mcpProfileSection(ctx, session.mcp_profile_id),
   ];
+  return sections.filter(Boolean).join('\n\n');
+}
 
-  if (session.context_profile_id) {
-    try {
-      const profile = await getContextProfile(ctx, session.context_profile_id);
-      const instructions = contextProfileInstructions(profile);
-      if (instructions) sections.push(`## Context profile: ${profile.name}\n${instructions}`);
-    } catch (err) {
-      if (!isServiceError(err)) throw err; // archived/removed profile: run without it
-    }
-  }
+async function buildSupervisorPrompt(ctx: Ctx, team: AgentTeam): Promise<string> {
+  const roster = team.workers.length
+    ? '## Your team\n' +
+      team.workers.map((w) => `- ${w.name} (tool \`${delegateToolName(w)}\`): ${w.role}`).join('\n') +
+      '\nDelegate a task to the worker best suited for it by calling their tool with a complete, self-contained task. ' +
+      'Workers cannot see this conversation, so include every detail they need. You can call several workers, ' +
+      'use your own tools, and then combine the results into one answer.'
+    : null;
+  const sections = [
+    `You are the supervisor of the "${team.name}" team in a Context Control organization.` +
+      (team.description ? `\nTeam purpose: ${team.description}` : ''),
+    GROUNDING,
+    team.supervisor_instructions ? `## Supervisor instructions\n${team.supervisor_instructions}` : null,
+    roster,
+    await contextProfileSection(ctx, team.supervisor_context_profile_id),
+    await mcpProfileSection(ctx, team.supervisor_mcp_profile_id),
+  ];
+  return sections.filter(Boolean).join('\n\n');
+}
 
-  if (session.mcp_profile_id) {
-    try {
-      const { profile } = await getProfile(ctx, { profile_id: session.mcp_profile_id });
-      const external: string[] = (profile.settings as any)?.selectedToolNames || [];
-      sections.push(
-        `## MCP profile: ${profile.name}\n${profile.description || ''}`.trim() +
-          (external.length
-            ? `\nThis profile lists external tools (${external.join(', ')}) whose accounts are not connected yet; they are unavailable in this session.`
-            : '')
-      );
-    } catch (err) {
-      if (!isServiceError(err)) throw err;
-    }
-  }
+async function buildWorkerPrompt(ctx: Ctx, team: AgentTeam, worker: TeamWorker): Promise<string> {
+  const sections = [
+    `You are ${worker.name}, a worker on the "${team.name}" team. Your role: ${worker.role}.`,
+    'Your supervisor sends you one task at a time. Complete it and reply with a concise, factual result for the supervisor.',
+    GROUNDING,
+    worker.instructions ? `## Instructions\n${worker.instructions}` : null,
+    await contextProfileSection(ctx, worker.context_profile_id),
+    await mcpProfileSection(ctx, worker.mcp_profile_id),
+  ];
+  return sections.filter(Boolean).join('\n\n');
+}
 
-  return sections.join('\n\n');
+export function delegateToolName(worker: Pick<TeamWorker, 'slug'>): string {
+  return `delegate_to_${worker.slug}`;
 }
 
 /** Surface LLM provider failures (bad key, rate limit, unknown model) as a 502 the UI can show. */
@@ -115,6 +163,105 @@ function serializeToolOutput(value: unknown): string {
   return text.length > MAX_TOOL_RESULT_CHARS ? `${text.slice(0, MAX_TOOL_RESULT_CHARS)}… [truncated]` : text;
 }
 
+interface LoopTool {
+  def: LLMToolDefinition;
+  run: (args: Record<string, any>) => Promise<unknown>;
+}
+
+/**
+ * Model <-> tools loop shared by single agents, supervisors and workers. Appends
+ * every assistant/tool message to `messages` and returns the final text.
+ */
+async function runToolLoop(opts: {
+  generate: typeof generateLLMResponse;
+  provider: AgentSession['provider'];
+  model: string;
+  apiKey: string;
+  systemPrompt: string;
+  messages: LLMMessage[];
+  tools: Map<string, LoopTool>;
+  maxSteps: number;
+  worker?: string;
+  usage: TurnResult['usage'];
+  onModel: (servedBy: string) => void;
+  onTool: (record: ToolExecutionRecord) => Promise<void>;
+}): Promise<string> {
+  const defs = [...opts.tools.values()].map((t) => t.def);
+  let finalText = '';
+  for (let step = 1; step <= opts.maxSteps; step++) {
+    opts.usage.steps += 1;
+    let result;
+    try {
+      result = await opts.generate({
+        provider: opts.provider,
+        model: opts.model,
+        apiKey: opts.apiKey,
+        systemPrompt: opts.systemPrompt,
+        messages: opts.messages,
+        tools: defs,
+      });
+    } catch (err) {
+      throw providerError(opts.provider, err);
+    }
+    opts.usage.inputTokens += result.usage.inputTokens;
+    opts.usage.outputTokens += result.usage.outputTokens;
+    opts.usage.totalTokens += result.usage.totalTokens;
+    if (result.model) opts.onModel(result.model);
+
+    if (result.finishReason === 'refusal') {
+      finalText = 'The model declined to answer this request.';
+      opts.messages.push({ role: 'assistant', content: finalText });
+      return finalText;
+    }
+
+    opts.messages.push({
+      role: 'assistant',
+      content: result.text,
+      ...(result.toolCalls?.length ? { toolCalls: result.toolCalls } : {}),
+      ...(result.providerContent ? { providerContent: result.providerContent } : {}),
+    });
+    if (result.text) finalText = result.text;
+    if (!result.toolCalls?.length) return finalText;
+
+    for (const call of result.toolCalls) {
+      const started = Date.now();
+      let output: unknown;
+      let isError = false;
+      const tool = opts.tools.get(call.name);
+      if (!tool) {
+        output = `Tool '${call.name}' is not enabled here.`;
+        isError = true;
+      } else {
+        try {
+          output = await tool.run(call.arguments);
+        } catch (err) {
+          isError = true;
+          output = isServiceError(err) || err instanceof Error ? (err as Error).message : 'Tool execution failed.';
+        }
+      }
+      await opts.onTool({
+        toolName: call.name,
+        toolCallId: call.id,
+        arguments: call.arguments,
+        output,
+        isError,
+        latencyMs: Date.now() - started,
+        ...(opts.worker ? { worker: opts.worker } : {}),
+      });
+      opts.messages.push({
+        role: 'tool',
+        toolCallId: call.id,
+        name: call.name,
+        content: serializeToolOutput(output),
+        ...(isError ? { isError: true } : {}),
+      });
+    }
+  }
+  finalText = `${finalText ? `${finalText}\n\n` : ''}(Stopped after ${opts.maxSteps} tool steps.)`;
+  opts.messages.push({ role: 'assistant', content: finalText });
+  return finalText;
+}
+
 /**
  * Run one user turn for an Agent Studio instance: rehydrate state from the latest
  * checkpoint, loop model ↔ real platform tools on the tenant's own LLM key, and
@@ -130,24 +277,20 @@ export async function runSessionTurn(
   const getSecret = deps.getSecret || getTenantSecret;
 
   const session = await getSession(ctx, sessionId);
-  const apiKey = await getSecret(ctx.tenantId, session.provider);
+  const team = session.team_id ? await getTeam(ctx, session.team_id) : null;
+  const provider = team?.provider ?? session.provider;
+  const model = team?.model ?? session.model;
+
+  const apiKey = await getSecret(ctx.tenantId, provider);
   if (!apiKey) {
     throw new ServiceError(
-      `No ${session.provider} API key is stored for this organization. Add one in Account & Billing → LLM keys.`,
+      `No ${provider} API key is stored for this organization. Add one in Account & Billing → LLM keys.`,
       'CONFLICT'
     );
   }
 
   const previous = await latestCheckpoint(ctx, session.id);
   const state: LLMMessage[] = [...(previous?.state || []), { role: 'user', content: message }];
-  const systemPrompt = await buildSystemPrompt(ctx, session);
-  const tools = resolveSessionTools(session, ctx);
-  const toolDefs: LLMToolDefinition[] = tools.map((t) => ({
-    name: t.name,
-    description: t.description,
-    parameters: toolInputJsonSchema(t),
-  }));
-  const allowedNames = new Set<string>(tools.map((t) => t.name));
   const toolCtx = { tenantId: ctx.tenantId, userId: ctx.userId, authMode: ctx.authMode, apiKeyId: ctx.apiKeyId };
 
   const runId = `run_${crypto.randomUUID()}`;
@@ -158,90 +301,93 @@ export async function runSessionTurn(
     step_name: 'start',
     status: 'running',
     event_type: 'agent_start',
-    payload: { sessionId: session.id, provider: session.provider, model: session.model },
+    payload: { sessionId: session.id, provider, model, teamId: team?.id ?? null },
   });
 
   const executions: ToolExecutionRecord[] = [];
   const usage = { inputTokens: 0, outputTokens: 0, totalTokens: 0, steps: 0 };
-  let finalText = '';
-  let servedBy = session.model;
+  const workersUsed = new Set<string>();
+  let servedBy = model;
 
-  try {
-    for (let step = 1; step <= MAX_AGENT_STEPS; step++) {
-      usage.steps = step;
-      let result;
-      try {
-        result = await generate({
-          provider: session.provider,
-          model: session.model,
-          apiKey,
-          systemPrompt,
-          messages: state,
-          tools: toolDefs,
-        });
-      } catch (err) {
-        throw providerError(session.provider, err);
-      }
-      usage.inputTokens += result.usage.inputTokens;
-      usage.outputTokens += result.usage.outputTokens;
-      usage.totalTokens += result.usage.totalTokens;
-      if (result.model) servedBy = result.model;
+  const platformTools = (names: string[]): Map<string, LoopTool> =>
+    new Map(
+      resolveSessionTools({ allowed_tools: names }, ctx).map((t) => [
+        t.name,
+        {
+          def: { name: t.name, description: t.description, parameters: toolInputJsonSchema(t) },
+          run: (args: Record<string, any>) => executePlatformTool(t.name, args, toolCtx),
+        },
+      ])
+    );
 
-      if (result.finishReason === 'refusal') {
-        finalText = 'The model declined to answer this request.';
-        state.push({ role: 'assistant', content: finalText });
-        break;
-      }
-
-      state.push({
-        role: 'assistant',
-        content: result.text,
-        ...(result.toolCalls?.length ? { toolCalls: result.toolCalls } : {}),
-        ...(result.providerContent ? { providerContent: result.providerContent } : {}),
-      });
-      if (result.text) finalText = result.text;
-
-      if (!result.toolCalls?.length) break;
-
-      for (const call of result.toolCalls) {
-        const started = Date.now();
-        let output: unknown;
-        let isError = false;
-        if (!allowedNames.has(call.name)) {
-          output = `Tool '${call.name}' is not enabled for this instance.`;
-          isError = true;
-        } else {
-          try {
-            output = await executePlatformTool(call.name, call.arguments, toolCtx);
-          } catch (err) {
-            isError = true;
-            output = err instanceof Error ? err.message : 'Tool execution failed.';
-          }
-        }
-        const latencyMs = Date.now() - started;
-        executions.push({ toolName: call.name, toolCallId: call.id, arguments: call.arguments, output, isError, latencyMs });
-        state.push({
-          role: 'tool',
-          toolCallId: call.id,
-          name: call.name,
-          content: serializeToolOutput(output),
-          ...(isError ? { isError: true } : {}),
-        });
+  const loop = (opts: { systemPrompt: string; messages: LLMMessage[]; tools: Map<string, LoopTool>; model: string; maxSteps: number; worker?: string }) =>
+    runToolLoop({
+      ...opts,
+      generate,
+      provider,
+      apiKey,
+      usage,
+      onModel: (served) => {
+        if (!opts.worker) servedBy = served;
+      },
+      onTool: async (record) => {
+        executions.push(record);
         await emit({
           run_id: runId,
           tenant_id: ctx.tenantId,
-          step_name: `step_${step}_${call.name}`,
-          status: isError ? 'failed' : 'completed',
+          step_name: `${record.worker ? `${record.worker}:` : ''}${record.toolName}`,
+          status: record.isError ? 'failed' : 'completed',
           event_type: 'tool_result',
-          payload: { toolName: call.name, latencyMs, isError },
+          payload: { toolName: record.toolName, worker: record.worker ?? null, latencyMs: record.latencyMs, isError: record.isError },
         });
-      }
+      },
+    });
 
-      if (step === MAX_AGENT_STEPS) {
-        finalText = `${finalText ? `${finalText}\n\n` : ''}(Stopped after ${MAX_AGENT_STEPS} tool steps.)`;
-        state.push({ role: 'assistant', content: finalText });
-      }
+  let systemPrompt: string;
+  let tools: Map<string, LoopTool>;
+  if (team) {
+    systemPrompt = await buildSupervisorPrompt(ctx, team);
+    tools = platformTools(team.supervisor_tools);
+    for (const worker of team.workers) {
+      const name = delegateToolName(worker);
+      tools.set(name, {
+        def: {
+          name,
+          description: `Delegate a task to ${worker.name}: ${worker.role}. Returns the worker's answer.`,
+          parameters: {
+            type: 'object',
+            properties: {
+              task: { type: 'string', description: 'Complete, self-contained instructions for the worker.' },
+              context: { type: 'string', description: 'Facts from the conversation the worker needs.' },
+            },
+            required: ['task'],
+            additionalProperties: false,
+          },
+        },
+        run: async (args: Record<string, any>) => {
+          if (typeof args.task !== 'string' || !args.task.trim()) throw new ServiceError('task is required', 'INVALID');
+          workersUsed.add(worker.name);
+          const brief = args.context ? `${args.task}\n\nContext from the supervisor:\n${args.context}` : args.task;
+          const answer = await loop({
+            systemPrompt: await buildWorkerPrompt(ctx, team, worker),
+            messages: [{ role: 'user', content: brief }],
+            tools: platformTools(worker.tools),
+            model: worker.model || team.model,
+            maxSteps: MAX_WORKER_STEPS,
+            worker: worker.name,
+          });
+          return { worker: worker.name, answer: answer || '(the worker returned no answer)' };
+        },
+      });
     }
+  } else {
+    systemPrompt = await buildSystemPrompt(ctx, session);
+    tools = platformTools(session.allowed_tools);
+  }
+
+  let finalText: string;
+  try {
+    finalText = await loop({ systemPrompt, messages: state, tools, model, maxSteps: MAX_AGENT_STEPS });
   } catch (err) {
     await emit({
       run_id: runId,
@@ -270,11 +416,18 @@ export async function runSessionTurn(
       user_message: message,
       assistant_message: finalText,
       tools_executed: executions,
-      compiled_tools_count: tools.length,
-      compiled_tools_names: tools.map((t) => t.name),
+      compiled_tools_count: tools.size,
+      compiled_tools_names: [...tools.keys()],
       usage,
       state,
-      metadata: { provider: session.provider, requested_model: session.model, served_by: servedBy, run_id: runId, caller: ctx.authMode },
+      metadata: {
+        provider,
+        requested_model: model,
+        served_by: servedBy,
+        run_id: runId,
+        caller: ctx.authMode,
+        ...(team ? { team_id: team.id, workers_used: [...workersUsed] } : {}),
+      },
     })
     .select('id')
     .single();

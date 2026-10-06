@@ -241,3 +241,13 @@ describe('MCP Hub connections (fake Google + in-process remote MCP server)', () 
     assert.equal(view.google.connected, false);
   });
 });
+
+describe('public origin behind the CDN', () => {
+  test('uses forwarded host headers instead of the internal server address', async () => {
+    const { publicOrigin } = await import('../lib/http/public-origin');
+    const req = new NextRequest('https://localhost:3000/api/v1/connections', { headers: { 'x-forwarded-host': 'www.contextcontrol.com.mx', 'x-forwarded-proto': 'https' } });
+    assert.equal(publicOrigin(req), 'https://www.contextcontrol.com.mx');
+    assert.equal(publicOrigin(new NextRequest('https://app.test/x')), 'https://app.test');
+    assert.equal(publicOrigin(new NextRequest('https://localhost:3000/x', { headers: { host: 'evil.com/<x>' } })), 'https://localhost:3000');
+  });
+});

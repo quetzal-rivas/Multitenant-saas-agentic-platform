@@ -1,6 +1,7 @@
 export const dynamic = 'force-dynamic';
 
 import { NextRequest, NextResponse } from 'next/server';
+import { publicOrigin } from '@/lib/http/public-origin';
 import { completeGoogleConnect } from '@/lib/services/connections';
 import { isServiceError } from '@/lib/services/errors';
 
@@ -20,7 +21,7 @@ h2{color:${ok ? '#10b981' : '#ef4444'};margin-top:0}</style></head>
 
 /** Google redirects here after consent. */
 export async function GET(req: NextRequest) {
-  const origin = process.env.APP_URL || req.nextUrl.origin;
+  const origin = publicOrigin(req);
   const q = req.nextUrl.searchParams;
   const error = q.get('error');
   if (error) return page(origin, false, 'Connection cancelled', error === 'access_denied' ? 'You did not grant access.' : error);

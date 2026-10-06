@@ -159,6 +159,8 @@ jobs:
           # Execution role for AI Function Studio Lambdas (CloudWatch Logs only); not a secret.
           FUNCTION_EXEC_ROLE_ARN="arn:aws:iam::$(aws sts get-caller-identity --query Account --output text):role/ContextControlFunctionExecRole"
           # Google OAuth client for MCP Hub; only sent once both secrets exist.
+          # Spoken-audio cache bucket (scripts/aws/setup-voice-cache.sh). If it is missing, the app skips caching.
+          VOICE_ENV=",VOICE_CACHE_BUCKET=cc-voice-cache-$(aws sts get-caller-identity --query Account --output text)"
           WORKER_ENV=""
           if aws lambda get-function --function-name cc-agent-worker >/dev/null 2>&1; then
             WORKER_ENV=",AGENT_WORKER_FUNCTION=cc-agent-worker"
@@ -173,7 +175,7 @@ jobs:
             --app-id "$AMPLIFY_ID" \
             --region "$AWS_REGION" \
             --environment-variables \
-              "NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL,NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY,SUPABASE_SERVICE_ROLE_KEY=$SUPABASE_SERVICE_ROLE_KEY,STRIPE_SECRET_KEY=$STRIPE_SECRET_KEY,STRIPE_WEBHOOK_SECRET=$STRIPE_WEBHOOK_SECRET,KMS_KEY_ID=$KMS_KEY_ID,DEMO_MODE=$DEMO_MODE,NEXT_PUBLIC_DEMO_MODE=$NEXT_PUBLIC_DEMO_MODE,ENABLE_VOICE_CALLS=$ENABLE_VOICE_CALLS,CLIENT_TOKEN_SIGNING_KEY=$CLIENT_TOKEN_SIGNING_KEY,FUNCTION_EXEC_ROLE_ARN=$FUNCTION_EXEC_ROLE_ARN,FUNCTION_DEPLOYER_NAME=cc-function-deployer${GOOGLE_ENV}${WORKER_ENV}"
+              "NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL,NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY,SUPABASE_SERVICE_ROLE_KEY=$SUPABASE_SERVICE_ROLE_KEY,STRIPE_SECRET_KEY=$STRIPE_SECRET_KEY,STRIPE_WEBHOOK_SECRET=$STRIPE_WEBHOOK_SECRET,KMS_KEY_ID=$KMS_KEY_ID,DEMO_MODE=$DEMO_MODE,NEXT_PUBLIC_DEMO_MODE=$NEXT_PUBLIC_DEMO_MODE,ENABLE_VOICE_CALLS=$ENABLE_VOICE_CALLS,CLIENT_TOKEN_SIGNING_KEY=$CLIENT_TOKEN_SIGNING_KEY,FUNCTION_EXEC_ROLE_ARN=$FUNCTION_EXEC_ROLE_ARN,FUNCTION_DEPLOYER_NAME=cc-function-deployer${GOOGLE_ENV}${WORKER_ENV}${VOICE_ENV}"
 
           echo "2. Cancelling any active or pending Amplify jobs..."
           ACTIVE_JOBS=$(aws amplify list-jobs --app-id "$AMPLIFY_ID" --branch-name main --region "$AWS_REGION" --query "jobSummaries[?status=='PENDING' || status=='RUNNING'].jobId" --output text || true)

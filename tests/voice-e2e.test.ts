@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { test, describe, before, after, beforeEach } from 'node:test';
 import { NextRequest } from 'next/server';
 import { fakePostgrest, resetTables, tables } from './helpers/fake-postgrest';
+import { setAudioCacheForTests } from '../lib/voice/audio-cache';
 import { speakWithFallback, transcribeWithFallback, setVoiceSecretGetterForTests, PLATFORM_VOICE_PROFILE, listProviderVoices } from '../lib/voice/engine';
 import { pcmToWav } from '../lib/voice/providers/gemini';
 import { splitSentences, toSpeakable } from '../lib/voice/spoken';
@@ -103,6 +104,28 @@ describe('Voice: engine, profiles, voice turns, conversations', () => {
     });
     // Without fallback, a failure is an error instead of a silent switch.
     await assert.rejects(speakWithFallback(TENANT, { ...profile, fallback: false }, 'Hi'), /No text-to-speech provider/);
+  });
+
+  test('spoken audio is cached per org and voice: the second request skips the provider', async () => {
+    const store = new Map<string, { audio: Buffer; mime: string }>();
+    setAudioCacheForTests({ get: async (k) => store.get(k) ?? null, put: async (k, v) => void store.set(k, v) });
+    try {
+      const first = await speakWithFallback(TENANT, PLATFORM_VOICE_PROFILE, 'Two tasks are open.');
+      const geminiCalls = providers.calls.length;
+      const again = await speakWithFallback(TENANT, PLATFORM_VOICE_PROFILE, 'Two tasks are open.');
+      assert.equal('cached' in first && first.cached, false);
+      assert.equal('cached' in again && again.cached, true);
+      assert.equal(providers.calls.length, geminiCalls, 'no second provider call');
+      assert.equal(tables.voice_usage[0].tts_chars, 'Two tasks are open.'.length, 'quota counted once');
+      assert.ok([...store.keys()][0].startsWith(`tts/${TENANT}/gemini/`));
+
+      // Another voice or another org is a different clip.
+      await speakWithFallback(TENANT, { ...PLATFORM_VOICE_PROFILE, tts: { provider: 'gemini', voice_id: 'Kore', speed: 1.2 } }, 'Two tasks are open.');
+      keys = { gemini: 'g' };
+      assert.equal(store.size, 2);
+    } finally {
+      setAudioCacheForTests(null);
+    }
   });
 
   test('daily caps skip a provider and usage is counted per day and provider', async () => {

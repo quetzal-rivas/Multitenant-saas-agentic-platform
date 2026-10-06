@@ -3,7 +3,8 @@ import { getTenantSecret, listTenantSecrets, type BYOKProvider } from '@/lib/sec
 import { ServiceError } from '@/lib/services/errors';
 import { DEFAULT_VOICE, VOICE_PROVIDER_KEY, VOICE_PROVIDER_LABEL, type VoiceProfileInput, type VoiceProviderId } from './profile-spec';
 import { VOICE_PROVIDER_IMPLS } from './providers';
-import { VoiceProviderError, type SpeechAudio, type VoiceInfo } from './types';
+import { VoiceProviderError, type SpeechAudio, type SynthesizeOptions, type VoiceInfo } from './types';
+import { audioCacheKey, getCachedAudio, putCachedAudio } from './audio-cache';
 
 /**
  * Provider-neutral speech engine. Each call walks a chain: the profile's provider, then
@@ -32,7 +33,7 @@ export type TranscribeResult =
   | { text: string; provider: VoiceProviderId; attempts: Attempt[] }
   | { fallback: 'browser'; attempts: Attempt[] };
 
-export type SpeakResult = (SpeechAudio & { provider: VoiceProviderId; attempts: Attempt[] }) | { fallback: 'browser'; attempts: Attempt[] };
+export type SpeakResult = (SpeechAudio & { provider: VoiceProviderId; attempts: Attempt[]; cached: boolean }) | { fallback: 'browser'; attempts: Attempt[] };
 
 type SecretGetter = (tenantId: string, provider: BYOKProvider) => Promise<string | null>;
 let secretGetter: SecretGetter = getTenantSecret;
@@ -138,6 +139,20 @@ export async function speakWithFallback(tenantId: string, profile: VoiceProfileL
   const attempts: Attempt[] = [];
   for (const provider of chain(profile.tts.provider, profile.fallback)) {
     if (provider === 'browser') return { fallback: 'browser', attempts };
+    const own = provider === profile.tts.provider;
+    const opts: SynthesizeOptions = {
+      // The chosen voice belongs to the chosen provider; a fallback uses its default voice.
+      voiceId: own ? profile.tts.voice_id ?? DEFAULT_VOICE[provider] : DEFAULT_VOICE[provider],
+      model: own ? profile.tts.model : null,
+      speed: profile.tts.speed,
+      style: profile.tts.style,
+      language: profile.language,
+    };
+    // Already spoken once with this exact voice and text: serve it from S3 (no provider call, no quota).
+    const cacheKey = audioCacheKey(tenantId, provider, text, opts);
+    const cached = await getCachedAudio(cacheKey);
+    if (cached) return { ...cached, provider, attempts, cached: true };
+
     const impl = VOICE_PROVIDER_IMPLS[provider]!;
     const key = await keyFor(tenantId, provider);
     if (!key) {
@@ -148,18 +163,10 @@ export async function speakWithFallback(tenantId: string, profile: VoiceProfileL
       attempts.push({ provider, error: 'daily cap reached' });
       continue;
     }
-    const own = provider === profile.tts.provider;
     try {
-      const speech = await impl.synthesize(key, text, {
-        // The chosen voice belongs to the chosen provider; a fallback uses its default voice.
-        voiceId: own ? profile.tts.voice_id ?? DEFAULT_VOICE[provider] : DEFAULT_VOICE[provider],
-        model: own ? profile.tts.model : null,
-        speed: profile.tts.speed,
-        style: profile.tts.style,
-        language: profile.language,
-      });
-      await recordVoiceUsage(tenantId, provider, { tts_chars: text.length });
-      return { ...speech, provider, attempts };
+      const speech = await impl.synthesize(key, text, opts);
+      await Promise.all([recordVoiceUsage(tenantId, provider, { tts_chars: text.length }), putCachedAudio(cacheKey, speech)]);
+      return { ...speech, provider, attempts, cached: false };
     } catch (err) {
       attempts.push({ provider, error: describe(err) });
     }

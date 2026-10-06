@@ -25,6 +25,7 @@ export async function POST(req: NextRequest) {
         'Content-Type': result.mime,
         'Cache-Control': 'no-store',
         'X-Voice-Provider': result.provider,
+        'X-Voice-Cache': result.cached ? 'hit' : 'miss',
         'X-Voice-Fallbacks': result.attempts.map((a) => a.provider).join(','),
         'X-Voice-Latency-Ms': String(Date.now() - started),
       },

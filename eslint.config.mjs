@@ -8,7 +8,7 @@ const __dirname = path.dirname(__filename);
 
 export default defineConfig([
   // Claude Code worktrees (.claude/worktrees/*) are full copies of the repo; never lint them here.
-  { ignores: [".claude/**", "dist/**"] },
+  { ignores: [".claude/**", "dist/**", "legacy/**"] },
   {
     extends: [...next],
     ignores: [

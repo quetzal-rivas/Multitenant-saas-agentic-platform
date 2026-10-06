@@ -20,6 +20,8 @@ import {
   Pencil,
   Maximize2,
   Minimize2,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import type { HeartbeatSchedule } from '@/lib/agent/heartbeat-schedule';
 import { ScheduleEditor, formatWhen } from '@/components/ScheduleEditor';
@@ -140,9 +142,37 @@ function groupDay(items: CalendarItem[]): Array<CalendarItem & { count?: number 
   return out;
 }
 
+type Layer = 'task' | 'task_run' | 'heartbeat' | 'board_due';
+const LAYERS: Array<{ key: Layer; label: string; swatch: string }> = [
+  { key: 'task', label: 'Scheduled tasks', swatch: 'bg-sky-700' },
+  { key: 'task_run', label: 'Past runs', swatch: 'bg-emerald-700' },
+  { key: 'heartbeat', label: 'Heartbeats', swatch: 'bg-violet-700' },
+  { key: 'board_due', label: 'Board due dates', swatch: 'bg-amber-700' },
+];
+// Heartbeats repeat every day, so they start hidden; the toggle brings them back.
+const DEFAULT_LAYERS: Record<Layer, boolean> = { task: true, task_run: true, heartbeat: false, board_due: true };
+const PREFS_KEY = 'cc.calendar.prefs.v1';
+
+interface CalendarPrefs {
+  layers: Record<Layer, boolean>;
+  team: string;
+  hidden: string[];
+}
+
+function loadPrefs(): CalendarPrefs {
+  const fallback = { layers: DEFAULT_LAYERS, team: '', hidden: [] };
+  try {
+    const raw = JSON.parse(window.localStorage.getItem(PREFS_KEY) || 'null');
+    if (!raw) return fallback;
+    return { layers: { ...DEFAULT_LAYERS, ...raw.layers }, team: typeof raw.team === 'string' ? raw.team : '', hidden: Array.isArray(raw.hidden) ? raw.hidden : [] };
+  } catch {
+    return fallback;
+  }
+}
+
 // ---------------------------------------------------------------------------
 
-export const TaskCalendarView: React.FC<{ onNavigateToStudio?: () => void }> = ({ onNavigateToStudio }) => {
+export const TaskCalendarView: React.FC<{ onNavigateToStudio?: () => void; onNavigate?: (tab: string) => void }> = ({ onNavigateToStudio, onNavigate }) => {
   const [view, setView] = useState<'month' | 'week'>('month');
   const [cursor, setCursor] = useState(() => startOfDay(new Date()));
   const [items, setItems] = useState<CalendarItem[]>([]);
@@ -155,6 +185,23 @@ export const TaskCalendarView: React.FC<{ onNavigateToStudio?: () => void }> = (
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const [fullscreen, setFullscreen] = useState(false);
+  const [prefs, setPrefs] = useState<CalendarPrefs>({ layers: DEFAULT_LAYERS, team: '', hidden: [] });
+  const [infoItem, setInfoItem] = useState<CalendarItem | null>(null);
+
+  useEffect(() => setPrefs(loadPrefs()), []);
+  const updatePrefs = (patch: Partial<CalendarPrefs>) =>
+    setPrefs((p) => {
+      const next = { ...p, ...patch };
+      try {
+        window.localStorage.setItem(PREFS_KEY, JSON.stringify(next));
+      } catch {
+        /* storage unavailable: keep it for this visit */
+      }
+      return next;
+    });
+  const toggleLayer = (key: Layer) => updatePrefs({ layers: { ...prefs.layers, [key]: !prefs.layers[key] } });
+  const toggleHidden = (taskId: string) =>
+    updatePrefs({ hidden: prefs.hidden.includes(taskId) ? prefs.hidden.filter((id) => id !== taskId) : [...prefs.hidden, taskId] });
 
   useEffect(() => {
     const onChange = () => setFullscreen(document.fullscreenElement === rootRef.current);
@@ -203,14 +250,29 @@ export const TaskCalendarView: React.FC<{ onNavigateToStudio?: () => void }> = (
     return () => clearInterval(t);
   }, [load]);
 
+  const visibleItems = useMemo(() => {
+    const taskTeam = new Map(tasks.map((t) => [t.id, t.team_id]));
+    const hidden = new Set(prefs.hidden);
+    return items.filter((it) => {
+      if (!prefs.layers[it.kind]) return false;
+      const isTask = it.kind === 'task' || it.kind === 'task_run';
+      if (isTask && hidden.has(it.ref_id)) return false;
+      if (prefs.team) {
+        const team = isTask ? taskTeam.get(it.ref_id) ?? it.team_id : it.team_id;
+        if (team !== prefs.team) return false;
+      }
+      return true;
+    });
+  }, [items, tasks, prefs]);
+
   const byDay = useMemo(() => {
     const m = new Map<string, CalendarItem[]>();
-    for (const it of items) {
+    for (const it of visibleItems) {
       const k = dayKey(new Date(it.at));
       m.set(k, [...(m.get(k) || []), it]);
     }
     return m;
-  }, [items]);
+  }, [visibleItems]);
 
   const today = dayKey(new Date());
   const title =
@@ -221,7 +283,9 @@ export const TaskCalendarView: React.FC<{ onNavigateToStudio?: () => void }> = (
 
   const openItem = (it: CalendarItem) => {
     if (it.kind === 'task' || it.kind === 'task_run') setOpenTaskId(it.ref_id);
+    else setInfoItem(it);
   };
+  const hiddenCount = tasks.filter((t) => prefs.hidden.includes(t.id)).length;
 
   return (
     <div ref={rootRef} className="h-full flex flex-col bg-[#090b10] text-zinc-100 overflow-hidden">
@@ -266,12 +330,32 @@ export const TaskCalendarView: React.FC<{ onNavigateToStudio?: () => void }> = (
             <div className="h-full flex items-center justify-center text-sm text-zinc-400 gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading…</div>
           ) : (
             <>
-              <div className="flex flex-wrap gap-3 mb-2 text-[11px] text-zinc-400">
-                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-sky-700" /> Scheduled task</span>
-                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-emerald-700" /> Ran</span>
-                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-rose-700" /> Failed</span>
-                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-violet-700" /> Heartbeat</span>
-                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-amber-700" /> Board due / running</span>
+              <div className="flex flex-wrap items-center gap-2 mb-2 text-[11px] text-zinc-400">
+                <span className="text-zinc-500">Show:</span>
+                {LAYERS.map((l) => {
+                  const on = prefs.layers[l.key];
+                  return (
+                    <button
+                      key={l.key}
+                      onClick={() => toggleLayer(l.key)}
+                      aria-pressed={on}
+                      title={on ? `Hide ${l.label.toLowerCase()}` : `Show ${l.label.toLowerCase()}`}
+                      className={`flex items-center gap-1.5 px-2 py-1 rounded-md border ${on ? 'border-zinc-600 text-zinc-200 bg-zinc-800/60' : 'border-zinc-800 text-zinc-500 line-through'}`}
+                    >
+                      <span className={`w-2.5 h-2.5 rounded-sm ${on ? l.swatch : 'bg-zinc-700'}`} /> {l.label}
+                    </button>
+                  );
+                })}
+                <select value={prefs.team} onChange={(e) => updatePrefs({ team: e.target.value })} className="bg-[#090b0f] border border-zinc-700 rounded-md px-2 py-1 text-[11px] text-zinc-200">
+                  <option value="">All teams</option>
+                  {teams.map((t) => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+                </select>
+                <span className="flex items-center gap-1 ml-1"><span className="w-2.5 h-2.5 rounded-sm bg-rose-700" /> failed run</span>
+                {hiddenCount > 0 && (
+                  <button onClick={() => updatePrefs({ hidden: [] })} className="text-emerald-400 hover:text-emerald-300">{hiddenCount} hidden task{hiddenCount > 1 ? 's' : ''} · show all</button>
+                )}
                 {truncated && <span className="text-amber-400">Very frequent schedules are shown partially.</span>}
               </div>
               <div className="grid grid-cols-7 gap-px bg-zinc-800 border border-zinc-800 rounded-lg overflow-hidden min-w-[700px]">
@@ -319,11 +403,32 @@ export const TaskCalendarView: React.FC<{ onNavigateToStudio?: () => void }> = (
             </div>
           )}
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
-            {tasks.map((t) => (
-              <button key={t.id} onClick={() => setOpenTaskId(t.id)} className="w-full text-left p-3 rounded-lg border border-zinc-800 bg-[#0d1017] hover:border-zinc-600 space-y-1">
+            {tasks.map((t) => {
+              const isHidden = prefs.hidden.includes(t.id);
+              return (
+              <div
+                key={t.id}
+                role="button"
+                tabIndex={0}
+                onClick={() => setOpenTaskId(t.id)}
+                onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && setOpenTaskId(t.id)}
+                className={`w-full text-left p-3 rounded-lg border border-zinc-800 bg-[#0d1017] hover:border-zinc-600 space-y-1 cursor-pointer ${isHidden ? 'opacity-50' : ''}`}
+              >
                 <div className="flex items-start justify-between gap-2">
                   <span className="text-sm text-white leading-snug">{t.title}</span>
-                  <span className={`shrink-0 text-[10px] px-1.5 py-0.5 rounded border ${STATUS_STYLE[t.status]}`}>{t.paused ? 'paused' : STATUS_LABEL[t.status] ?? t.status}</span>
+                  <span className="shrink-0 flex items-center gap-1.5">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleHidden(t.id);
+                      }}
+                      title={isHidden ? 'Show on the calendar' : 'Hide from the calendar (it still runs)'}
+                      className="text-zinc-500 hover:text-white"
+                    >
+                      {isHidden ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    </button>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded border ${STATUS_STYLE[t.status]}`}>{t.paused ? 'paused' : STATUS_LABEL[t.status] ?? t.status}</span>
+                  </span>
                 </div>
                 <div className="text-[11px] text-zinc-500 flex flex-wrap items-center gap-x-2">
                   <span className="flex items-center gap-1"><Users className="w-3 h-3" /> {teamName(t.team_id)}</span>
@@ -331,8 +436,9 @@ export const TaskCalendarView: React.FC<{ onNavigateToStudio?: () => void }> = (
                   {t.next_run_at && !t.paused && <span>next {formatWhen(t.next_run_at)}</span>}
                 </div>
                 {t.last_status === 'error' && <div className="text-[11px] text-rose-400 truncate">last run failed: {t.last_error}</div>}
-              </button>
-            ))}
+              </div>
+              );
+            })}
           </div>
         </section>
       </div>
@@ -347,6 +453,18 @@ export const TaskCalendarView: React.FC<{ onNavigateToStudio?: () => void }> = (
             setOpenTaskId(id);
             load();
           }}
+        />
+      )}
+      {infoItem && (
+        <ItemInfo
+          item={infoItem}
+          teamName={teamName}
+          onClose={() => setInfoItem(null)}
+          onHideHeartbeats={() => {
+            updatePrefs({ layers: { ...prefs.layers, heartbeat: false } });
+            setInfoItem(null);
+          }}
+          onNavigate={onNavigate}
         />
       )}
       {openTaskId && (
@@ -365,6 +483,72 @@ export const TaskCalendarView: React.FC<{ onNavigateToStudio?: () => void }> = (
     </div>
   );
 };
+
+// ---------------------------------------------------------------------------
+// Heartbeat / board due date details
+// ---------------------------------------------------------------------------
+
+function ItemInfo({
+  item,
+  teamName,
+  onClose,
+  onHideHeartbeats,
+  onNavigate,
+}: {
+  item: CalendarItem;
+  teamName: (id: string | null | undefined) => string;
+  onClose: () => void;
+  onHideHeartbeats: () => void;
+  onNavigate?: (tab: string) => void;
+}) {
+  const day = new Date(item.at).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+  const heartbeat = item.kind === 'heartbeat';
+  const go = (tab: string) => {
+    onClose();
+    onNavigate?.(tab);
+  };
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="w-full max-w-sm rounded-xl bg-[#0e131e] border border-zinc-700 p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-center gap-2">
+            {heartbeat ? <HeartPulse className="w-4 h-4 text-violet-300" /> : <KanbanSquare className="w-4 h-4 text-amber-300" />}
+            <h3 className="text-sm font-semibold text-white">{heartbeat ? 'Team heartbeat' : 'Board task due'}</h3>
+          </div>
+          <button onClick={onClose} className="text-zinc-400 hover:text-white"><X className="w-4 h-4" /></button>
+        </div>
+        {heartbeat ? (
+          <p className="text-xs text-zinc-300 leading-relaxed">
+            <span className="text-white font-medium">{teamName(item.team_id)}</span> wakes up {item.count && item.count > 1 ? `${item.count} times` : 'once'} on {day}
+            {item.count && item.count > 1 ? `, starting ${timeOf(item.at)}` : ` at ${timeOf(item.at)}`}. On each heartbeat the team checks its work (for example the Supervisor Board) and acts on it. It isn&apos;t a scheduled task: you change it in the team&apos;s heartbeat settings.
+          </p>
+        ) : (
+          <p className="text-xs text-zinc-300 leading-relaxed">
+            <span className="text-white font-medium">{item.title}</span> is due {day} at {timeOf(item.at)}
+            {item.team_id ? <> and is assigned to <span className="text-white">{teamName(item.team_id)}</span></> : ' and is not assigned yet'}
+            {item.status ? ` (${item.status.replace('_', ' ')})` : ''}.
+          </p>
+        )}
+        <div className="flex flex-wrap gap-2 pt-1">
+          {heartbeat ? (
+            <>
+              {onNavigate && (
+                <button onClick={() => go('team-builder')} className="px-3 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-semibold">Edit heartbeat</button>
+              )}
+              <button onClick={onHideHeartbeats} className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-zinc-700 text-xs text-zinc-300 hover:text-white">
+                <EyeOff className="w-3.5 h-3.5" /> Hide heartbeats
+              </button>
+            </>
+          ) : (
+            onNavigate && (
+              <button onClick={() => go('board')} className="px-3 py-2 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold">Open Supervisor Board</button>
+            )
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Create / edit

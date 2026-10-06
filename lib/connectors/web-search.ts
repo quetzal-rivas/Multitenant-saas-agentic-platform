@@ -34,6 +34,7 @@ function dedupe(sources: Array<{ title: string; url: string }>) {
 
 async function viaGemini(apiKey: string, query: string, signal: AbortSignal): Promise<Omit<WebSearchResult, 'provider'>> {
   let last = '';
+  let quota = false;
   for (const model of geminiModelChain(DEFAULT_MODELS.gemini)) {
     const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
       method: 'POST',
@@ -48,6 +49,7 @@ async function viaGemini(apiKey: string, query: string, signal: AbortSignal): Pr
     });
     if (!res.ok) {
       last = `Gemini (${res.status}): ${(await res.text()).slice(0, 200)}`;
+      if (res.status === 429) quota = true;
       if ([429, 500, 502, 503, 504].includes(res.status)) continue;
       throw new ServiceError(`Web search failed: ${last}`, 'CONFLICT');
     }
@@ -57,6 +59,12 @@ async function viaGemini(apiKey: string, query: string, signal: AbortSignal): Pr
     const sources = (candidate?.groundingMetadata?.groundingChunks || [])
       .map((c: any) => ({ title: c.web?.title || c.web?.uri || '', url: c.web?.uri || '' }));
     return { answer, sources: dedupe(sources) };
+  }
+  if (quota) {
+    throw new ServiceError(
+      "Web search is not available on this organization's Gemini key: Google reports the quota is exceeded (Google Search grounding usually needs billing enabled on the key's Google AI project). Enable billing there, or add a Claude or OpenAI key.",
+      'CONFLICT'
+    );
   }
   throw new ServiceError(`Web search failed: ${last}`, 'CONFLICT');
 }

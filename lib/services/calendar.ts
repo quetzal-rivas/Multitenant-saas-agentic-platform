@@ -20,6 +20,32 @@ export interface CalendarItem {
   at: string;
   status?: string;
   team_id?: string | null;
+  /** Heartbeats: how many runs that day (one item per team per day). */
+  count?: number;
+}
+
+const HEARTBEAT_SCAN_LIMIT = 20_000;
+
+/** One item per team per (local) day with the number of heartbeat runs that day. */
+function heartbeatDays(team: Row, from: Date, to: Date): CalendarItem[] {
+  const tz = team.heartbeat_schedule?.timezone || 'UTC';
+  const dayOf = (d: Date) => d.toLocaleDateString('en-CA', { timeZone: tz });
+  const days = new Map<string, CalendarItem>();
+  let cursor = new Date(from.getTime() - 1);
+  let scanned = 0;
+  while (scanned < HEARTBEAT_SCAN_LIMIT) {
+    const batch = previewRuns(team.heartbeat_schedule, cursor, 200);
+    for (const d of batch) {
+      scanned++;
+      if (d > to) return [...days.values()];
+      const key = dayOf(d);
+      const existing = days.get(key);
+      if (existing) existing.count = (existing.count ?? 1) + 1;
+      else days.set(key, { kind: 'heartbeat', id: `${team.id}:${key}`, ref_id: team.id, title: `${team.name} heartbeat`, at: d.toISOString(), team_id: team.id, count: 1 });
+    }
+    cursor = batch[batch.length - 1];
+  }
+  return [...days.values()];
 }
 
 function upcoming(schedule: any, from: Date, to: Date): Date[] {
@@ -77,12 +103,7 @@ export async function calendarItems(ctx: Ctx, from: Date, to: Date) {
     .is('archived_at', null);
   for (const team of teams || []) {
     if (!team.heartbeat_enabled || !team.heartbeat_schedule) continue;
-    const start = from > now ? from : now;
-    const times = upcoming(team.heartbeat_schedule, new Date(start.getTime() - 1), to);
-    if (times.length >= MAX_PER_SOURCE) truncated = true;
-    for (const d of times) {
-      items.push({ kind: 'heartbeat', id: `${team.id}:${d.toISOString()}`, ref_id: team.id, title: `${team.name} heartbeat`, at: d.toISOString(), team_id: team.id });
-    }
+    items.push(...heartbeatDays(team, from > now ? from : now, to));
   }
 
   // Board due dates.

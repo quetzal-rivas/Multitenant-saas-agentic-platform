@@ -183,6 +183,9 @@ describe('Scheduled tasks run as team runs', () => {
     const kinds = new Set(items.map((i) => i.kind));
     assert.ok(kinds.has('task') && kinds.has('heartbeat') && kinds.has('board_due'));
     assert.ok(items.filter((i) => i.kind === 'task').length >= 40, 'hourly occurrences over two days');
+    const beats = items.filter((i) => i.kind === 'heartbeat');
+    assert.ok(beats.length <= 3, 'heartbeats are one item per team per day');
+    assert.ok(beats.reduce((n, b) => n + (b.count ?? 0), 0) >= 7, 'with the number of runs that day');
     assert.equal((await calendarItems({ tenantId: OTHER }, from, to)).items.length, 0);
 
     const prev = { a: process.env.DEMO_MODE, b: process.env.NEXT_PUBLIC_DEMO_MODE };

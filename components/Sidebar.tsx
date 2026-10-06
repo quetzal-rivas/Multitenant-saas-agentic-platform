@@ -127,7 +127,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <span>Task Calendar</span>
               </div>
               <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800/50">
-                BULLMQ
+                RUNS
               </span>
             </button>
 

@@ -70,6 +70,7 @@ interface CalendarItem {
   at: string;
   status?: string;
   team_id?: string | null;
+  count?: number;
 }
 
 interface Team {
@@ -127,9 +128,9 @@ function groupDay(items: CalendarItem[]): Array<CalendarItem & { count?: number 
       continue;
     }
     const existing = beats.get(it.ref_id);
-    if (existing) existing.count++;
+    if (existing) existing.count += it.count ?? 1;
     else {
-      const g = { ...it, count: 1 };
+      const g = { ...it, count: it.count ?? 1 };
       beats.set(it.ref_id, g);
       out.push(g);
     }
@@ -242,8 +243,8 @@ export const TaskCalendarView: React.FC<{ onNavigateToStudio?: () => void }> = (
         </div>
       )}
 
-      <div className="flex-1 min-h-0 flex">
-        <main className="flex-1 min-w-0 overflow-auto p-4">
+      <div className="flex-1 min-h-0 flex flex-col lg:flex-row overflow-y-auto lg:overflow-hidden">
+        <main className="flex-1 min-w-0 overflow-x-auto lg:overflow-auto p-4">
           {loading ? (
             <div className="h-full flex items-center justify-center text-sm text-zinc-400 gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading…</div>
           ) : (
@@ -290,7 +291,7 @@ export const TaskCalendarView: React.FC<{ onNavigateToStudio?: () => void }> = (
           )}
         </main>
 
-        <aside className="w-80 shrink-0 border-l border-zinc-800 bg-[#0d1017] overflow-y-auto">
+        <aside className="w-full lg:w-80 shrink-0 border-t lg:border-t-0 lg:border-l border-zinc-800 bg-[#0d1017] lg:overflow-y-auto">
           <div className="px-4 py-3 border-b border-zinc-800 text-sm font-semibold text-zinc-200">Scheduled tasks</div>
           {tasks.length === 0 && !loading && (
             <div className="p-4 text-xs text-zinc-400 space-y-2">

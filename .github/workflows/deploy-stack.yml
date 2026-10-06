@@ -138,6 +138,9 @@ jobs:
           ENABLE_VOICE_CALLS: ${{ vars.ENABLE_VOICE_CALLS || 'false' }}
           # Base64-encoded P-256 PKCS#8 PEM; shared by all instances to sign/verify client tokens.
           CLIENT_TOKEN_SIGNING_KEY: ${{ secrets.CLIENT_TOKEN_SIGNING_KEY }}
+          # Google OAuth client for MCP Hub connections (optional until configured).
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
         run: |
           if [ -z "$CLIENT_TOKEN_SIGNING_KEY" ]; then
             echo "::warning::CLIENT_TOKEN_SIGNING_KEY is not set; client token minting will be disabled in production."
@@ -175,11 +178,18 @@ jobs:
           echo "1. Updating AWS Amplify environment variables for App ID: $AMPLIFY_ID"
           # Execution role for AI Function Studio Lambdas (CloudWatch Logs only); not a secret.
           FUNCTION_EXEC_ROLE_ARN="arn:aws:iam::$(aws sts get-caller-identity --query Account --output text):role/ContextControlFunctionExecRole"
+          # Google OAuth client for MCP Hub; only sent once both secrets exist.
+          GOOGLE_ENV=""
+          if [ -n "$GOOGLE_OAUTH_CLIENT_ID" ] && [ -n "$GOOGLE_OAUTH_CLIENT_SECRET" ]; then
+            GOOGLE_ENV=",GOOGLE_OAUTH_CLIENT_ID=$GOOGLE_OAUTH_CLIENT_ID,GOOGLE_OAUTH_CLIENT_SECRET=$GOOGLE_OAUTH_CLIENT_SECRET"
+          else
+            echo "::notice::GOOGLE_OAUTH_CLIENT_ID/SECRET not set; Google connections stay disabled in MCP Hub."
+          fi
           aws amplify update-app \
             --app-id "$AMPLIFY_ID" \
             --region "$AWS_REGION" \
             --environment-variables \
-              "NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL,NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY,SUPABASE_SERVICE_ROLE_KEY=$SUPABASE_SERVICE_ROLE_KEY,STRIPE_SECRET_KEY=$STRIPE_SECRET_KEY,STRIPE_WEBHOOK_SECRET=$STRIPE_WEBHOOK_SECRET,KMS_KEY_ID=$KMS_KEY_ID,DEMO_MODE=$DEMO_MODE,NEXT_PUBLIC_DEMO_MODE=$NEXT_PUBLIC_DEMO_MODE,ENABLE_VOICE_CALLS=$ENABLE_VOICE_CALLS,CLIENT_TOKEN_SIGNING_KEY=$CLIENT_TOKEN_SIGNING_KEY,FUNCTION_EXEC_ROLE_ARN=$FUNCTION_EXEC_ROLE_ARN,FUNCTION_DEPLOYER_NAME=cc-function-deployer"
+              "NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL,NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY,SUPABASE_SERVICE_ROLE_KEY=$SUPABASE_SERVICE_ROLE_KEY,STRIPE_SECRET_KEY=$STRIPE_SECRET_KEY,STRIPE_WEBHOOK_SECRET=$STRIPE_WEBHOOK_SECRET,KMS_KEY_ID=$KMS_KEY_ID,DEMO_MODE=$DEMO_MODE,NEXT_PUBLIC_DEMO_MODE=$NEXT_PUBLIC_DEMO_MODE,ENABLE_VOICE_CALLS=$ENABLE_VOICE_CALLS,CLIENT_TOKEN_SIGNING_KEY=$CLIENT_TOKEN_SIGNING_KEY,FUNCTION_EXEC_ROLE_ARN=$FUNCTION_EXEC_ROLE_ARN,FUNCTION_DEPLOYER_NAME=cc-function-deployer${GOOGLE_ENV}"
 
           echo "2. Cancelling any active or pending Amplify jobs..."
           ACTIVE_JOBS=$(aws amplify list-jobs --app-id "$AMPLIFY_ID" --branch-name main --region "$AWS_REGION" --query "jobSummaries[?status=='PENDING' || status=='RUNNING'].jobId" --output text || true)

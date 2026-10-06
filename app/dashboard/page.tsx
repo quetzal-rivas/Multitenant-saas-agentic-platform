@@ -216,13 +216,7 @@ export default function DashboardPage() {
           )}
 
           {activeTab === 'mcp-hub' && (
-            <McpHubView
-              contextProfiles={profiles}
-              onNavigateToContextProfile={(p) => {
-                setSelectedProfile(p);
-                setActiveTab('builder');
-              }}
-            />
+            <McpHubView onOpenPlatformMcp={() => setActiveTab('platform-mcp')} />
           )}
 
           {activeTab === 'library' && (

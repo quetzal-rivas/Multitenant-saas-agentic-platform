@@ -114,7 +114,8 @@ describe('Agent Studio end-to-end (fake PostgREST, scripted model)', () => {
     const system = model.calls[0].systemPrompt!;
     assert.match(system, /Answer like a calm SRE/);
     assert.match(system, /A ops/);
-    assert.match(system, /gmail\.send_draft.*not connected/);
+    assert.match(system, /## MCP profile: A ops\nOps tooling/);
+    assert.doesNotMatch(system, /not connected/, "no notes about mock external tools");
     assert.ok(model.calls[0].tools!.every((t) => session.allowed_tools.includes(t.name)));
 
     const checkpoint = tables.checkpoints.find((c) => c.id === result.checkpoint_id)!;

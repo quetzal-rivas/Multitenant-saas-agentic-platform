@@ -1,202 +1,143 @@
 import crypto from 'crypto';
 import { getSupabaseAdminClient } from '@/lib/supabase';
-import { setTenantSecret } from '@/lib/secrets/secrets-service';
-
-export type OAuthProviderType = 'google' | 'slack';
-
-function base64UrlEncode(buffer: Buffer): string {
-  return buffer
-    .toString('base64')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '');
-}
+import { ServiceError } from '@/lib/services/errors';
+import { googleScopes } from '@/lib/connectors/registry';
 
 /**
- * Generate PKCE code_verifier and code_challenge (S256).
+ * Google OAuth (authorization code + PKCE) for MCP Hub connections. The state row binds
+ * the flow to the organization and member that started it. There is no demo fallback:
+ * without a configured client the flow fails with a clear message.
  */
-export function generatePKCE() {
-  const verifierBuffer = crypto.randomBytes(32);
-  const codeVerifier = base64UrlEncode(verifierBuffer);
-  const challengeHash = crypto.createHash('sha256').update(codeVerifier).digest();
-  const codeChallenge = base64UrlEncode(challengeHash);
 
+export type OAuthProviderType = 'google';
+
+function base64UrlEncode(buffer: Buffer): string {
+  return buffer.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/** PKCE code_verifier and S256 code_challenge (RFC 7636). */
+export function generatePKCE() {
+  const codeVerifier = base64UrlEncode(crypto.randomBytes(32));
+  const codeChallenge = base64UrlEncode(crypto.createHash('sha256').update(codeVerifier).digest());
   return { codeVerifier, codeChallenge };
 }
 
-/**
- * Initiate an OAuth + PKCE flow for Google or Slack spokes.
- * Persists PKCE state bound to tenant_id and user_id in Postgres.
- */
-export async function generateOAuthAuthorizationUrl(
-  tenantId: string,
-  userId: string,
-  provider: OAuthProviderType,
-  origin: string
-): Promise<{ url: string; state: string }> {
+export function googleClient(): { clientId: string; clientSecret: string } {
+  const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
+  if (!clientId || !clientSecret) {
+    throw new ServiceError('Google is not configured on this server yet (missing GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET).', 'CONFLICT');
+  }
+  return { clientId, clientSecret };
+}
+
+export interface GoogleTokens {
+  access_token: string;
+  refresh_token?: string;
+  expires_at: number; // epoch ms
+  scope: string;
+  id_token?: string;
+}
+
+export async function buildGoogleAuthUrl(tenantId: string, userId: string, origin: string): Promise<string> {
+  const { clientId } = googleClient();
   const { codeVerifier, codeChallenge } = generatePKCE();
   const state = crypto.randomBytes(24).toString('hex');
   const redirectUri = `${origin.replace(/\/$/, '')}/api/oauth/callback`;
-  const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10 minute TTL
-
-  const supabase = getSupabaseAdminClient();
-
-  const { error } = await supabase.from('oauth_states').insert({
+  const { error } = await getSupabaseAdminClient().from('oauth_states').insert({
     tenant_id: tenantId,
     user_id: userId,
-    provider,
+    provider: 'google',
     state,
     code_verifier: codeVerifier,
     redirect_uri: redirectUri,
-    expires_at: expiresAt,
+    expires_at: new Date(Date.now() + 10 * 60_000).toISOString(),
   });
+  if (error) throw new Error(`Could not start the Google connection: ${error.message}`);
 
-  if (error) {
-    throw new Error(`Failed to store OAuth state binding: ${error.message}`);
-  }
-
-  let authUrl = '';
-
-  if (provider === 'google') {
-    const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID || 'demo_google_client_id.apps.googleusercontent.com';
-    const scopes = [
-      'https://www.googleapis.com/auth/gmail.readonly',
-      'https://www.googleapis.com/auth/gmail.send',
-      'https://www.googleapis.com/auth/calendar',
-    ].join(' ');
-
-    const params = new URLSearchParams({
-      client_id: clientId,
-      redirect_uri: redirectUri,
-      response_type: 'code',
-      scope: scopes,
-      state,
-      code_challenge: codeChallenge,
-      code_challenge_method: 'S256',
-      access_type: 'offline',
-      prompt: 'consent',
-    });
-    authUrl = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
-  } else if (provider === 'slack') {
-    const clientId = process.env.SLACK_OAUTH_CLIENT_ID || 'demo_slack_client_id';
-    const scopes = ['chat:write', 'channels:read', 'im:history'].join(',');
-
-    const params = new URLSearchParams({
-      client_id: clientId,
-      redirect_uri: redirectUri,
-      scope: scopes,
-      state,
-    });
-    authUrl = `https://slack.com/oauth/v2/authorize?${params.toString()}`;
-  } else {
-    throw new Error(`Unsupported OAuth provider: ${provider}`);
-  }
-
-  return { url: authUrl, state };
+  const params = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    response_type: 'code',
+    scope: googleScopes().join(' '),
+    state,
+    code_challenge: codeChallenge,
+    code_challenge_method: 'S256',
+    access_type: 'offline', // refresh token, so agents keep working
+    prompt: 'consent',
+    include_granted_scopes: 'true',
+  });
+  return `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
 }
 
-/**
- * Handle OAuth callback code exchange with PKCE code_verifier verification.
- * Encrypts resulting access and refresh tokens into tenant's envelope-encrypted secrets store.
- */
-export async function processOAuthCallback(code: string, state: string): Promise<{ tenantId: string; provider: string }> {
-  const supabase = getSupabaseAdminClient();
+function toTokens(body: any, previousRefresh?: string): GoogleTokens {
+  return {
+    access_token: body.access_token,
+    refresh_token: body.refresh_token ?? previousRefresh,
+    expires_at: Date.now() + Math.max(60, Number(body.expires_in || 3600) - 60) * 1000,
+    scope: body.scope || '',
+    id_token: body.id_token,
+  };
+}
 
-  // 1. Fetch and validate PKCE state binding
-  const { data: stateRecord, error: fetchErr } = await supabase
-    .from('oauth_states')
-    .select('*')
-    .eq('state', state)
-    .single();
-
-  if (fetchErr || !stateRecord) {
-    throw new Error('Invalid or expired OAuth state binding parameter');
+/** Claims from Google's id_token (received directly from Google's token endpoint over TLS). */
+export function idTokenClaims(idToken?: string): { email?: string; hd?: string } {
+  if (!idToken) return {};
+  try {
+    return JSON.parse(Buffer.from(idToken.split('.')[1], 'base64url').toString('utf8'));
+  } catch {
+    return {};
   }
+}
 
-  if (new Date(stateRecord.expires_at) < new Date()) {
-    await supabase.from('oauth_states').delete().eq('state', state);
-    throw new Error('OAuth authorization session expired');
+/** Validate and consume the state, then exchange the code. */
+export async function exchangeGoogleCode(code: string, state: string) {
+  const db = getSupabaseAdminClient();
+  const { data: row } = await db.from('oauth_states').select('*').eq('state', state).maybeSingle();
+  if (!row) throw new ServiceError('This connection link is invalid or was already used. Start again from MCP Hub.', 'INVALID');
+  await db.from('oauth_states').delete().eq('state', state);
+  if (new Date(row.expires_at) < new Date()) throw new ServiceError('The connection took too long (over 10 minutes). Start again from MCP Hub.', 'INVALID');
+  if (row.provider !== 'google') throw new ServiceError('Unsupported provider.', 'INVALID');
+
+  const { clientId, clientSecret } = googleClient();
+  const res = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      code,
+      client_id: clientId,
+      client_secret: clientSecret,
+      redirect_uri: row.redirect_uri,
+      grant_type: 'authorization_code',
+      code_verifier: row.code_verifier,
+    }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new ServiceError(`Google refused the sign-in: ${body.error_description || body.error || res.status}`, 'CONFLICT');
+  return { tenantId: row.tenant_id as string, userId: row.user_id as string, tokens: toTokens(body) };
+}
+
+/** Exchange a refresh token. Throws ServiceError('...reconnect...') when Google revoked it. */
+export async function refreshGoogleTokens(current: GoogleTokens): Promise<GoogleTokens> {
+  if (!current.refresh_token) throw new ServiceError('Google access expired and no refresh token was granted. Reconnect Google in MCP Hub.', 'CONFLICT');
+  const { clientId, clientSecret } = googleClient();
+  const res = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, refresh_token: current.refresh_token, grant_type: 'refresh_token' }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new ServiceError(
+      body.error === 'invalid_grant'
+        ? 'Google access was revoked or expired. Reconnect Google in MCP Hub.'
+        : `Could not refresh Google access: ${body.error_description || body.error || res.status}`,
+      'CONFLICT'
+    );
   }
+  return toTokens(body, current.refresh_token);
+}
 
-  const { tenant_id: tenantId, provider, code_verifier: codeVerifier, redirect_uri: redirectUri } = stateRecord;
-
-  // Delete consumed state record
-  await supabase.from('oauth_states').delete().eq('state', state);
-
-  let tokenData: any;
-
-  // 2. Perform code exchange against provider endpoint
-  if (provider === 'google') {
-    const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID || 'demo_google_client_id.apps.googleusercontent.com';
-    const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET || 'demo_google_client_secret';
-
-    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        code,
-        client_id: clientId,
-        client_secret: clientSecret,
-        redirect_uri: redirectUri,
-        grant_type: 'authorization_code',
-        code_verifier: codeVerifier,
-      }).toString(),
-    });
-
-    if (!tokenRes.ok) {
-      const errBody = await tokenRes.text();
-      // Handle fallback/demo token for unit tests if client secret is demo placeholder
-      if (clientId.startsWith('demo_')) {
-        tokenData = {
-          access_token: `mock_google_access_token_${Date.now()}`,
-          refresh_token: `mock_google_refresh_token_${Date.now()}`,
-          expires_in: 3600,
-          token_type: 'Bearer',
-        };
-      } else {
-        throw new Error(`Google token exchange failed (${tokenRes.status}): ${errBody.slice(0, 150)}`);
-      }
-    } else {
-      tokenData = await tokenRes.json();
-    }
-  } else if (provider === 'slack') {
-    const clientId = process.env.SLACK_OAUTH_CLIENT_ID || 'demo_slack_client_id';
-    const clientSecret = process.env.SLACK_OAUTH_CLIENT_SECRET || 'demo_slack_client_secret';
-
-    const tokenRes = await fetch('https://slack.com/api/oauth.v2.access', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        code,
-        client_id: clientId,
-        client_secret: clientSecret,
-        redirect_uri: redirectUri,
-      }).toString(),
-    });
-
-    if (!tokenRes.ok) {
-      if (clientId.startsWith('demo_')) {
-        tokenData = {
-          access_token: `mock_slack_access_token_${Date.now()}`,
-          refresh_token: `mock_slack_refresh_token_${Date.now()}`,
-          team: { id: 'T_DEMO', name: 'Demo Team' },
-        };
-      } else {
-        throw new Error(`Slack token exchange failed (${tokenRes.status})`);
-      }
-    } else {
-      tokenData = await tokenRes.json();
-      if (!tokenData.ok) {
-        throw new Error(`Slack API error: ${tokenData.error}`);
-      }
-    }
-  } else {
-    throw new Error(`Unsupported OAuth provider callback: ${provider}`);
-  }
-
-  // 3. Envelope encrypt token payload and store in encrypted_secrets
-  const providerKey = `${provider}_oauth` as any;
-  await setTenantSecret(tenantId, providerKey, JSON.stringify(tokenData));
-
-  return { tenantId, provider };
+export async function revokeGoogleToken(token: string): Promise<void> {
+  await fetch(`https://oauth2.googleapis.com/revoke?token=${encodeURIComponent(token)}`, { method: 'POST' }).catch(() => undefined);
 }

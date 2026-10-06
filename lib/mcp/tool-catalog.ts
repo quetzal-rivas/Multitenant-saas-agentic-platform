@@ -444,6 +444,8 @@ export const AGENT_SCOPES = {
   sessionsWrite: 'agent:sessions:write',
   /** Call deployed AI Function Studio functions as tools. */
   functionsInvoke: 'mcp:functions:invoke',
+  /** Call connected-app tools (Google, web search) as tools. */
+  connectorsInvoke: 'mcp:connectors:invoke',
 } as const;
 
 /** Every scope a key can be granted: one per catalog tool scope, plus agent scopes. */

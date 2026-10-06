@@ -1,1353 +1,440 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Server,
-  Layers,
-  Key,
-  ShieldCheck,
-  CheckCircle2,
-  AlertCircle,
-  ExternalLink,
-  Plus,
-  Trash2,
-  Edit3,
+  Plug,
   Copy,
   Check,
-  Play,
-  Terminal,
-  Cpu,
-  Sparkles,
+  Loader2,
+  AlertTriangle,
+  CheckCircle2,
   RefreshCw,
-  FolderGit2,
+  Search,
   Mail,
-  MessageSquare,
-  BookOpen,
-  Database,
-  Sliders,
-  ChevronRight,
-  Info,
-  Zap,
-  ArrowRight,
-  LogOut,
-  SlidersHorizontal,
-  User,
+  CalendarDays,
+  Layers,
+  Plus,
+  Trash2,
+  Code2,
+  ExternalLink,
+  X,
 } from 'lucide-react';
-import {
-  HostedMcpServer,
-  McpServerProfile,
-  McpTool,
-  OAuthProvider,
-  McpSkill,
-} from '@/lib/demo/legacy_mocks/types';
-import { HOSTED_MCP_SERVERS, MCP_SKILLS } from '@/lib/demo/legacy_mocks/hosted-servers';
-import { PLATFORM_TOOL_DEFINITIONS } from '@/lib/mcp/tool-catalog';
-import { API_KEY_PLACEHOLDER, generateClientConfigSnippets, platformMcpEndpoint } from '@/lib/mcp/client-config';
-import { ContextProfile } from '@/lib/types';
-import { PlatformMcpServerView } from './PlatformMcpServerView';
+import { generateClientConfigSnippets, platformMcpEndpoint } from '@/lib/mcp/client-config';
 
-interface McpHubViewProps {
-  contextProfiles: ContextProfile[];
-  onNavigateToContextProfile?: (profile: ContextProfile) => void;
+// ---------------------------------------------------------------------------
+// Types (mirror /api/v1/connections and /api/mcp/profiles)
+// ---------------------------------------------------------------------------
+
+interface ConnectorTool {
+  name: string;
+  description: string;
+  read_only: boolean;
+}
+interface ConnectorView {
+  id: string;
+  name: string;
+  description: string;
+  mode: 'official' | 'direct' | 'unavailable' | null;
+  detail: string | null;
+  refreshed_at: string | null;
+  tools: ConnectorTool[];
+}
+interface Connections {
+  platform: { tool_count: number; url: string };
+  google: {
+    configured: boolean;
+    connected: boolean;
+    account_email: string | null;
+    account_domain: string | null;
+    scopes: string[];
+    status: 'active' | 'error' | null;
+    last_error: string | null;
+    connected_at: string | null;
+    connectors: ConnectorView[];
+  };
+  web_search: { available: boolean; provider: string | null; tool: string };
+}
+interface Profile {
+  id: string;
+  name: string;
+  description: string | null;
+  functionIds: string[];
+  connectorTools: string[];
+}
+interface Fn {
+  id: string;
+  name: string;
+  function_slug: string;
+  description: string | null;
+  status: string;
 }
 
-export const McpHubView: React.FC<McpHubViewProps> = ({
-  contextProfiles,
-  onNavigateToContextProfile,
-}) => {
-  // State
-  const [servers, setServers] = useState<HostedMcpServer[]>(HOSTED_MCP_SERVERS);
-  // Real profiles from the database only (no demo fallback).
-  const [mcpProfiles, setMcpProfiles] = useState<McpServerProfile[]>([]);
-  const [selectedProfileId, setSelectedProfileId] = useState<string>('');
-  const [activeTab, setActiveTab] = useState<'servers' | 'profiles' | 'clients' | 'tester' | 'platform-control'>('servers');
-  const [isCopied, setIsCopied] = useState<string | null>(null);
-  const [isConnectingOAuth, setIsConnectingOAuth] = useState<string | null>(null);
-  const [oauthToast, setOauthToast] = useState<{ title: string; message: string } | null>(null);
+interface McpHubViewProps {
+  onOpenPlatformMcp?: () => void;
+}
 
-  // Inspector & Tester state
-  const [testerMethod, setTesterMethod] = useState<'tools/list' | 'tools/call' | 'initialize'>('tools/list');
-  const [testerToolName, setTesterToolName] = useState<string>('contextcontrol_list_profiles');
-  const [testerArgsJson, setTesterArgsJson] = useState<string>(JSON.stringify({ limit: 20 }, null, 2));
-  // Workspace API key used by the tester and client snippets; kept in memory only.
-  const [testerApiKey, setTesterApiKey] = useState<string>('');
-  const [testerOutput, setTesterOutput] = useState<any>(null);
-  const [isExecutingTool, setIsExecutingTool] = useState(false);
-  const [executionTimeMs, setExecutionTimeMs] = useState<number | null>(null);
+async function api<T>(url: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(url, { ...init, headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) }, cache: 'no-store' });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body?.error || `Request failed (${res.status})`);
+  return body as T;
+}
 
-  // New profile modal
-  const [isCreatingProfile, setIsCreatingProfile] = useState(false);
-  const [newProfileName, setNewProfileName] = useState('');
-  const [newProfileSlug, setNewProfileSlug] = useState('');
-  const [newProfileDesc, setNewProfileDesc] = useState('');
+const card = 'rounded-xl border border-zinc-800 bg-[#0d1017] p-5';
+const inputCls = 'w-full bg-[#090b0f] border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500';
+const MODE_LABEL: Record<string, { text: string; cls: string }> = {
+  official: { text: 'Official Google MCP', cls: 'text-emerald-300 border-emerald-800 bg-emerald-950/40' },
+  direct: { text: 'Direct Google API', cls: 'text-sky-300 border-sky-800 bg-sky-950/40' },
+  unavailable: { text: 'Unavailable', cls: 'text-zinc-400 border-zinc-700 bg-zinc-900' },
+};
 
-  // Tool details modal
-  const [inspectingTool, setInspectingTool] = useState<McpTool | null>(null);
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      onClick={() => {
+        navigator.clipboard.writeText(text);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      }}
+      className="p-1.5 rounded-md border border-zinc-700 text-zinc-400 hover:text-white"
+      title="Copy"
+    >
+      {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+    </button>
+  );
+}
 
-  const fetchServers = useCallback(async () => {
+// ---------------------------------------------------------------------------
+
+export const McpHubView: React.FC<McpHubViewProps> = ({ onOpenPlatformMcp }) => {
+  const [tab, setTab] = useState<'connections' | 'profiles' | 'clients'>('connections');
+  const [connections, setConnections] = useState<Connections | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
     try {
-      const res = await fetch('/api/mcp/servers');
-      if (res.ok) {
-        const data = await res.json();
-        setServers(data.servers.map((s: HostedMcpServer) => ({ ...s, tools: s.tools ?? [], scopesRequired: s.scopesRequired ?? [] })));
-      }
-    } catch {
-      setServers(HOSTED_MCP_SERVERS);
-    }
-  }, []);
-
-  const fetchMcpProfiles = useCallback(async () => {
-    try {
-      const res = await fetch('/api/mcp/profiles');
-      if (res.ok) {
-        const data = await res.json();
-        setMcpProfiles(data.profiles);
-      }
-    } catch {
-      // keep what we have
-    }
-  }, []);
-
-  // Fetch profiles on mount asynchronously
-  useEffect(() => {
-    let isMounted = true;
-    async function loadData() {
-      try {
-        const [resP, resS] = await Promise.all([
-          fetch('/api/mcp/profiles'),
-          fetch('/api/mcp/servers'),
-        ]);
-        if (isMounted && resP.ok) {
-          const dataP = await resP.json();
-          if (Array.isArray(dataP.profiles)) setMcpProfiles(dataP.profiles);
-        }
-        if (isMounted && resS.ok) {
-          const dataS = await resS.json();
-          if (Array.isArray(dataS.servers)) {
-            // The servers API returns a catalog without per-tool lists; keep the shape the UI expects.
-            setServers(dataS.servers.map((s: HostedMcpServer) => ({ ...s, tools: s.tools ?? [], scopesRequired: s.scopesRequired ?? [] })));
-          }
-        }
-      } catch {
-        // Fallback already in initial state
-      }
-    }
-    loadData();
-    return () => {
-      isMounted = false;
-    };
-  }, []);
-
-  // Listen for OAuth success postMessage from popup window (as per AI Studio OAuth skill)
-  useEffect(() => {
-    const handleOAuthMessage = (event: MessageEvent) => {
-      // Validate origin if applicable or check data type
-      if (event.data?.type === 'OAUTH_AUTH_SUCCESS') {
-        const provider = event.data.provider;
-        const account = event.data.accountName || event.data.accountEmail || 'Connected Account';
-        
-        setIsConnectingOAuth(null);
-        setOauthToast({
-          title: `Connected to ${provider.toUpperCase()}`,
-          message: `Successfully authenticated account "${account}". Tools are now unlocked!`,
-        });
-
-        // Refresh servers
-        fetchServers();
-
-        // Clear toast after 5s
-        setTimeout(() => setOauthToast(null), 5000);
-      }
-    };
-
-    window.addEventListener('message', handleOAuthMessage);
-    return () => window.removeEventListener('message', handleOAuthMessage);
-  }, [fetchServers]);
-
-  const selectedProfile = mcpProfiles.find((p) => p.id === selectedProfileId) || mcpProfiles[0];
-
-  // 1-Click OAuth Trigger
-  const handleConnectOAuth = async (server: HostedMcpServer) => {
-    if (!server.oauthProvider) return;
-    setIsConnectingOAuth(server.id);
-
-    try {
-      const res = await fetch(`/api/oauth/url?provider=${server.oauthProvider}`);
-      if (!res.ok) throw new Error('Failed to obtain auth URL');
-      const data = await res.json();
-
-      // Open popup window directly to OAuth provider/handler
-      const width = 600;
-      const height = 700;
-      const left = window.screen.width / 2 - width / 2;
-      const top = window.screen.height / 2 - height / 2;
-
-      const popup = window.open(
-        data.url,
-        `oauth_${server.oauthProvider}`,
-        `width=${width},height=${height},top=${top},left=${left},resizable=yes,scrollbars=yes,status=yes`
-      );
-
-      if (!popup) {
-        alert('Popup was blocked by your browser. Please allow popups to connect your account.');
-        setIsConnectingOAuth(null);
-      }
+      setConnections(await api<Connections>('/api/v1/connections'));
+      setError(null);
     } catch (err: any) {
-      console.error('OAuth initiation failed:', err);
-      setIsConnectingOAuth(null);
-      alert(`Could not initiate OAuth: ${err?.message}`);
+      setError(err?.message || 'Could not load connections');
     }
-  };
+  }, []);
 
-  // Toggle Subscription
-  const handleToggleSubscribe = async (server: HostedMcpServer) => {
-    try {
-      const res = await fetch('/api/mcp/servers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ serverId: server.id, action: 'toggle-subscribe' }),
-      });
-      if (res.ok) {
-        fetchServers();
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  };
+  useEffect(() => {
+    load();
+  }, [load]);
 
-  // Disconnect OAuth
-  const handleDisconnect = async (server: HostedMcpServer) => {
-    try {
-      const res = await fetch('/api/mcp/servers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ serverId: server.id, action: 'disconnect' }),
-      });
-      if (res.ok) {
-        fetchServers();
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  // Toggle Tool in MCP Profile
-  const handleToggleToolInProfile = async (toolName: string) => {
-    if (!selectedProfile) return;
-
-    const currentTools = selectedProfile.selectedToolNames;
-    const nextTools = currentTools.includes(toolName)
-      ? currentTools.filter((t) => t !== toolName)
-      : [...currentTools, toolName];
-
-    const updated = {
-      ...selectedProfile,
-      selectedToolNames: nextTools,
-    };
-
-    setMcpProfiles((prev) => prev.map((p) => (p.id === selectedProfile.id ? updated : p)));
-
-    await fetch('/api/mcp/profiles', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'update',
-        id: selectedProfile.id,
-        data: { selectedToolNames: nextTools },
-      }),
-    });
-  };
-
-  // Toggle Context Control Profile Binding
-  const handleToggleContextBinding = async (slug: string) => {
-    if (!selectedProfile) return;
-
-    const currentBindings = selectedProfile.boundContextProfileSlugs;
-    const nextBindings = currentBindings.includes(slug)
-      ? currentBindings.filter((s) => s !== slug)
-      : [...currentBindings, slug];
-
-    const updated = {
-      ...selectedProfile,
-      boundContextProfileSlugs: nextBindings,
-    };
-
-    setMcpProfiles((prev) => prev.map((p) => (p.id === selectedProfile.id ? updated : p)));
-
-    await fetch('/api/mcp/profiles', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'update',
-        id: selectedProfile.id,
-        data: { boundContextProfileSlugs: nextBindings },
-      }),
-    });
-  };
-
-  // Toggle Skill in Profile
-  const handleToggleSkill = async (skillId: string) => {
-    if (!selectedProfile) return;
-
-    const currentSkills = selectedProfile.selectedSkillNames;
-    const nextSkills = currentSkills.includes(skillId)
-      ? currentSkills.filter((s) => s !== skillId)
-      : [...currentSkills, skillId];
-
-    const updated = {
-      ...selectedProfile,
-      selectedSkillNames: nextSkills,
-    };
-
-    setMcpProfiles((prev) => prev.map((p) => (p.id === selectedProfile.id ? updated : p)));
-
-    await fetch('/api/mcp/profiles', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'update',
-        id: selectedProfile.id,
-        data: { selectedSkillNames: nextSkills },
-      }),
-    });
-  };
-
-  // Create Profile
-  const handleCreateProfile = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newProfileName) return;
-
-    const slug = newProfileSlug || newProfileName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-    const defaultTools = servers.flatMap((s) => (s.isSubscribed ? s.tools.slice(0, 2).map((t) => t.name) : []));
-
-    const res = await fetch('/api/mcp/profiles', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: newProfileName,
-        slug,
-        description: newProfileDesc,
-        selectedToolNames: defaultTools,
-        selectedSkillNames: ['skill-context-guard'],
-        boundContextProfileSlugs: [contextProfiles[0]?.slug || 'sales-agent'],
-      }),
-    });
-
-    if (res.ok) {
-      const data = await res.json();
-      setMcpProfiles([data.profile, ...mcpProfiles]);
-      setSelectedProfileId(data.profile.id);
-      setIsCreatingProfile(false);
-      setNewProfileName('');
-      setNewProfileSlug('');
-      setNewProfileDesc('');
-    }
-  };
-
-  // Execute MCP Test Call
-  const handleExecuteTester = async () => {
-    setIsExecutingTool(true);
-    setTesterOutput(null);
-    const start = performance.now();
-
-    try {
-      let parsedArgs = {};
-      if (testerMethod === 'tools/call') {
-        try {
-          parsedArgs = JSON.parse(testerArgsJson);
-        } catch {
-          alert('Invalid JSON in tool arguments');
-          setIsExecutingTool(false);
-          return;
-        }
-      }
-
-      const jsonRpcPayload: any = {
-        jsonrpc: '2.0',
-        id: `test_${Date.now()}`,
-        method: testerMethod,
-        params:
-          testerMethod === 'tools/call'
-            ? {
-                name: testerToolName,
-                arguments: parsedArgs,
-              }
-            : testerMethod === 'initialize'
-            ? { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'mcp-hub-tester', version: '1.0.0' } }
-            : {},
-      };
-
-      const key = testerApiKey.trim() || (selectedProfile?.apiKey?.startsWith('ctx_') ? selectedProfile.apiKey : '');
-      if (!key) {
-        setTesterOutput({ error: 'Paste a workspace API key (API Keys tab) to call the platform MCP server.' });
-        setIsExecutingTool(false);
-        return;
-      }
-      const res = await fetch('/api/mcp/platform', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json, text/event-stream',
-          Authorization: `Bearer ${key}`,
-        },
-        body: JSON.stringify(jsonRpcPayload),
-      });
-
-      const data = await res.json();
-      setExecutionTimeMs(Math.round(performance.now() - start));
-      setTesterOutput(data);
-    } catch (err: any) {
-      setTesterOutput({ error: err.message });
-      setExecutionTimeMs(Math.round(performance.now() - start));
-    } finally {
-      setIsExecutingTool(false);
-    }
-  };
-
-  // Copy helper
-  const handleCopy = (text: string, id: string) => {
-    navigator.clipboard.writeText(text);
-    setIsCopied(id);
-    setTimeout(() => setIsCopied(null), 2000);
-  };
-
-  // Base URL helper
-  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://your-domain.run.app';
-  const mcpEndpointUrl = platformMcpEndpoint(origin);
-  const clientSnippets = generateClientConfigSnippets(testerApiKey.trim(), origin);
-
-  // Server icon resolver
-  const renderServerIcon = (icon: string) => {
-    switch (icon) {
-      case 'Layers':
-        return <Layers className="w-5 h-5 text-emerald-400" />;
-      case 'Mail':
-        return <Mail className="w-5 h-5 text-red-400" />;
-      case 'Github':
-        return <FolderGit2 className="w-5 h-5 text-purple-400" />;
-      case 'MessageSquare':
-        return <MessageSquare className="w-5 h-5 text-amber-400" />;
-      case 'BookOpen':
-        return <BookOpen className="w-5 h-5 text-blue-400" />;
-      case 'Database':
-        return <Database className="w-5 h-5 text-cyan-400" />;
-      default:
-        return <Server className="w-5 h-5 text-zinc-400" />;
-    }
-  };
+  const toolCount = useMemo(() => {
+    if (!connections) return 0;
+    return (
+      connections.platform.tool_count +
+      connections.google.connectors.reduce((n, c) => n + c.tools.length, 0) +
+      (connections.web_search.available ? 1 : 0)
+    );
+  }, [connections]);
 
   return (
-    <div className="p-8 max-w-7xl mx-auto space-y-8 animate-fadeIn">
-      {/* Toast Notification for OAuth */}
-      {oauthToast && (
-        <div className="fixed top-16 right-8 z-50 flex items-start gap-3 p-4 bg-emerald-950/90 border border-emerald-600/60 rounded-xl shadow-2xl backdrop-blur-md text-emerald-100 max-w-md animate-slideDown">
-          <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
-          <div className="space-y-1">
-            <h4 className="text-sm font-semibold text-white">{oauthToast.title}</h4>
-            <p className="text-xs text-emerald-200/90 leading-relaxed">{oauthToast.message}</p>
-          </div>
-          <button
-            onClick={() => setOauthToast(null)}
-            className="text-emerald-400 hover:text-white text-xs ml-auto"
-          >
-            ✕
-          </button>
-        </div>
-      )}
-
-      {/* Hero Header */}
-      <div className="border border-zinc-800 bg-[#0e1117] rounded-xl p-6 relative overflow-hidden shadow-xl">
-        <div className="absolute top-0 right-0 w-96 h-96 bg-gradient-to-bl from-emerald-500/10 via-teal-500/5 to-transparent rounded-full blur-3xl pointer-events-none" />
-
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 relative z-10">
-          <div className="space-y-2">
-            <div className="flex items-center gap-2.5">
-              <span className="px-2.5 py-0.5 text-[11px] font-mono font-medium rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800/80">
-                PROPRIETARY MCP BACKEND
-              </span>
-              <span className="text-xs font-mono text-zinc-500">v2024-11-05 Protocol</span>
-            </div>
-            <h1 className="text-2xl font-bold tracking-tight text-white flex items-center gap-2.5">
-              Hosted MCP Hub & Tool Profiles
-            </h1>
-            <p className="text-sm text-zinc-400 max-w-2xl leading-relaxed">
-              Subscribe to hosted MCP servers (Google Workspace, GitHub, Postgres), connect your accounts with 1-click OAuth, and assign targeted toolsets & Context Control profiles directly to your AI agents.
-            </p>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => setIsCreatingProfile(true)}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium transition-all shadow-md shadow-emerald-950"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Create MCP Profile</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Quick Stats Grid */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-6 pt-6 border-t border-zinc-800/80">
-          <div className="space-y-1">
-            <div className="text-[11px] uppercase font-mono text-zinc-500">Available Hosted Servers</div>
-            <div className="text-xl font-bold text-white font-mono">{servers.length}</div>
-          </div>
-          <div className="space-y-1">
-            <div className="text-[11px] uppercase font-mono text-zinc-500">Subscribed Servers</div>
-            <div className="text-xl font-bold text-emerald-400 font-mono">
-              {servers.filter((s) => s.isSubscribed).length} Active
-            </div>
-          </div>
-          <div className="space-y-1">
-            <div className="text-[11px] uppercase font-mono text-zinc-500">Connected OAuth Accounts</div>
-            <div className="text-xl font-bold text-teal-400 font-mono">
-              {servers.filter((s) => s.requiresOAuth && s.isConnected).length} Connected
-            </div>
-          </div>
-          <div className="space-y-1">
-            <div className="text-[11px] uppercase font-mono text-zinc-500">Assigned MCP Profiles</div>
-            <div className="text-xl font-bold text-zinc-200 font-mono">{mcpProfiles.length} Configured</div>
-          </div>
-        </div>
-      </div>
-
-      {/* Main Tab Navigation */}
-      <div className="flex items-center gap-1 border-b border-zinc-800">
-        <button
-          onClick={() => setActiveTab('servers')}
-          className={`flex items-center gap-2 px-4 py-2.5 text-xs font-medium transition-colors border-b-2 ${
-            activeTab === 'servers'
-              ? 'border-emerald-500 text-emerald-400 font-semibold'
-              : 'border-transparent text-zinc-400 hover:text-zinc-200'
-          }`}
-        >
-          <Server className="w-4 h-4" />
-          <span>1. Hosted MCP Servers & OAuth</span>
-          <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-300">
-            {servers.length}
-          </span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('profiles')}
-          className={`flex items-center gap-2 px-4 py-2.5 text-xs font-medium transition-colors border-b-2 ${
-            activeTab === 'profiles'
-              ? 'border-emerald-500 text-emerald-400 font-semibold'
-              : 'border-transparent text-zinc-400 hover:text-zinc-200'
-          }`}
-        >
-          <Sliders className="w-4 h-4" />
-          <span>2. Assign MCP Profiles & Tools</span>
-          <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-300">
-            {mcpProfiles.length}
-          </span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('clients')}
-          className={`flex items-center gap-2 px-4 py-2.5 text-xs font-medium transition-colors border-b-2 ${
-            activeTab === 'clients'
-              ? 'border-emerald-500 text-emerald-400 font-semibold'
-              : 'border-transparent text-zinc-400 hover:text-zinc-200'
-          }`}
-        >
-          <Cpu className="w-4 h-4" />
-          <span>3. Connect Clients (Claude, Cursor, Agents)</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('tester')}
-          className={`flex items-center gap-2 px-4 py-2.5 text-xs font-medium transition-colors border-b-2 ${
-            activeTab === 'tester'
-              ? 'border-emerald-500 text-emerald-400 font-semibold'
-              : 'border-transparent text-zinc-400 hover:text-zinc-200'
-          }`}
-        >
-          <Terminal className="w-4 h-4" />
-          <span>4. MCP Protocol Inspector & Test Runner</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('platform-control')}
-          className={`flex items-center gap-2 px-4 py-2.5 text-xs font-medium transition-colors border-b-2 ${
-            activeTab === 'platform-control'
-              ? 'border-emerald-500 text-emerald-400 font-semibold bg-emerald-950/20'
-              : 'border-transparent text-zinc-400 hover:text-zinc-200'
-          }`}
-        >
-          <Zap className="w-4 h-4 text-emerald-400" />
-          <span>5. Platform Control Server (&lt;5ms Controllers)</span>
-          <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-emerald-950 text-emerald-300 border border-emerald-800">
-            STDIO
-          </span>
-        </button>
-      </div>
-
-      {/* ========================================================================= */}
-      {/* TAB 1: HOSTED MCP SERVERS CATALOG & 1-CLICK OAUTH                         */}
-      {/* ========================================================================= */}
-      {activeTab === 'servers' && (
-        <div className="space-y-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-lg font-bold text-white">Hosted MCP Server Subscriptions</h2>
-              <p className="text-xs text-zinc-400">
-                Subscribe to managed MCP servers and link your developer or corporate accounts with one-click OAuth authentication.
-              </p>
-            </div>
-            <div className="text-xs text-zinc-500 font-mono flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-              All servers powered by Context Control Gateway
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {servers.map((server) => {
-              const isConnecting = isConnectingOAuth === server.id;
-
-              return (
-                <div
-                  key={server.id}
-                  className={`rounded-xl border p-5 flex flex-col justify-between transition-all ${
-                    server.isSubscribed
-                      ? 'border-zinc-700/80 bg-[#0f131a] shadow-lg'
-                      : 'border-zinc-800/60 bg-[#0a0d13] opacity-80'
-                  }`}
-                >
-                  <div className="space-y-4">
-                    {/* Card Top: Icon & Status */}
-                    <div className="flex items-start justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-lg bg-zinc-800/80 border border-zinc-700 flex items-center justify-center">
-                          {renderServerIcon(server.icon)}
-                        </div>
-                        <div>
-                          <h3 className="text-sm font-semibold text-white">{server.name}</h3>
-                          <span className="text-[10px] font-mono text-zinc-400 capitalize">
-                            {server.category} MCP
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Subscription Switch */}
-                      <button
-                        onClick={() => handleToggleSubscribe(server)}
-                        className={`px-2.5 py-1 rounded text-[11px] font-medium font-mono transition-colors ${
-                          server.isSubscribed
-                            ? 'bg-emerald-950 text-emerald-400 border border-emerald-800/70'
-                            : 'bg-zinc-800 text-zinc-400 border border-zinc-700 hover:text-zinc-200'
-                        }`}
-                      >
-                        {server.isSubscribed ? 'Subscribed' : 'Subscribe'}
-                      </button>
-                    </div>
-
-                    <p className="text-xs text-zinc-400 leading-relaxed min-h-[38px]">
-                      {server.description}
-                    </p>
-
-                    {/* OAuth Connection Status Box */}
-                    {server.requiresOAuth && (
-                      <div className="p-3 rounded-lg bg-zinc-900/90 border border-zinc-800 space-y-2">
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="text-zinc-400 font-medium">OAuth Account:</span>
-                          {server.isConnected ? (
-                            <span className="inline-flex items-center gap-1 text-[11px] text-emerald-400 font-mono">
-                              <CheckCircle2 className="w-3.5 h-3.5" />
-                              Connected
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 text-[11px] text-amber-400 font-mono">
-                              <AlertCircle className="w-3.5 h-3.5" />
-                              Unconnected
-                            </span>
-                          )}
-                        </div>
-
-                        {server.isConnected && server.connectedUser ? (
-                          <div className="flex items-center justify-between pt-1">
-                            <div className="flex items-center gap-2">
-                              <div className="w-5 h-5 rounded-full bg-emerald-950 border border-emerald-700/60 flex items-center justify-center text-[10px] text-emerald-400 font-bold">
-                                {server.connectedUser.name ? server.connectedUser.name.charAt(0).toUpperCase() : <User className="w-3 h-3 text-emerald-400" />}
-                              </div>
-                              <span className="text-xs text-zinc-200 font-medium truncate max-w-[150px]">
-                                {server.connectedUser.name || server.connectedUser.email}
-                              </span>
-                            </div>
-                            <button
-                              onClick={() => handleDisconnect(server)}
-                              className="text-[11px] text-zinc-500 hover:text-red-400 transition-colors"
-                              title="Disconnect account"
-                            >
-                              Disconnect
-                            </button>
-                          </div>
-                        ) : (
-                          <div className="pt-1">
-                            <button
-                              onClick={() => handleConnectOAuth(server)}
-                              disabled={isConnecting}
-                              className="w-full flex items-center justify-center gap-2 px-3 py-1.5 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-100 text-xs font-medium transition-colors border border-zinc-700"
-                            >
-                              <Key className="w-3.5 h-3.5 text-teal-400" />
-                              <span>{isConnecting ? 'Connecting in popup...' : `1-Click OAuth Connect`}</span>
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Proprietary Core Info */}
-                    {!server.requiresOAuth && (
-                      <div className="p-3 rounded-lg bg-emerald-950/30 border border-emerald-900/50 flex items-center justify-between text-xs">
-                        <span className="text-emerald-300 font-mono text-[11px]">Direct Gateway Execution</span>
-                        <span className="text-[10px] text-emerald-400 font-semibold">100% READY</span>
-                      </div>
-                    )}
-
-                    {/* Tools count & Preview */}
-                    <div className="space-y-1.5 pt-1">
-                      <div className="flex items-center justify-between text-xs text-zinc-400">
-                        <span>Available Tools ({server.tools.length}):</span>
-                        <span className="text-[11px] text-zinc-500">JSON-RPC 2.0</span>
-                      </div>
-                      <div className="flex flex-wrap gap-1.5">
-                        {server.tools.map((t) => (
-                          <button
-                            key={t.name}
-                            onClick={() => setInspectingTool(t)}
-                            className="px-2 py-0.5 rounded text-[11px] font-mono bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 border border-zinc-700/60 transition-colors"
-                          >
-                            {t.name}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Card Bottom Action */}
-                  <div className="mt-5 pt-3 border-t border-zinc-800/80 flex items-center justify-between text-xs">
-                    <span className="text-zinc-500 font-mono text-[11px]">
-                      {server.scopesRequired.length > 0 ? `${server.scopesRequired.length} scopes` : 'Zero-config'}
-                    </span>
-                    <button
-                      onClick={() => {
-                        setSelectedProfileId(selectedProfile.id);
-                        setActiveTab('profiles');
-                      }}
-                      className="text-emerald-400 hover:text-emerald-300 font-medium inline-flex items-center gap-1 text-[11px]"
-                    >
-                      Assign to Profile
-                      <ChevronRight className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* ========================================================================= */}
-      {/* TAB 2: ASSIGN MCP PROFILES & SELECTED TOOLS                               */}
-      {/* ========================================================================= */}
-      {activeTab === 'profiles' && !selectedProfile && (
-        <div className="p-10 rounded-xl border border-zinc-800 bg-zinc-900/50 text-center space-y-3">
-          <h3 className="text-base font-semibold text-white">No MCP profiles yet</h3>
-          <p className="text-xs text-zinc-400 max-w-md mx-auto">
-            A profile groups tools and AI Function Studio functions. Attach it to an Agent Studio instance, a team supervisor or a worker to give them those tools.
+    <div className="h-full overflow-y-auto bg-[#090b10] text-zinc-100">
+      <div className="max-w-6xl mx-auto p-6 space-y-6">
+        <header className="space-y-2">
+          <h1 className="text-xl font-semibold text-white flex items-center gap-2"><Server className="w-5 h-5 text-emerald-400" /> MCP Hub &amp; Tools</h1>
+          <p className="text-sm text-zinc-400 max-w-3xl">
+            Connect apps once for your organization. Their tools, your platform tools and your functions are all served from one MCP URL and
+            can be given to agents through profiles.
           </p>
-          <button onClick={() => setIsCreatingProfile(true)} className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold">
-            Create a profile
-          </button>
-        </div>
-      )}
-      {activeTab === 'profiles' && selectedProfile && (
-        <div className="space-y-8">
-          {/* Profile Selector Toolbar */}
-          <div className="flex flex-wrap items-center justify-between gap-4 p-4 rounded-xl bg-zinc-900/80 border border-zinc-800">
-            <div className="flex items-center gap-3">
-              <span className="text-xs text-zinc-400 font-medium">Active MCP Profile:</span>
-              <div className="flex items-center gap-2">
-                {mcpProfiles.map((p) => (
-                  <button
-                    key={p.id}
-                    onClick={() => setSelectedProfileId(p.id)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                      p.id === selectedProfile.id
-                        ? 'bg-emerald-600 text-white font-semibold shadow-md shadow-emerald-950'
-                        : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700'
-                    }`}
-                  >
-                    {p.name}
-                  </button>
-                ))}
-              </div>
+          {connections && (
+            <div className="flex flex-wrap gap-3 text-xs text-zinc-400">
+              <span>{toolCount} tools available</span>
+              <span>·</span>
+              <span>Google {connections.google.connected ? `connected (${connections.google.account_email})` : 'not connected'}</span>
+              <span>·</span>
+              <span>Web search {connections.web_search.available ? `via ${connections.web_search.provider}` : 'needs an LLM key'}</span>
             </div>
+          )}
+        </header>
 
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-zinc-400 font-mono">
-                API Key:{' '}
-                <code className="text-emerald-400">
-                  {selectedProfile.apiKey ? `${selectedProfile.apiKey.slice(0, 14)}...` : 'manage under API Keys'}
-                </code>
-              </span>
-              <button
-                disabled={!selectedProfile.apiKey}
-                onClick={() => selectedProfile.apiKey && handleCopy(selectedProfile.apiKey, 'api-key')}
-                className="p-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs"
-                title="Copy API Key"
-              >
-                {isCopied === 'api-key' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-              </button>
-            </div>
-          </div>
-
-          {/* Profile Overview Card */}
-          <div className="p-6 rounded-xl bg-[#0e1117] border border-zinc-800 space-y-4">
-            <div className="flex items-start justify-between">
-              <div>
-                <div className="flex items-center gap-2">
-                  <h3 className="text-lg font-bold text-white">{selectedProfile.name}</h3>
-                  <span className="text-xs font-mono px-2 py-0.5 rounded bg-zinc-800 text-zinc-400">
-                    /{selectedProfile.slug}
-                  </span>
-                </div>
-                <p className="text-xs text-zinc-400 mt-1 max-w-2xl">{selectedProfile.description}</p>
-              </div>
-
-              <div className="text-right space-y-1">
-                <span className="text-[11px] font-mono text-zinc-500 uppercase">Token Budget Cap</span>
-                <div className="text-sm font-bold text-emerald-400 font-mono">
-                  {selectedProfile.tokenBudget.toLocaleString()} tokens
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <ProfileFunctionsPicker
-            profile={selectedProfile}
-            onSaved={(functionIds) =>
-              setMcpProfiles((prev) => prev.map((p) => (p.id === selectedProfile.id ? { ...p, functionIds } : p)))
-            }
-          />
-
-          {/* Main 2-Column Assignment Board */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            {/* Left 2 Cols: Tools Selector (The Chosen Tools) */}
-            <div className="lg:col-span-2 space-y-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-base font-bold text-white flex items-center gap-2">
-                    <span>1. Assigned Tools</span>
-                    <span className="text-xs font-mono px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800">
-                      {selectedProfile.selectedToolNames.length} Selected
-                    </span>
-                  </h3>
-                  <p className="text-xs text-zinc-400">
-                    Select exactly the tools this MCP profile exposes to Claude Desktop, Cursor, or your agents.
-                  </p>
-                </div>
-              </div>
-
-              {/* Grouped Tools by Server */}
-              <div className="space-y-4">
-                {servers.map((server) => {
-                  const serverTools = server.tools;
-                  const selectedInServer = serverTools.filter((t) =>
-                    selectedProfile.selectedToolNames.includes(t.name)
-                  );
-
-                  return (
-                    <div
-                      key={server.id}
-                      className="rounded-xl border border-zinc-800 bg-zinc-900/50 overflow-hidden"
-                    >
-                      {/* Server Group Header */}
-                      <div className="px-4 py-3 bg-zinc-900/90 border-b border-zinc-800 flex items-center justify-between">
-                        <div className="flex items-center gap-2.5">
-                          {renderServerIcon(server.icon)}
-                          <div>
-                            <span className="text-xs font-semibold text-white">{server.name}</span>
-                            <span className="text-[10px] font-mono text-zinc-500 ml-2">
-                              {server.isSubscribed ? 'Subscribed' : 'Not Subscribed'}
-                            </span>
-                          </div>
-                        </div>
-
-                        <span className="text-xs font-mono text-zinc-400">
-                          {selectedInServer.length} / {serverTools.length} enabled
-                        </span>
-                      </div>
-
-                      {/* Tool Checkbox List */}
-                      <div className="divide-y divide-zinc-800/60 p-2">
-                        {serverTools.map((tool) => {
-                          const isChecked = selectedProfile.selectedToolNames.includes(tool.name);
-
-                          return (
-                            <div
-                              key={tool.name}
-                              className={`flex items-start gap-3 p-3 rounded-lg transition-all ${
-                                isChecked ? 'bg-emerald-950/20' : 'hover:bg-zinc-800/30'
-                              }`}
-                            >
-                              <input
-                                type="checkbox"
-                                id={`tool-${tool.name}`}
-                                checked={isChecked}
-                                onChange={() => handleToggleToolInProfile(tool.name)}
-                                className="mt-1 w-4 h-4 rounded border-zinc-700 bg-zinc-800 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
-                              />
-
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center justify-between">
-                                  <label
-                                    htmlFor={`tool-${tool.name}`}
-                                    className="text-xs font-mono font-semibold text-white cursor-pointer hover:text-emerald-400"
-                                  >
-                                    {tool.name}
-                                  </label>
-                                  <button
-                                    onClick={() => setInspectingTool(tool)}
-                                    className="text-[11px] text-zinc-500 hover:text-zinc-300"
-                                  >
-                                    Schema →
-                                  </button>
-                                </div>
-                                <p className="text-xs text-zinc-400 mt-0.5 leading-relaxed">
-                                  {tool.description}
-                                </p>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Right Col: Bound Context Profiles & Skills */}
-            <div className="space-y-6">
-              {/* Bound Context Control Profiles */}
-              <div className="p-5 rounded-xl border border-zinc-800 bg-zinc-900/60 space-y-4">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <Layers className="w-4 h-4 text-emerald-400" />
-                    <h4 className="text-sm font-bold text-white">Bound Context Profiles</h4>
-                  </div>
-                  <p className="text-xs text-zinc-400 leading-relaxed">
-                    Our proprietary MCP server surfaces these profiles as native MCP prompts and resources for your agent.
-                  </p>
-                </div>
-
-                <div className="space-y-2">
-                  {contextProfiles.map((cp) => {
-                    const isBound = selectedProfile.boundContextProfileSlugs.includes(cp.slug);
-
-                    return (
-                      <div
-                        key={cp.slug}
-                        onClick={() => handleToggleContextBinding(cp.slug)}
-                        className={`p-3 rounded-lg border cursor-pointer transition-all ${
-                          isBound
-                            ? 'border-emerald-600/70 bg-emerald-950/30'
-                            : 'border-zinc-800 bg-zinc-800/40 hover:bg-zinc-800'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs font-semibold text-white">{cp.name}</span>
-                          <span
-                            className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
-                              isBound ? 'bg-emerald-900 text-emerald-300' : 'bg-zinc-800 text-zinc-400'
-                            }`}
-                          >
-                            {isBound ? 'Active in MCP' : 'Disabled'}
-                          </span>
-                        </div>
-                        <div className="text-[11px] text-zinc-400 mt-1 line-clamp-1">
-                          Environment: {cp.environment} • Budget: {cp.budget?.maxTokens?.toLocaleString() ?? "—"} tokens • {cp.pipeline?.length ?? 0} pipeline steps
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Assigned Skills */}
-              <div className="p-5 rounded-xl border border-zinc-800 bg-zinc-900/60 space-y-4">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <Sparkles className="w-4 h-4 text-teal-400" />
-                    <h4 className="text-sm font-bold text-white">Assigned Agent Skills</h4>
-                  </div>
-                  <p className="text-xs text-zinc-400 leading-relaxed">
-                    Behavioral directives dynamically injected into the MCP protocol resources and prompt templates.
-                  </p>
-                </div>
-
-                <div className="space-y-2">
-                  {MCP_SKILLS.map((skill) => {
-                    const isEnabled = selectedProfile.selectedSkillNames.includes(skill.id);
-
-                    return (
-                      <div
-                        key={skill.id}
-                        onClick={() => handleToggleSkill(skill.id)}
-                        className={`p-3 rounded-lg border cursor-pointer transition-all ${
-                          isEnabled
-                            ? 'border-teal-600/70 bg-teal-950/20'
-                            : 'border-zinc-800 bg-zinc-800/40 hover:bg-zinc-800'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs font-semibold text-white">{skill.name}</span>
-                          <span
-                            className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
-                              isEnabled ? 'bg-teal-900 text-teal-300' : 'bg-zinc-800 text-zinc-400'
-                            }`}
-                          >
-                            {isEnabled ? 'Enabled' : 'Off'}
-                          </span>
-                        </div>
-                        <p className="text-[11px] text-zinc-400 mt-1">{skill.description}</p>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ========================================================================= */}
-      {/* TAB 3: CONNECT CLIENTS (CLAUDE DESKTOP, CURSOR, WINDSURF)                 */}
-      {/* ========================================================================= */}
-      {activeTab === 'clients' && selectedProfile && (
-        <div className="space-y-6">
-          <div>
-            <h2 className="text-lg font-bold text-white">Connect Your MCP Clients</h2>
-            <p className="text-xs text-zinc-400">
-              Configure Claude Desktop, Cursor IDE, Windsurf, or your custom agents to stream tools and context from this MCP profile.
-            </p>
-          </div>
-
-          {/* Quick Endpoint Bar */}
-          <div className="p-4 rounded-xl bg-zinc-900 border border-zinc-800 flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div className="space-y-1">
-              <span className="text-[11px] uppercase font-mono text-zinc-500">Universal MCP Server URL</span>
-              <div className="text-xs font-mono text-emerald-400 break-all">{mcpEndpointUrl}</div>
-            </div>
-            <button
-              onClick={() => handleCopy(mcpEndpointUrl, 'endpoint')}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-mono transition-colors shrink-0"
-            >
-              {isCopied === 'endpoint' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-              <span>Copy Endpoint</span>
+        <div className="flex gap-1 border-b border-zinc-800">
+          {([
+            ['connections', 'Connections'],
+            ['profiles', 'Profiles'],
+            ['clients', 'Connect clients'],
+          ] as const).map(([id, label]) => (
+            <button key={id} onClick={() => setTab(id)} className={`px-4 py-2 text-sm border-b-2 -mb-px ${tab === id ? 'border-emerald-500 text-white' : 'border-transparent text-zinc-400 hover:text-zinc-200'}`}>
+              {label}
             </button>
-          </div>
-
-          <div className="space-y-2">
-            <label className="text-[11px] uppercase font-mono text-zinc-500 block">Workspace API key (not saved)</label>
-            <input
-              type="password"
-              value={testerApiKey}
-              onChange={(e) => setTesterApiKey(e.target.value)}
-              placeholder="ctx_live_…  (create one in the API Keys tab)"
-              autoComplete="off"
-              className="w-full bg-zinc-950 border border-zinc-800 rounded-md p-2 text-xs font-mono text-zinc-200 focus:outline-none focus:border-emerald-500"
-            />
-            {!testerApiKey.trim() && (
-              <p className="text-[11px] font-mono text-amber-400/90">
-                Snippets show <code>{API_KEY_PLACEHOLDER}</code> until you paste a key.
-              </p>
-            )}
-          </div>
-
-          {/* Configuration Cards Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {([
-              { id: 'cursor', title: 'Cursor', file: '.cursor/mcp.json', text: JSON.stringify(clientSnippets.cursor, null, 2), dot: 'bg-cyan-500' },
-              { id: 'claude', title: 'Claude Desktop', file: 'claude_desktop_config.json (via mcp-remote)', text: JSON.stringify(clientSnippets.claudeDesktop, null, 2), dot: 'bg-amber-500' },
-              { id: 'claude-code', title: 'Claude Code', file: 'terminal', text: clientSnippets.claudeCode, dot: 'bg-orange-500' },
-              { id: 'windsurf', title: 'Windsurf', file: '~/.codeium/windsurf/mcp_config.json', text: JSON.stringify(clientSnippets.windsurf, null, 2), dot: 'bg-teal-500' },
-            ] as const).map((card) => (
-              <div key={card.id} className="rounded-xl border border-zinc-800 bg-[#0e1117] p-5 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className={`w-3 h-3 rounded-full ${card.dot}`}></div>
-                    <h4 className="text-sm font-bold text-white">{card.title}</h4>
-                  </div>
-                  <button
-                    onClick={() => handleCopy(card.text, card.id)}
-                    className="text-xs text-zinc-400 hover:text-white flex items-center gap-1"
-                  >
-                    {isCopied === card.id ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                    <span>Copy</span>
-                  </button>
-                </div>
-                <p className="text-xs text-zinc-400">
-                  <code className="text-zinc-300">{card.file}</code>
-                </p>
-                <pre className="p-3 rounded-lg bg-zinc-950 font-mono text-[11px] text-emerald-400 overflow-x-auto whitespace-pre-wrap break-all border border-zinc-800/80">
-                  {testerApiKey.trim() ? card.text.split(testerApiKey.trim()).join(`${testerApiKey.trim().slice(0, 16)}…`) : card.text}
-                </pre>
-              </div>
-            ))}
-          </div>
+          ))}
         </div>
-      )}
 
-      {/* ========================================================================= */}
-      {/* TAB 4: MCP PROTOCOL INSPECTOR & TEST RUNNER                               */}
-      {/* ========================================================================= */}
-      {activeTab === 'tester' && selectedProfile && (
-        <div className="space-y-6">
-          <div>
-            <h2 className="text-lg font-bold text-white">MCP Protocol Inspector & Live Tester</h2>
-            <p className="text-xs text-zinc-400">
-              Directly invoke JSON-RPC 2.0 methods (<code className="text-emerald-400">tools/list</code>, <code className="text-emerald-400">tools/call</code>, <code className="text-emerald-400">prompts/list</code>) against the live platform MCP endpoint (<code className="text-emerald-400">/api/mcp/platform</code>) with a workspace API key.
-            </p>
+        {error && (
+          <div className="p-3 rounded-lg bg-rose-950/40 border border-rose-900/60 text-xs text-rose-300 flex items-center gap-2">
+            <AlertTriangle className="w-3.5 h-3.5" /> {error}
           </div>
+        )}
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Request Builder */}
-            <div className="p-5 rounded-xl border border-zinc-800 bg-[#0e1117] space-y-4">
-              <h3 className="text-sm font-bold text-white">1. Configure JSON-RPC Request</h3>
+        {!connections && !error && (
+          <div className="flex items-center gap-2 text-sm text-zinc-400"><Loader2 className="w-4 h-4 animate-spin" /> Loading…</div>
+        )}
 
-              <div className="space-y-3 text-xs">
-                <div>
-                  <label className="text-zinc-400 block mb-1">Workspace API key:</label>
-                  <input
-                    type="password"
-                    value={testerApiKey}
-                    onChange={(e) => setTesterApiKey(e.target.value)}
-                    placeholder="ctx_live_…"
-                    autoComplete="off"
-                    className="w-full bg-zinc-900 border border-zinc-700 rounded-md p-2 text-white font-mono"
-                  />
-                </div>
-                <div>
-                  <label className="text-zinc-400 block mb-1">MCP Method:</label>
-                  <select
-                    value={testerMethod}
-                    onChange={(e: any) => setTesterMethod(e.target.value)}
-                    className="w-full bg-zinc-900 border border-zinc-700 rounded-md p-2 text-white font-mono"
-                  >
-                    <option value="tools/list">tools/list (Tools this key can use)</option>
-                    <option value="tools/call">tools/call (Execute Tool)</option>
-                    <option value="initialize">initialize (Handshake)</option>
-                  </select>
-                </div>
-
-                {testerMethod === 'tools/call' && (
-                  <>
-                    <div>
-                      <label className="text-zinc-400 block mb-1">Select Tool to Call:</label>
-                      <select
-                        value={testerToolName}
-                        onChange={(e) => setTesterToolName(e.target.value)}
-                        className="w-full bg-zinc-900 border border-zinc-700 rounded-md p-2 text-white font-mono"
-                      >
-                        {PLATFORM_TOOL_DEFINITIONS.map((tool) => (
-                          <option key={tool.name} value={tool.name}>
-                            {tool.name} ({tool.requiredScope})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="text-zinc-400 block mb-1">Arguments (JSON):</label>
-                      <textarea
-                        rows={8}
-                        value={testerArgsJson}
-                        onChange={(e) => setTesterArgsJson(e.target.value)}
-                        className="w-full bg-zinc-950 border border-zinc-800 rounded-md p-3 text-xs font-mono text-zinc-200 focus:outline-none focus:border-emerald-500"
-                      />
-                    </div>
-                  </>
-                )}
-
-                <div className="pt-2">
-                  <button
-                    onClick={handleExecuteTester}
-                    disabled={isExecutingTool}
-                    className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium transition-all shadow-md shadow-emerald-950"
-                  >
-                    <Play className="w-4 h-4 fill-white" />
-                    <span>{isExecutingTool ? 'Dispatching to MCP Engine...' : 'Execute MCP Request'}</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* Response Viewer */}
-            <div className="p-5 rounded-xl border border-zinc-800 bg-[#0e1117] space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-bold text-white">2. Raw JSON-RPC 2.0 Response</h3>
-                {executionTimeMs !== null && (
-                  <span className="text-[11px] font-mono text-emerald-400 bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-800">
-                    {executionTimeMs}ms latency
-                  </span>
-                )}
-              </div>
-
-              <div className="h-[360px] rounded-lg bg-zinc-950 border border-zinc-800/80 p-3 overflow-y-auto font-mono text-[11px] text-zinc-300">
-                {testerOutput ? (
-                  <pre>{JSON.stringify(testerOutput, null, 2)}</pre>
-                ) : (
-                  <div className="h-full flex items-center justify-center text-zinc-600">
-                    Click &quot;Execute MCP Request&quot; to inspect the live response packet
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ========================================================================= */}
-      {/* TAB 5: PLATFORM CONTROL MCP SERVER (DIRECT IN-MEMORY CONTROLLERS)          */}
-      {/* ========================================================================= */}
-      {activeTab === 'platform-control' && (
-        <PlatformMcpServerView />
-      )}
-
-      {/* ========================================================================= */}
-      {/* MODAL: CREATE PROFILE                                                     */}
-      {/* ========================================================================= */}
-      {isCreatingProfile && (
-        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-fadeIn">
-          <div className="bg-[#12161f] border border-zinc-800 rounded-xl max-w-md w-full p-6 space-y-5">
-            <h3 className="text-base font-bold text-white">Create New MCP Server Profile</h3>
-            <form onSubmit={handleCreateProfile} className="space-y-4 text-xs">
-              <div>
-                <label className="text-zinc-400 block mb-1">Profile Name:</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. DevOps Assistant Suite"
-                  value={newProfileName}
-                  onChange={(e) => setNewProfileName(e.target.value)}
-                  className="w-full bg-zinc-900 border border-zinc-700 rounded-md p-2 text-white"
-                />
-              </div>
-
-              <div>
-                <label className="text-zinc-400 block mb-1">Slug:</label>
-                <input
-                  type="text"
-                  placeholder="e.g. devops-suite"
-                  value={newProfileSlug}
-                  onChange={(e) => setNewProfileSlug(e.target.value)}
-                  className="w-full bg-zinc-900 border border-zinc-700 rounded-md p-2 text-white font-mono"
-                />
-              </div>
-
-              <div>
-                <label className="text-zinc-400 block mb-1">Description:</label>
-                <textarea
-                  rows={3}
-                  placeholder="Brief description of what tools and skills this profile exposes..."
-                  value={newProfileDesc}
-                  onChange={(e) => setNewProfileDesc(e.target.value)}
-                  className="w-full bg-zinc-900 border border-zinc-700 rounded-md p-2 text-white"
-                />
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-3">
-                <button
-                  type="button"
-                  onClick={() => setIsCreatingProfile(false)}
-                  className="px-3 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-medium"
-                >
-                  Create Profile
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* ========================================================================= */}
-      {/* MODAL: TOOL SCHEMA INSPECTOR                                              */}
-      {/* ========================================================================= */}
-      {inspectingTool && (
-        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-fadeIn">
-          <div className="bg-[#12161f] border border-zinc-800 rounded-xl max-w-lg w-full p-6 space-y-4">
-            <div className="flex items-start justify-between">
-              <div>
-                <h3 className="text-sm font-bold font-mono text-emerald-400">{inspectingTool.name}</h3>
-                <span className="text-xs text-zinc-500">{inspectingTool.serverName}</span>
-              </div>
-              <button
-                onClick={() => setInspectingTool(null)}
-                className="text-zinc-400 hover:text-white text-sm"
-              >
-                ✕
-              </button>
-            </div>
-
-            <p className="text-xs text-zinc-300 leading-relaxed">{inspectingTool.description}</p>
-
-            <div className="space-y-1">
-              <span className="text-[11px] font-mono uppercase text-zinc-500">Input Schema:</span>
-              <pre className="p-3 rounded-lg bg-zinc-950 font-mono text-[11px] text-zinc-300 max-h-60 overflow-y-auto border border-zinc-800">
-                {JSON.stringify(inspectingTool.inputSchema, null, 2)}
-              </pre>
-            </div>
-
-            <div className="flex justify-end pt-2">
-              <button
-                onClick={() => setInspectingTool(null)}
-                className="px-4 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+        {connections && tab === 'connections' && <ConnectionsTab data={connections} onChanged={load} onOpenPlatformMcp={onOpenPlatformMcp} />}
+        {connections && tab === 'profiles' && <ProfilesTab connections={connections} />}
+        {connections && tab === 'clients' && <ClientsTab url={connections.platform.url} />}
+      </div>
     </div>
   );
 };
 
-/** Group AI Function Studio functions into this profile; agents using the profile get them as fn_* tools. */
-function ProfileFunctionsPicker({ profile, onSaved }: { profile: McpServerProfile; onSaved: (ids: string[]) => void }) {
-  const [functions, setFunctions] = useState<Array<{ id: string; name: string; function_slug: string; status: string; description: string | null }> | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const selected = profile.functionIds || [];
+// ---------------------------------------------------------------------------
+// Connections
+// ---------------------------------------------------------------------------
+
+const ConnectionsTab: React.FC<{ data: Connections; onChanged: () => void; onOpenPlatformMcp?: () => void }> = ({ data, onChanged, onOpenPlatformMcp }) => {
+  const [busy, setBusy] = useState<null | 'connect' | 'refresh' | 'disconnect'>(null);
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const g = data.google;
 
   useEffect(() => {
-    fetch('/api/v1/functions', { cache: 'no-store' })
-      .then((r) => (r.ok ? r.json() : { functions: [] }))
-      .then((d) => setFunctions(d.functions || []))
-      .catch(() => setFunctions([]));
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      if (event.data?.type === 'CONNECTION_SUCCESS') {
+        setMessage({ ok: true, text: event.data.message || 'Google connected.' });
+        setBusy(null);
+        onChanged();
+      } else if (event.data?.type === 'CONNECTION_ERROR') {
+        setMessage({ ok: false, text: event.data.message || 'Connection failed.' });
+        setBusy(null);
+      }
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [onChanged]);
+
+  const connect = async () => {
+    setBusy('connect');
+    setMessage(null);
+    try {
+      const { url } = await api<{ url: string }>('/api/v1/connections/google/connect', { method: 'POST', body: '{}' });
+      const w = 520;
+      const h = 680;
+      const popup = window.open(url, 'connect_google', `width=${w},height=${h},left=${window.screenX + (window.outerWidth - w) / 2},top=${window.screenY + 60}`);
+      if (!popup) {
+        setMessage({ ok: false, text: 'Your browser blocked the popup. Allow popups for this site and try again.' });
+        setBusy(null);
+        return;
+      }
+      // If the window is closed without finishing, stop waiting.
+      const timer = setInterval(() => {
+        if (popup.closed) {
+          clearInterval(timer);
+          setBusy((b) => (b === 'connect' ? null : b));
+          onChanged();
+        }
+      }, 800);
+    } catch (err: any) {
+      setMessage({ ok: false, text: err?.message || 'Could not start the connection.' });
+      setBusy(null);
+    }
+  };
+
+  const act = async (kind: 'refresh' | 'disconnect') => {
+    if (kind === 'disconnect' && !window.confirm('Disconnect Google? Agents lose the Google tools until you connect again.')) return;
+    setBusy(kind);
+    setMessage(null);
+    try {
+      if (kind === 'refresh') await api('/api/v1/connections/google/refresh', { method: 'POST', body: '{}' });
+      else await api('/api/v1/connections/google', { method: 'DELETE' });
+      setMessage({ ok: true, text: kind === 'refresh' ? 'Tools reloaded from Google.' : 'Google disconnected.' });
+      onChanged();
+    } catch (err: any) {
+      setMessage({ ok: false, text: err?.message || 'Failed.' });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      {message && (
+        <div className={`p-3 rounded-lg text-xs flex items-center gap-2 border ${message.ok ? 'bg-emerald-950/30 border-emerald-900 text-emerald-300' : 'bg-rose-950/30 border-rose-900 text-rose-300'}`}>
+          {message.ok ? <CheckCircle2 className="w-3.5 h-3.5" /> : <AlertTriangle className="w-3.5 h-3.5" />} {message.text}
+        </div>
+      )}
+
+      {/* Platform */}
+      <section className={card}>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-white flex items-center gap-2"><Server className="w-4 h-4 text-emerald-400" /> Context Control Platform</h2>
+            <p className="text-xs text-zinc-400 mt-1">Built in. {data.platform.tool_count} platform tools (profiles, scheduled tasks, Supervisor Board, API keys) plus your functions and connected apps, all at one URL.</p>
+          </div>
+          <span className="text-[10px] px-2 py-0.5 rounded border text-emerald-300 border-emerald-800 bg-emerald-950/40">Always on</span>
+        </div>
+        <div className="mt-3 flex items-center gap-2">
+          <code className="flex-1 text-xs font-mono bg-[#06080b] border border-zinc-800 rounded-lg px-3 py-2 text-emerald-300 truncate">{data.platform.url}</code>
+          <CopyButton text={data.platform.url} />
+          {onOpenPlatformMcp && (
+            <button onClick={onOpenPlatformMcp} className="flex items-center gap-1 px-3 py-2 rounded-lg border border-zinc-700 text-xs text-zinc-300 hover:text-white">
+              Playground <ExternalLink className="w-3 h-3" />
+            </button>
+          )}
+        </div>
+      </section>
+
+      {/* Google */}
+      <section className={card}>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-white flex items-center gap-2"><Plug className="w-4 h-4 text-sky-400" /> Google</h2>
+            <p className="text-xs text-zinc-400 mt-1">
+              {g.connected
+                ? <>Connected as <span className="text-zinc-200">{g.account_email}</span>{g.account_domain ? <> (Workspace: {g.account_domain})</> : ' (personal account)'}. Every agent in this organization with these tools in its profile acts as this account.</>
+                : 'One Google account for the whole organization. You approve exactly what Context Control may do on Google’s own consent screen.'}
+            </p>
+            {g.status === 'error' && <p className="text-xs text-rose-400 mt-1">{g.last_error}</p>}
+          </div>
+          <div className="flex items-center gap-2">
+            {g.connected ? (
+              <>
+                <button onClick={() => act('refresh')} disabled={!!busy} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-zinc-700 text-xs text-zinc-300 hover:text-white disabled:opacity-50">
+                  <RefreshCw className={`w-3.5 h-3.5 ${busy === 'refresh' ? 'animate-spin' : ''}`} /> Refresh tools
+                </button>
+                {g.status === 'error' && (
+                  <button onClick={connect} disabled={!!busy} className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold">Reconnect</button>
+                )}
+                <button onClick={() => act('disconnect')} disabled={!!busy} className="px-3 py-1.5 rounded-lg border border-zinc-700 text-xs text-zinc-400 hover:text-rose-400 disabled:opacity-50">Disconnect</button>
+              </>
+            ) : (
+              <button
+                onClick={connect}
+                disabled={!!busy || !g.configured}
+                title={g.configured ? '' : 'Google is not configured on this server yet'}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold disabled:opacity-50"
+              >
+                {busy === 'connect' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plug className="w-3.5 h-3.5" />} Connect Google
+              </button>
+            )}
+          </div>
+        </div>
+        {!g.configured && <p className="mt-3 text-xs text-amber-400">The server administrator still needs to add a Google OAuth client (GOOGLE_OAUTH_CLIENT_ID / SECRET).</p>}
+
+        <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+          {g.connectors.map((c) => {
+            const mode = c.mode ? MODE_LABEL[c.mode] : null;
+            const Icon = c.id === 'gmail' ? Mail : CalendarDays;
+            return (
+              <div key={c.id} className="rounded-lg border border-zinc-800 p-4 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm text-white flex items-center gap-1.5"><Icon className="w-4 h-4 text-zinc-400" /> {c.name}</span>
+                  {mode && <span className={`text-[10px] px-1.5 py-0.5 rounded border ${mode.cls}`}>{mode.text}</span>}
+                </div>
+                <p className="text-xs text-zinc-500">{c.description}</p>
+                {g.connected ? (
+                  c.tools.length ? (
+                    <ul className="space-y-1">
+                      {c.tools.map((t) => (
+                        <li key={t.name} className="text-[11px]">
+                          <span className="font-mono text-zinc-200">{t.name}</span>
+                          {t.read_only && <span className="ml-1 text-zinc-600">read</span>}
+                          <span className="block text-zinc-500 truncate">{t.description}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-[11px] text-zinc-500">No tools available. {c.detail}</p>
+                  )
+                ) : (
+                  <p className="text-[11px] text-zinc-600">Connect Google to load these tools.</p>
+                )}
+                {c.mode === 'direct' && c.detail && <p className="text-[10px] text-zinc-600" title={c.detail}>Using the direct API because Google&apos;s official MCP server is not available to this account.</p>}
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      {/* Web search */}
+      <section className={card}>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-white flex items-center gap-2"><Search className="w-4 h-4 text-amber-400" /> Web search</h2>
+            <p className="text-xs text-zinc-400 mt-1">
+              Tool <span className="font-mono text-zinc-200">web_search</span>: searches the web with your organization&apos;s own LLM key and returns an answer with source links.
+              Gemini uses Google Search; Claude and OpenAI use their own web search.
+            </p>
+          </div>
+          <span className={`text-[10px] px-2 py-0.5 rounded border ${data.web_search.available ? 'text-emerald-300 border-emerald-800 bg-emerald-950/40' : 'text-zinc-400 border-zinc-700'}`}>
+            {data.web_search.available ? `Uses your ${data.web_search.provider} key` : 'Add an LLM key to enable'}
+          </span>
+        </div>
+      </section>
+
+      <p className="text-xs text-zinc-600">More connectors (GitHub, Notion, Linear, …) will appear here as they are added.</p>
+    </div>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// Profiles
+// ---------------------------------------------------------------------------
+
+const ProfilesTab: React.FC<{ connections: Connections }> = ({ connections }) => {
+  const [profiles, setProfiles] = useState<Profile[] | null>(null);
+  const [functions, setFunctions] = useState<Fn[]>([]);
+  const [usage, setUsage] = useState<Record<string, string[]>>({});
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const [p, f, s, t] = await Promise.all([
+        api<{ profiles: Profile[] }>('/api/mcp/profiles'),
+        api<{ functions: Fn[] }>('/api/v1/functions').catch(() => ({ functions: [] as Fn[] })),
+        api<{ sessions: Array<{ name: string; mcp_profile_id: string | null; team_id: string | null }> }>('/api/v1/agent-sessions').catch(() => ({ sessions: [] })),
+        api<{ teams: Array<{ name: string; supervisor_mcp_profile_id: string | null }> }>('/api/v1/agent-teams').catch(() => ({ teams: [] })),
+      ]);
+      setProfiles(p.profiles);
+      setFunctions(f.functions);
+      const used: Record<string, string[]> = {};
+      for (const x of s.sessions) if (x.mcp_profile_id && !x.team_id) (used[x.mcp_profile_id] ||= []).push(`Instance “${x.name}”`);
+      for (const x of t.teams) if (x.supervisor_mcp_profile_id) (used[x.supervisor_mcp_profile_id] ||= []).push(`Team “${x.name}”`);
+      setUsage(used);
+      setSelectedId((cur) => (cur && p.profiles.some((x) => x.id === cur) ? cur : p.profiles[0]?.id ?? null));
+    } catch (err: any) {
+      setError(err?.message || 'Could not load profiles');
+    }
   }, []);
 
-  const toggle = async (id: string) => {
-    const next = selected.includes(id) ? selected.filter((f) => f !== id) : [...selected, id];
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const profile = profiles?.find((p) => p.id === selectedId) ?? null;
+  const connectorGroups = useMemo(() => {
+    const groups: Array<{ id: string; name: string; tools: ConnectorTool[]; reason: string | null }> = connections.google.connectors.map((c) => ({
+      id: c.id,
+      name: c.name,
+      tools: c.tools,
+      reason: !connections.google.connected ? 'Connect Google first' : c.tools.length ? null : 'No tools available',
+    }));
+    groups.push({
+      id: 'web_search',
+      name: 'Web search',
+      tools: [{ name: 'web_search', description: 'Search the web with your LLM key', read_only: true }],
+      reason: connections.web_search.available ? null : 'Add an LLM key first',
+    });
+    return groups;
+  }, [connections]);
+
+  const save = async (data: Record<string, unknown>) => {
+    if (!profile) return;
     setSaving(true);
     setError(null);
     try {
-      const res = await fetch('/api/mcp/profiles', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'update', id: profile.id, data: { function_ids: next } }),
-      });
-      if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || 'Could not save');
-      onSaved(next);
+      const { profile: updated } = await api<{ profile: Profile }>('/api/mcp/profiles', { method: 'POST', body: JSON.stringify({ action: 'update', id: profile.id, data }) });
+      setProfiles((list) => (list || []).map((p) => (p.id === updated.id ? updated : p)));
     } catch (err: any) {
       setError(err?.message || 'Could not save');
     } finally {
@@ -1355,35 +442,204 @@ function ProfileFunctionsPicker({ profile, onSaved }: { profile: McpServerProfil
     }
   };
 
+  const toggle = (key: 'function_ids' | 'connector_tools', current: string[], value: string) =>
+    save({ [key]: current.includes(value) ? current.filter((v) => v !== value) : [...current, value] });
+
+  const archive = async () => {
+    if (!profile || !window.confirm(`Archive profile "${profile.name}"? Instances and teams using it lose its tools.`)) return;
+    try {
+      await api('/api/mcp/profiles', { method: 'POST', body: JSON.stringify({ action: 'delete', id: profile.id }) });
+      setSelectedId(null);
+      load();
+    } catch (err: any) {
+      setError(err?.message || 'Could not archive');
+    }
+  };
+
+  if (!profiles) return <div className="flex items-center gap-2 text-sm text-zinc-400"><Loader2 className="w-4 h-4 animate-spin" /> Loading profiles…</div>;
+
   return (
-    <div className="p-5 rounded-xl bg-[#0e1117] border border-zinc-800 space-y-3">
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="text-base font-bold text-white">Functions</h3>
-          <p className="text-xs text-zinc-400">
-            Your AI Function Studio functions. Instances, teams and workers that use this profile can call the checked ones as <code className="text-emerald-400">fn_*</code> tools.
-          </p>
-        </div>
-        <span className="text-xs font-mono px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800">{selected.length} selected</span>
+    <div className="grid grid-cols-1 lg:grid-cols-[240px_1fr] gap-4">
+      <aside className="space-y-2">
+        <button onClick={() => setCreating(true)} className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold">
+          <Plus className="w-3.5 h-3.5" /> New profile
+        </button>
+        {profiles.map((p) => (
+          <button key={p.id} onClick={() => setSelectedId(p.id)} className={`w-full text-left px-3 py-2.5 rounded-lg border ${p.id === selectedId ? 'bg-zinc-800/70 border-zinc-600' : 'border-zinc-800 hover:border-zinc-700'}`}>
+            <div className="text-sm text-white truncate">{p.name}</div>
+            <div className="text-[11px] text-zinc-500">{p.functionIds.length} functions · {p.connectorTools.length} app tools</div>
+          </button>
+        ))}
+        {profiles.length === 0 && <p className="text-xs text-zinc-500 p-2">No profiles yet.</p>}
+      </aside>
+
+      <div className="space-y-4">
+        {error && <p className="text-xs text-rose-400">{error}</p>}
+        {!profile ? (
+          <div className={`${card} text-center space-y-2`}>
+            <Layers className="w-6 h-6 text-emerald-400 mx-auto" />
+            <h3 className="text-sm font-semibold text-white">Profiles group tools for agents</h3>
+            <p className="text-xs text-zinc-400 max-w-md mx-auto">
+              A profile is the set of functions and connected-app tools an agent gets on top of its platform tools. Attach it to an Agent Studio instance, a team
+              supervisor or a worker, or bind an API key to it.
+            </p>
+          </div>
+        ) : (
+          <>
+            <section className={card}>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-base font-semibold text-white">{profile.name}</h2>
+                  {profile.description && <p className="text-xs text-zinc-400 mt-1">{profile.description}</p>}
+                  <p className="text-[11px] text-zinc-500 mt-2">Used by: {usage[profile.id]?.join(', ') || 'nothing yet. Attach it in Agent Studio or Team Builder.'}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {saving && <Loader2 className="w-3.5 h-3.5 animate-spin text-zinc-500" />}
+                  <button onClick={archive} className="p-2 rounded-lg border border-zinc-800 text-zinc-500 hover:text-rose-400" title="Archive"><Trash2 className="w-3.5 h-3.5" /></button>
+                </div>
+              </div>
+            </section>
+
+            <section className={card}>
+              <h3 className="text-sm font-semibold text-white flex items-center gap-2"><Plug className="w-4 h-4 text-sky-400" /> Connected-app tools</h3>
+              <div className="mt-3 space-y-4">
+                {connectorGroups.map((group) => (
+                  <div key={group.id}>
+                    <div className="text-xs text-zinc-300 mb-1.5">{group.name} {group.reason && <span className="text-zinc-600">· {group.reason}</span>}</div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      {group.tools.map((t) => {
+                        const on = profile.connectorTools.includes(t.name);
+                        return (
+                          <label key={t.name} className={`flex items-start gap-2.5 p-2.5 rounded-lg border ${group.reason ? 'opacity-50 cursor-not-allowed border-zinc-800' : on ? 'bg-emerald-950/20 border-emerald-900 cursor-pointer' : 'border-zinc-800 hover:border-zinc-700 cursor-pointer'}`}>
+                            <input type="checkbox" checked={on} disabled={!!group.reason || saving} onChange={() => toggle('connector_tools', profile.connectorTools, t.name)} className="mt-0.5" />
+                            <span className="min-w-0">
+                              <span className="block text-xs font-mono text-white">{t.name}</span>
+                              <span className="block text-[11px] text-zinc-500 truncate">{t.description}</span>
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <section className={card}>
+              <h3 className="text-sm font-semibold text-white flex items-center gap-2"><Code2 className="w-4 h-4 text-emerald-400" /> Functions</h3>
+              <p className="text-[11px] text-zinc-500 mt-1">From AI Function Studio. Only deployed functions are given to agents.</p>
+              {functions.length === 0 && <p className="text-xs text-zinc-500 mt-2">No functions yet.</p>}
+              <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2">
+                {functions.map((fn) => {
+                  const on = profile.functionIds.includes(fn.id);
+                  return (
+                    <label key={fn.id} className={`flex items-start gap-2.5 p-2.5 rounded-lg border cursor-pointer ${on ? 'bg-emerald-950/20 border-emerald-900' : 'border-zinc-800 hover:border-zinc-700'}`}>
+                      <input type="checkbox" checked={on} disabled={saving} onChange={() => toggle('function_ids', profile.functionIds, fn.id)} className="mt-0.5" />
+                      <span className="min-w-0">
+                        <span className="block text-xs font-mono text-white">fn_{fn.function_slug}</span>
+                        <span className="block text-[11px] text-zinc-500 truncate">{fn.description || fn.name}</span>
+                        {fn.status !== 'deployed' && <span className="block text-[10px] text-amber-400">Not deployed</span>}
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            </section>
+          </>
+        )}
       </div>
-      {functions === null && <p className="text-xs text-zinc-500">Loading…</p>}
-      {functions?.length === 0 && <p className="text-xs text-zinc-500">No functions yet. Create one in AI Function Studio.</p>}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-        {functions?.map((fn) => {
-          const on = selected.includes(fn.id);
-          return (
-            <label key={fn.id} className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer ${on ? 'bg-emerald-950/20 border-emerald-900' : 'border-zinc-800 hover:border-zinc-700'}`}>
-              <input type="checkbox" checked={on} disabled={saving} onChange={() => toggle(fn.id)} className="mt-0.5" />
-              <span className="min-w-0">
-                <span className="block text-xs font-mono text-white">fn_{fn.function_slug}</span>
-                <span className="block text-[11px] text-zinc-400 truncate">{fn.description || fn.name}</span>
-                {fn.status !== 'deployed' && <span className="block text-[10px] text-amber-400 mt-0.5">Not deployed yet: agents get it once it is deployed</span>}
-              </span>
-            </label>
-          );
-        })}
-      </div>
-      {error && <p className="text-xs text-rose-400">{error}</p>}
+
+      {creating && (
+        <NewProfileModal
+          onClose={() => setCreating(false)}
+          onCreated={(id) => {
+            setCreating(false);
+            setSelectedId(id);
+            load();
+          }}
+        />
+      )}
     </div>
   );
-}
+};
+
+const NewProfileModal: React.FC<{ onClose: () => void; onCreated: (id: string) => void }> = ({ onClose, onCreated }) => {
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const create = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const { profile } = await api<{ profile: Profile }>('/api/mcp/profiles', {
+        method: 'POST',
+        body: JSON.stringify({ name: name.trim(), description: description.trim() || undefined, issueApiKey: false }),
+      });
+      onCreated(profile.id);
+    } catch (err: any) {
+      setError(err?.message || 'Could not create the profile');
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="w-full max-w-md bg-[#0e131e] border border-zinc-700 rounded-2xl p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="text-base font-semibold text-white">New profile</h3>
+          <button onClick={onClose} className="text-zinc-400 hover:text-white"><X className="w-5 h-5" /></button>
+        </div>
+        <input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} placeholder="Name, e.g. Assistant" autoFocus />
+        <input className={inputCls} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What it's for (optional)" />
+        {error && <p className="text-xs text-rose-400">{error}</p>}
+        <div className="flex justify-end gap-2">
+          <button onClick={onClose} className="px-3 py-2 text-xs text-zinc-400 hover:text-white">Cancel</button>
+          <button onClick={create} disabled={busy || !name.trim()} className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold disabled:opacity-50">
+            {busy ? 'Creating…' : 'Create'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// Connect clients
+// ---------------------------------------------------------------------------
+
+const ClientsTab: React.FC<{ url: string }> = ({ url }) => {
+  const origin = url.replace(/\/api\/mcp\/platform$/, '');
+  const snippets = generateClientConfigSnippets('', origin);
+  const blocks: Array<{ title: string; text: string }> = [
+    { title: 'Claude Code', text: snippets.claudeCode },
+    { title: 'Cursor (.cursor/mcp.json)', text: JSON.stringify(snippets.cursor, null, 2) },
+    { title: 'Windsurf', text: JSON.stringify(snippets.windsurf, null, 2) },
+    { title: 'Claude Desktop (via mcp-remote)', text: JSON.stringify(snippets.claudeDesktop, null, 2) },
+  ];
+  return (
+    <div className="space-y-4">
+      <section className={card}>
+        <h2 className="text-sm font-semibold text-white">One URL for every client</h2>
+        <div className="mt-2 flex items-center gap-2">
+          <code className="flex-1 text-xs font-mono bg-[#06080b] border border-zinc-800 rounded-lg px-3 py-2 text-emerald-300 truncate">{platformMcpEndpoint(origin)}</code>
+          <CopyButton text={platformMcpEndpoint(origin)} />
+        </div>
+        <ol className="mt-3 text-xs text-zinc-400 space-y-1 list-decimal list-inside">
+          <li>Create an API key in <span className="text-zinc-200">API Keys &amp; Tokens</span>. Tick the scopes it needs, including <span className="font-mono">mcp:connectors:invoke</span> for connected-app tools and <span className="font-mono">mcp:functions:invoke</span> for functions.</li>
+          <li>Optionally bind the key to a profile: then it only sees that profile&apos;s app tools and functions.</li>
+          <li>Paste the key in place of the placeholder below.</li>
+        </ol>
+      </section>
+      {blocks.map((b) => (
+        <section key={b.title} className={card}>
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-xs font-semibold text-zinc-200">{b.title}</h3>
+            <CopyButton text={b.text} />
+          </div>
+          <pre className="text-[11px] font-mono text-zinc-300 bg-[#06080b] border border-zinc-800 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-all">{b.text}</pre>
+        </section>
+      ))}
+    </div>
+  );
+};

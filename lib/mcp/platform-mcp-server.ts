@@ -8,6 +8,7 @@ import * as profiles from '@/lib/services/profiles';
 import * as tasks from '@/lib/services/tasks';
 import * as board from '@/lib/services/board';
 import { deployedFunctionRows, functionIdsForProfiles, invokeFunction } from '@/lib/services/functions';
+import { connectorToolsFor, runConnectorTool } from '@/lib/services/connections';
 import { functionToolName } from '@/lib/functions/function-spec';
 import { z } from 'zod';
 import {
@@ -209,6 +210,40 @@ export async function registerFunctionTools(server: McpServer, ctx: ToolCtx, pro
   return rows.map((f) => functionToolName(f.function_slug));
 }
 
+/**
+ * Register connected-app tools (Google, web search). A key bound to an MCP profile only
+ * gets that profile's selection; an unbound key with the scope gets every available one.
+ */
+export async function registerConnectorTools(server: McpServer, ctx: ToolCtx, profileId: string | null): Promise<string[]> {
+  const defs = await connectorToolsFor(ctx.tenantId, profileId, true);
+  for (const def of defs) {
+    let inputSchema: z.ZodType;
+    try {
+      inputSchema = z.fromJSONSchema({ type: 'object', properties: {}, ...def.inputSchema } as any);
+    } catch {
+      inputSchema = z.looseObject({});
+    }
+    server.registerTool(
+      def.name,
+      {
+        title: def.name,
+        description: def.description,
+        inputSchema: inputSchema as any,
+        annotations: { title: def.name, readOnlyHint: !!def.readOnly, openWorldHint: true },
+      },
+      async (args: Row): Promise<CallToolResult> => {
+        try {
+          const result = await runConnectorTool(ctx, def, args);
+          return { content: [{ type: 'text', text: capText(typeof result === 'string' ? result : JSON.stringify(result, null, 2)) }] };
+        } catch (error) {
+          return toolFailure(error);
+        }
+      }
+    );
+  }
+  return defs.map((d) => d.name);
+}
+
 function jsonRpcAuthError(status: number, message: string): Response {
   return Response.json(
     { jsonrpc: '2.0', error: { code: -32001, message }, id: null },
@@ -239,6 +274,7 @@ export async function handlePlatformMcpRequest(req: Request): Promise<Response> 
   const ctx: ToolCtx = { tenantId: key.tenantId, userId: `key_${key.id}`, authMode: 'api_key', apiKeyId: key.id };
   const server = buildPlatformMcpServer(ctx, getAuthorizedPlatformTools(key.toolsWhitelist, key.scopes));
   if (hasScope(key.scopes, AGENT_SCOPES.functionsInvoke)) await registerFunctionTools(server, ctx, key.profileId);
+  if (hasScope(key.scopes, AGENT_SCOPES.connectorsInvoke)) await registerConnectorTools(server, ctx, key.profileId);
   const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
 
   try {

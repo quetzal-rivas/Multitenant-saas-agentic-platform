@@ -65,6 +65,7 @@ const SCOPE_LABELS: Record<string, string> = {
   'mcp:board:read': 'Read Supervisor Board tasks',
   'mcp:board:write': 'Post / claim / complete board tasks',
   'agent:run': 'Chat with Agent Studio instances',
+  'mcp:connectors:invoke': 'Call connected-app tools (Google, web search; limited to the key\'s profile if set)',
   'mcp:functions:invoke': 'Call deployed functions (fn_* tools; limited to the key\'s profile if set)',
   'agent:sessions:write': 'Create / edit Agent Studio instances',
 };

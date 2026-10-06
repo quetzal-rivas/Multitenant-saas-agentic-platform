@@ -195,7 +195,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <span>MCP Hub & Tools</span>
               </div>
               <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800/50">
-                PRO
+                MCP
               </span>
             </button>
 

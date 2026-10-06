@@ -13,6 +13,7 @@ import { ServiceError, isServiceError } from '@/lib/services/errors';
 import { parkRunClaims } from '@/lib/services/board';
 import { deployedFunctionRows, functionIdsForProfiles, invokeFunction } from '@/lib/services/functions';
 import { functionToolName } from '@/lib/functions/function-spec';
+import { connectorToolsFor, runConnectorTool } from '@/lib/services/connections';
 import { emitRunEvent } from './supervisor-graph';
 import { generateLLMResponse, type LLMMessage, type LLMToolDefinition } from './providers/llm-adapter';
 
@@ -75,13 +76,7 @@ async function mcpProfileSection(ctx: Ctx, id: string | null): Promise<string | 
   if (!id) return null;
   try {
     const { profile } = await getProfile(ctx, { profile_id: id });
-    const external: string[] = (profile.settings as any)?.selectedToolNames || [];
-    return (
-      `## MCP profile: ${profile.name}\n${profile.description || ''}`.trim() +
-      (external.length
-        ? `\nThis profile lists external tools (${external.join(', ')}) whose accounts are not connected yet; they are unavailable in this session.`
-        : '')
-    );
+    return `## MCP profile: ${profile.name}\n${profile.description || ''}`.trim();
   } catch (err) {
     if (!isServiceError(err)) throw err;
     return null;
@@ -346,8 +341,22 @@ export async function runSessionTurn(
       },
     ]);
   };
-  const withFunctions = async (tools: Map<string, LoopTool>, profileId: string | null | undefined) => {
-    for (const [name, tool] of await functionTools(profileId)) tools.set(name, tool);
+  /** Connected-app tools (Google, web search) selected in the given MCP profile. */
+  const connectorTools = async (profileId: string | null | undefined): Promise<Array<[string, LoopTool]>> => {
+    if (!profileId) return [];
+    if (ctx.authMode === 'api_key' && !hasScope(ctx.scopes, AGENT_SCOPES.connectorsInvoke)) return [];
+    const defs = await connectorToolsFor(ctx.tenantId, profileId);
+    return defs.map((def) => [
+      def.name,
+      {
+        def: { name: def.name, description: def.description, parameters: { type: 'object', properties: {}, ...def.inputSchema } },
+        run: (args: Record<string, any>) => runConnectorTool(toolCtx, def, args),
+      },
+    ]);
+  };
+  /** Everything an MCP profile adds on top of platform tools: functions and connected-app tools. */
+  const withProfileTools = async (tools: Map<string, LoopTool>, profileId: string | null | undefined) => {
+    for (const [name, tool] of [...(await functionTools(profileId)), ...(await connectorTools(profileId))]) tools.set(name, tool);
     return tools;
   };
 
@@ -378,7 +387,7 @@ export async function runSessionTurn(
   let tools: Map<string, LoopTool>;
   if (team) {
     systemPrompt = await buildSupervisorPrompt(ctx, team);
-    tools = await withFunctions(platformTools(team.supervisor_tools), team.supervisor_mcp_profile_id);
+    tools = await withProfileTools(platformTools(team.supervisor_tools), team.supervisor_mcp_profile_id);
     for (const worker of team.workers) {
       const name = delegateToolName(worker);
       tools.set(name, {
@@ -402,7 +411,7 @@ export async function runSessionTurn(
           const answer = await loop({
             systemPrompt: await buildWorkerPrompt(ctx, team, worker),
             messages: [{ role: 'user', content: brief }],
-            tools: await withFunctions(platformTools(worker.tools), worker.mcp_profile_id),
+            tools: await withProfileTools(platformTools(worker.tools), worker.mcp_profile_id),
             model: worker.model || team.model,
             maxSteps: MAX_WORKER_STEPS,
             worker: worker.name,
@@ -413,7 +422,7 @@ export async function runSessionTurn(
     }
   } else {
     systemPrompt = await buildSystemPrompt(ctx, session);
-    tools = await withFunctions(platformTools(session.allowed_tools), session.mcp_profile_id);
+    tools = await withProfileTools(platformTools(session.allowed_tools), session.mcp_profile_id);
   }
 
   let finalText: string;

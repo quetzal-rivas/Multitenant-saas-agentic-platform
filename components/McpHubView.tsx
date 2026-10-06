@@ -89,7 +89,7 @@ export const McpHubView: React.FC<McpHubViewProps> = ({
       const res = await fetch('/api/mcp/servers');
       if (res.ok) {
         const data = await res.json();
-        setServers(data.servers.map((s: HostedMcpServer) => ({ ...s, tools: s.tools ?? [] })));
+        setServers(data.servers.map((s: HostedMcpServer) => ({ ...s, tools: s.tools ?? [], scopesRequired: s.scopesRequired ?? [] })));
       }
     } catch {
       setServers(HOSTED_MCP_SERVERS);
@@ -125,7 +125,7 @@ export const McpHubView: React.FC<McpHubViewProps> = ({
           const dataS = await resS.json();
           if (Array.isArray(dataS.servers)) {
             // The servers API returns a catalog without per-tool lists; keep the shape the UI expects.
-            setServers(dataS.servers.map((s: HostedMcpServer) => ({ ...s, tools: s.tools ?? [] })));
+            setServers(dataS.servers.map((s: HostedMcpServer) => ({ ...s, tools: s.tools ?? [], scopesRequired: s.scopesRequired ?? [] })));
           }
         }
       } catch {
@@ -968,7 +968,7 @@ export const McpHubView: React.FC<McpHubViewProps> = ({
                           </span>
                         </div>
                         <div className="text-[11px] text-zinc-400 mt-1 line-clamp-1">
-                          Environment: {cp.environment} • Budget: {cp.budget.maxTokens.toLocaleString()} tokens • {cp.pipeline.length} pipeline steps
+                          Environment: {cp.environment} • Budget: {cp.budget?.maxTokens?.toLocaleString() ?? "—"} tokens • {cp.pipeline?.length ?? 0} pipeline steps
                         </div>
                       </div>
                     );

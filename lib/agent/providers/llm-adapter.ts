@@ -38,6 +38,10 @@ export interface LLMGenerateOptions {
   /** Ignored by providers/models that reject sampling parameters (current Claude models). */
   temperature?: number;
   maxTokens?: number;
+  /** 'low' asks for a quick answer (Gemini thinkingLevel, OpenAI reasoning_effort); ignored elsewhere. */
+  reasoning?: 'low';
+  /** Abort the provider request (e.g. to stay under a gateway timeout). */
+  signal?: AbortSignal;
 }
 
 export interface LLMGenerateResult {
@@ -144,11 +148,11 @@ async function generateAnthropic(options: LLMGenerateOptions): Promise<LLMGenera
         }
       : {}),
     // Agent turns are short tool-driven exchanges; keep effort explicit.
-    output_config: { effort: 'medium' },
+    output_config: { effort: options.reasoning === 'low' ? 'low' : 'medium' },
     // On a safety decline, the API re-runs the request on an appropriate fallback model.
     betas: ['server-side-fallback-2026-07-01'],
     fallbacks: 'default',
-  });
+  }, options.signal ? { signal: options.signal } : undefined);
 
   if (response.stop_reason === 'refusal') {
     return {
@@ -224,6 +228,7 @@ async function generateOpenAI(options: LLMGenerateOptions): Promise<LLMGenerateR
     messages,
     max_completion_tokens: options.maxTokens || 16000,
   };
+  if (options.reasoning === 'low') payload.reasoning_effort = 'low';
   if (options.temperature !== undefined) payload.temperature = options.temperature;
   if (options.tools?.length) {
     payload.tools = options.tools.map((t) => ({
@@ -236,6 +241,7 @@ async function generateOpenAI(options: LLMGenerateOptions): Promise<LLMGenerateR
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${options.apiKey}` },
     body: JSON.stringify(payload),
+    signal: options.signal,
   });
   if (!res.ok) {
     throw new Error(`OpenAI API error (${res.status}): ${(await res.text()).slice(0, 300)}`);
@@ -356,6 +362,7 @@ async function generateGemini(options: LLMGenerateOptions): Promise<LLMGenerateR
       generationConfig: {
         maxOutputTokens: options.maxTokens || 16000,
         ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
+        ...(options.reasoning === 'low' ? { thinkingConfig: { thinkingLevel: 'low' } } : {}),
       },
     };
     if (options.systemPrompt) payload.systemInstruction = { parts: [{ text: options.systemPrompt }] };
@@ -377,6 +384,7 @@ async function generateGemini(options: LLMGenerateOptions): Promise<LLMGenerateR
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': options.apiKey },
         body: JSON.stringify(payload),
+        signal: options.signal,
       }
     );
     if (!res.ok) {

@@ -250,6 +250,16 @@ describe('AI Function Studio (fake Lambda running real code)', () => {
 
     const bad = { ...deps, generate: async () => ({ text: 'nope', usage, finishReason: 'stop' }) as LLMGenerateResult };
     await assert.rejects(draftFunction(user, { description: 'add two numbers', language: 'python' }, bad), /did not return a usable answer/);
+    let sawLowEffort = false;
+    const slow = {
+      ...deps,
+      generate: async (o: LLMGenerateOptions) => {
+        sawLowEffort = o.reasoning === 'low' && !!o.signal;
+        throw Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
+      },
+    };
+    await assert.rejects(draftFunction(user, { description: 'add two numbers', language: 'python' }, slow), /took too long/);
+    assert.ok(sawLowEffort, 'AI calls ask for low effort under a deadline');
 
     const { function: broken } = await getFunction(user, tables.custom_functions.find((f) => f.name === 'Broken')!.id);
     const fixDeps = { ...deps, generate: async () => ({ text: '{"code":"def main(input):\\n    return 0\\n","explanation":"Avoid dividing by zero."}', usage, finishReason: 'stop' }) as LLMGenerateResult };

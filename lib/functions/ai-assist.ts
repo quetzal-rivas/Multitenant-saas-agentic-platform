@@ -19,6 +19,7 @@ export interface AssistDeps {
   providers?: (tenantId: string) => Promise<LLMProvider[]>;
 }
 type Ctx = Pick<AuthContext, 'tenantId' | 'userId' | 'authMode' | 'apiKeyId'>;
+const AI_DEADLINE_MS = 25_000;
 
 const CONTRACT: Record<FunctionLanguage, string> = {
   python: `Python 3.12. Define \`def main(input: dict) -> dict\` at module level. The return value must be JSON-serializable. Only the Python standard library is available (use urllib.request for HTTP). Read secrets from os.environ.`,
@@ -63,9 +64,24 @@ async function askForJson<T>(ctx: Ctx, provider: LLMProvider, systemPrompt: stri
   if (!apiKey) throw new ServiceError(`No ${provider} key is stored. Add one in Account & Billing → LLM keys.`, 'CONFLICT');
   const generate = deps.generate || generateLLMResponse;
   const messages: Array<{ role: 'user' | 'assistant'; content: string }> = [{ role: 'user', content: prompt }];
+  // The hosting gateway cuts requests at ~30 s; stay under it and fail with a clear message.
+  const deadline = Date.now() + AI_DEADLINE_MS;
   let lastProblem = '';
   for (let attempt = 0; attempt < 2; attempt++) {
-    const reply = await generate({ provider, model: DEFAULT_MODELS[provider], apiKey, systemPrompt, messages, maxTokens: 8000 });
+    const remaining = deadline - Date.now();
+    if (remaining < 3000) break;
+    let reply;
+    try {
+      reply = await generate({
+        provider, model: DEFAULT_MODELS[provider], apiKey, systemPrompt, messages,
+        maxTokens: 4000, reasoning: 'low', signal: AbortSignal.timeout(remaining),
+      });
+    } catch (err) {
+      if ((err as Error)?.name === 'TimeoutError' || (err as Error)?.name === 'AbortError') {
+        throw new ServiceError('The model took too long to answer (over 25 s). Try again, or describe a smaller function.', 'CONFLICT');
+      }
+      throw err;
+    }
     try {
       return shape.parse(extractJson(reply.text));
     } catch (err) {

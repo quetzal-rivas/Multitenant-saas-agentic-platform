@@ -152,7 +152,7 @@ async function generateAnthropic(options: LLMGenerateOptions): Promise<LLMGenera
     // On a safety decline, the API re-runs the request on an appropriate fallback model.
     betas: ['server-side-fallback-2026-07-01'],
     fallbacks: 'default',
-  }, options.signal ? { signal: options.signal } : undefined);
+  }, { timeout: 3 * 60_000, ...(options.signal ? { signal: options.signal } : {}) });
 
   if (response.stop_reason === 'refusal') {
     return {
@@ -241,7 +241,7 @@ async function generateOpenAI(options: LLMGenerateOptions): Promise<LLMGenerateR
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${options.apiKey}` },
     body: JSON.stringify(payload),
-    signal: options.signal,
+    signal: attemptSignal(options.signal),
   });
   if (!res.ok) {
     throw new Error(`OpenAI API error (${res.status}): ${(await res.text()).slice(0, 300)}`);
@@ -289,6 +289,15 @@ export const GEMINI_FALLBACK_MODELS = [
   'gemini-3.5-flash-lite',
   'gemini-3.1-flash-lite',
 ];
+
+/** Longest a single model attempt may take before moving on (a hung request must not stall a run). */
+export const LLM_ATTEMPT_TIMEOUT_MS = 90_000;
+
+/** The caller's abort signal combined with a per-attempt timeout. */
+function attemptSignal(callerSignal: AbortSignal | undefined): AbortSignal {
+  const timeout = AbortSignal.timeout(LLM_ATTEMPT_TIMEOUT_MS);
+  return callerSignal ? AbortSignal.any([callerSignal, timeout]) : timeout;
+}
 
 /** Statuses where another model may succeed: quota, overload and transient server errors. */
 const GEMINI_RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
@@ -378,15 +387,25 @@ async function generateGemini(options: LLMGenerateOptions): Promise<LLMGenerateR
       ];
     }
 
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': options.apiKey },
-        body: JSON.stringify(payload),
-        signal: options.signal,
-      }
-    );
+    let res: Response;
+    try {
+      res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': options.apiKey },
+          body: JSON.stringify(payload),
+          signal: attemptSignal(options.signal),
+        }
+      );
+    } catch (err) {
+      // The caller gave up: stop. This attempt hung: try the next model.
+      if (options.signal?.aborted) throw err;
+      if ((err as Error)?.name !== 'TimeoutError') throw err;
+      lastError = new GeminiApiError(504, model, `no response within ${LLM_ATTEMPT_TIMEOUT_MS / 1000}s`);
+      console.warn(`[llm-adapter] ${model} did not answer within ${LLM_ATTEMPT_TIMEOUT_MS / 1000}s; trying the next Gemini fallback`);
+      continue;
+    }
     if (!res.ok) {
       lastError = new GeminiApiError(res.status, model, await res.text());
       // Bad key, bad request, unknown model: another model will not fix it.

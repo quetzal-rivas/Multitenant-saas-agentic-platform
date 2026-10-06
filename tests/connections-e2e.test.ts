@@ -273,3 +273,35 @@ describe('public origin behind the CDN', () => {
     assert.equal(publicOrigin(new NextRequest('https://localhost:3000/x', { headers: { host: 'evil.com/<x>' } })), 'https://localhost:3000');
   });
 });
+
+describe('LLM adapter: a hung model attempt does not stall the run', () => {
+  test('a Gemini attempt that never answers times out and the next model is used', async () => {
+    const adapter = await import('../lib/agent/providers/llm-adapter');
+    const realFetch = globalThis.fetch;
+    const realTimeout = AbortSignal.timeout;
+    const tried: string[] = [];
+    // Shrink the per-attempt timeout for the test.
+    (AbortSignal as any).timeout = () => realTimeout.call(AbortSignal, 50);
+    globalThis.fetch = (async (input: any, init?: RequestInit) => {
+      const url = String(input);
+      tried.push(url.match(/models\/([^:]+)/)?.[1] || url);
+      if (tried.length === 1) {
+        // Hang until aborted.
+        return new Promise((_resolve, reject) => init?.signal?.addEventListener('abort', () => reject(init.signal!.reason)));
+      }
+      return Response.json({ candidates: [{ content: { parts: [{ text: 'ok from fallback' }] } }], usageMetadata: {} });
+    }) as typeof fetch;
+    // AbortSignal.timeout timers do not keep Node alive; hold the loop open for the test.
+    const keepAlive = setInterval(() => undefined, 20);
+    try {
+      const res = await adapter.generateLLMResponse({ provider: 'gemini', apiKey: 'k', messages: [{ role: 'user', content: 'hi' }] });
+      assert.equal(res.text, 'ok from fallback');
+      assert.equal(tried.length, 2);
+      assert.notEqual(tried[0], tried[1]);
+    } finally {
+      clearInterval(keepAlive);
+      globalThis.fetch = realFetch;
+      (AbortSignal as any).timeout = realTimeout;
+    }
+  });
+});

@@ -20,6 +20,7 @@ import {
   MessageSquare,
   Terminal,
   UserCircle,
+  Mic,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -109,8 +110,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <MessageSquare className={`w-4 h-4 ${activeTab === 'conversations' ? 'text-emerald-400' : 'text-zinc-400'}`} />
                 <span>Conversations</span>
               </div>
+              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800/50">
+                INBOX
+              </span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('voice')}
+              className={`w-full flex items-center justify-between px-3 py-2 rounded-md text-xs font-medium transition-all ${
+                activeTab === 'voice'
+                  ? 'bg-zinc-800/90 text-white font-semibold border-l-2 border-emerald-500 pl-2.5'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40'
+              }`}
+            >
+              <div className="flex items-center gap-2.5">
+                <Mic className={`w-4 h-4 ${activeTab === 'voice' ? 'text-rose-400' : 'text-zinc-400'}`} />
+                <span>Voice</span>
+              </div>
               <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-rose-950 text-rose-300 border border-rose-800/50">
-                VOICE
+                STT·TTS
               </span>
             </button>
 

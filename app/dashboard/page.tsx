@@ -23,6 +23,7 @@ import { PlatformMcpServerView } from '@/components/PlatformMcpServerView';
 import { GeminiTestModal } from '@/components/GeminiTestModal';
 import { CreateProfileModal } from '@/components/CreateProfileModal';
 import { AccountSettingsView } from '@/components/AccountSettingsView';
+import { VoiceStudio } from '@/components/VoiceStudio';
 import { FunctionStudio } from '@/components/FunctionStudio';
 import { DemoBanner } from '@/components/DemoBanner';
 import { INITIAL_PROFILES, INITIAL_SOURCES, isDemoMode } from '@/lib/demo';
@@ -181,16 +182,16 @@ export default function DashboardPage() {
             <AccountSettingsView />
           )}
 
+          {activeTab === 'voice' && <VoiceStudio />}
+
           {activeTab === 'function-studio' && (
             <FunctionStudio />
           )}
 
           {activeTab === 'conversations' && (
             <Conversations
-              onSelectThreadForStudio={(threadId, profileId) =>
-                handleLaunchThread(profileId || 'devops_auditor_persona', threadId)
-              }
-              onOpenTeamBuilder={() => setActiveTab('team-builder')}
+              onOpenInStudio={(sessionId) => handleLaunchThread('', sessionId)}
+              onOpenCalendar={() => setActiveTab('calendar')}
             />
           )}
 

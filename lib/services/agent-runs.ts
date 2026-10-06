@@ -4,6 +4,8 @@ import { getSupabaseAdminClient } from '@/lib/supabase';
 import type { AuthContext } from '@/lib/auth/require-auth';
 import { runTurn, type RunnerDeps, type SavedTurnState, type TurnResult } from '@/lib/agent/session-runner';
 import { getSession } from './agent-sessions';
+import { resolveVoiceProfile } from './voice-profiles';
+import { DEFAULT_REPLY_STYLE } from '@/lib/voice/profile-spec';
 import { ServiceError } from './errors';
 
 /**
@@ -62,7 +64,7 @@ export async function dispatchRun(runId: string): Promise<boolean> {
 // ---------------------------------------------------------------------------
 
 const COLUMNS =
-  'id, tenant_id, session_id, team_id, task_id, origin, input_message, status, caller, state, progress, result, error, checkpoint_id, lease_owner, lease_expires_at, invocations, started_at, finished_at, created_at, updated_at';
+  'id, tenant_id, session_id, team_id, task_id, origin, channel, voice, input_message, status, caller, state, progress, result, error, checkpoint_id, lease_owner, lease_expires_at, invocations, started_at, finished_at, created_at, updated_at';
 
 async function loadRun(runId: string): Promise<Row | null> {
   const { data } = await getSupabaseAdminClient().from('agent_runs').select(COLUMNS).eq('id', runId).maybeSingle();
@@ -79,7 +81,14 @@ export async function startRun(
   ctx: RunCaller,
   sessionId: string,
   message: string,
-  opts: { origin?: 'chat' | 'heartbeat' | 'task'; teamId?: string | null; taskId?: string | null } = {}
+  opts: {
+    origin?: 'chat' | 'heartbeat' | 'task';
+    teamId?: string | null;
+    taskId?: string | null;
+    /** 'voice': the message was spoken and the reply will be; replies follow the voice profile's style. */
+    channel?: 'text' | 'voice';
+    voice?: Record<string, unknown> | null;
+  } = {}
 ): Promise<Row> {
   const session = await getSession(ctx, sessionId);
   const db = getSupabaseAdminClient();
@@ -108,6 +117,8 @@ export async function startRun(
       team_id: opts.teamId ?? session.team_id ?? null,
       origin: opts.origin ?? 'chat',
       task_id: opts.taskId ?? null,
+      channel: opts.channel ?? 'text',
+      voice: opts.voice ?? null,
       input_message: message,
       status: 'queued',
       caller,
@@ -203,8 +214,13 @@ export async function executeRun(runId: string, opts: { owner: string; deadlineA
   };
 
   try {
+    const replyStyle =
+      run.channel === 'voice'
+        ? ((await resolveVoiceProfile({ tenantId: run.tenant_id }, run.session_id).catch(() => null))?.reply_style || DEFAULT_REPLY_STYLE)
+        : null;
     const outcome = await runTurn(run.caller as RunCaller, run.session_id, run.input_message, opts.deps ?? defaultDeps, {
       runId: run.id,
+      replyStyle,
       saved: (run.state as SavedTurnState) ?? null,
       deadlineAt: opts.deadlineAt,
       save,
@@ -246,6 +262,7 @@ export interface RunView {
   run_id: string;
   session_id: string;
   status: string;
+  channel: 'text' | 'voice';
   progress: { step: number; last_tool: string | null };
   result: Omit<TurnResult, 'transcript'> | null;
   error: string | null;
@@ -258,6 +275,7 @@ function view(r: Row): RunView {
     run_id: r.id,
     session_id: r.session_id,
     status: r.status,
+    channel: r.channel ?? 'text',
     progress: r.progress || { step: 0, last_tool: null },
     result: r.result ?? null,
     error: r.error ?? null,

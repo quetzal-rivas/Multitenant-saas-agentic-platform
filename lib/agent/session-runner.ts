@@ -196,6 +196,8 @@ export interface TurnControl {
   runId: string;
   saved?: SavedTurnState | null;
   deadlineAt?: number;
+  /** Spoken turn: how to shape the reply (from the voice profile). Text turns leave it unset. */
+  replyStyle?: string | null;
   save?: (state: SavedTurnState, progress: { step: number; last_tool: string | null }) => Promise<void>;
 }
 
@@ -506,6 +508,9 @@ export async function runTurn(
   } else {
     systemPrompt = await buildSystemPrompt(ctx, session);
     tools = await withProfileTools(platformTools(session.allowed_tools), session.mcp_profile_id);
+  }
+  if (control.replyStyle) {
+    systemPrompt = `${systemPrompt}\n\n## This turn is a voice conversation\nThe user spoke this message and will hear your reply read aloud. ${control.replyStyle}`;
   }
 
   let finalText: string;

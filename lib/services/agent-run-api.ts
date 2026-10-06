@@ -18,7 +18,7 @@ async function finishedBody(ctx: Ctx, run: RunView): Promise<TurnResponse> {
   if (run.status === 'error') throw new ServiceError(run.error || 'The run failed.', 'CONFLICT');
   if (run.status === 'cancelled') throw new ServiceError('The run was cancelled.', 'CONFLICT');
   const checkpoint = await latestCheckpoint(ctx, run.session_id);
-  return { status: 200, body: { ...(run.result || {}), run_id: run.run_id, transcript: toTranscript(checkpoint?.state || []) } };
+  return { status: 200, body: { ...(run.result || {}), run_id: run.run_id, channel: run.channel, transcript: toTranscript(checkpoint?.state || []) } };
 }
 
 /** Drive one slice (when there is no worker) or wait for the worker, then report. */
@@ -33,8 +33,13 @@ async function progress(ctx: Ctx, runId: string, waitMs: number, deps?: RunnerDe
   return finishedBody(ctx, run);
 }
 
-export async function startTurn(ctx: Ctx, sessionId: string, message: string, opts: { waitMs?: number; deps?: RunnerDeps } = {}): Promise<TurnResponse> {
-  const run = await startRun(ctx, sessionId, message);
+export async function startTurn(
+  ctx: Ctx,
+  sessionId: string,
+  message: string,
+  opts: { waitMs?: number; deps?: RunnerDeps; channel?: 'text' | 'voice'; voice?: Record<string, unknown> | null } = {}
+): Promise<TurnResponse> {
+  const run = await startRun(ctx, sessionId, message, { channel: opts.channel, voice: opts.voice });
   await dispatchRun(run.id).catch((err) => console.error('[agent-runs] dispatch failed; continuing inline', err));
   return progress(ctx, run.id, opts.waitMs ?? INLINE_BUDGET_MS, opts.deps);
 }

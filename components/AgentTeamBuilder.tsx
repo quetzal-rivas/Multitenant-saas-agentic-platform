@@ -19,6 +19,7 @@ import {
   ArrowRight,
   Download,
   Upload,
+  Mic,
 } from 'lucide-react';
 import { PLATFORM_TOOL_DEFINITIONS } from '@/lib/mcp/tool-catalog';
 import { ScheduleEditor, formatWhen } from '@/components/ScheduleEditor';
@@ -78,7 +79,7 @@ const STEPS = [
   { num: 1, label: 'Team & supervisor' },
   { num: 2, label: 'Workers' },
   { num: 3, label: 'Tools' },
-  { num: 4, label: 'Heartbeat' },
+  { num: 4, label: 'Heartbeat & voice' },
   { num: 5, label: 'Review & JSON' },
 ] as const;
 
@@ -107,6 +108,7 @@ function emptySpec(provider: Provider): TeamSpec {
     supervisor: { instructions: '', context_profile_id: null, mcp_profile_id: null, tools: [] },
     workers: [],
     heartbeat: { enabled: false, goal: '', schedule: null, max_runs_per_day: 48, wake_when: 'always' },
+    voice: { profile_id: null },
   };
 }
 
@@ -134,6 +136,7 @@ export const AgentTeamBuilder: React.FC<AgentTeamBuilderProps> = ({ onLaunchThre
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [contextProfiles, setContextProfiles] = useState<NamedOption[]>([]);
   const [mcpProfiles, setMcpProfiles] = useState<NamedOption[]>([]);
+  const [voiceProfiles, setVoiceProfiles] = useState<NamedOption[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [selectedId, setSelectedId] = useState<string | null>(null); // null = new team
@@ -171,6 +174,7 @@ export const AgentTeamBuilder: React.FC<AgentTeamBuilderProps> = ({ onLaunchThre
           api<{ providers: ProviderInfo[] }>('/api/v1/llm-providers'),
           api<{ profiles: NamedOption[] }>('/api/v1/context-profiles').catch(() => ({ profiles: [] })),
           api<{ profiles: NamedOption[] }>('/api/mcp/profiles').catch(() => ({ profiles: [] })),
+          api<{ profiles: NamedOption[] }>('/api/v1/voice/profiles').then((r) => setVoiceProfiles(r.profiles)).catch(() => undefined),
         ]);
         setProviders(prov.providers);
         setContextProfiles(ctx.profiles);
@@ -619,7 +623,7 @@ export const AgentTeamBuilder: React.FC<AgentTeamBuilderProps> = ({ onLaunchThre
                   </p>
                 )}
                 <p className="text-xs text-zinc-500">
-                  External tools (Gmail, CRM, Slack…) appear here once account connections ship; the platform tools above are what exists today.
+                  Connected-app tools (Gmail, Calendar, web search) and your AI functions come from the MCP profile you attach above.
                 </p>
               </section>
             )}
@@ -702,6 +706,24 @@ export const AgentTeamBuilder: React.FC<AgentTeamBuilderProps> = ({ onLaunchThre
                     )}
                   </>
                 )}
+              </section>
+            )}
+
+            {step === 4 && (
+              <section className="mt-5 p-4 rounded-xl border border-zinc-800 bg-[#0d1017] space-y-2">
+                <div className="text-sm font-semibold text-white flex items-center gap-2"><Mic className="w-4 h-4 text-emerald-400" /> Voice</div>
+                <p className="text-xs text-zinc-400">How the team listens and sounds when people talk to it (the mic in Agent Studio). Instances can pick their own profile.</p>
+                <select
+                  className={inputCls}
+                  value={draft.voice?.profile_id ?? ''}
+                  onChange={(e) => setDraft((d) => ({ ...d, voice: { profile_id: e.target.value || null } }))}
+                >
+                  <option value="">Platform default (Gemini voice, then the browser)</option>
+                  {voiceProfiles.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+                {voiceProfiles.length === 0 && <p className="text-[11px] text-zinc-500">Create voice profiles (provider, voice, style) on the Voice page.</p>}
               </section>
             )}
 

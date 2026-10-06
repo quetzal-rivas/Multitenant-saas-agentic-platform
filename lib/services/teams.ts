@@ -7,12 +7,13 @@ export { teamSpecSchema, workerSlug, MAX_TEAM_WORKERS, type TeamSpec } from '@/l
 import { configuredProviders, createSession, LLM_PROVIDERS } from './agent-sessions';
 import { getContextProfile } from './context-profiles';
 import { getProfile } from './profiles';
+import { getVoiceProfile } from './voice-profiles';
 import { ServiceError } from './errors';
 
 type Ctx = Pick<AuthContext, 'tenantId' | 'userId' | 'authMode' | 'apiKeyId'>;
 
 const TEAM_COLUMNS =
-  'id, name, description, provider, model, routing_strategy, supervisor_instructions, supervisor_context_profile_id, supervisor_mcp_profile_id, supervisor_tools, heartbeat_enabled, heartbeat_goal, heartbeat_schedule, heartbeat_max_runs_per_day, heartbeat_wake_when, heartbeat_session_id, heartbeat_next_run_at, heartbeat_last_run_at, heartbeat_last_status, heartbeat_last_error, heartbeat_runs_day, heartbeat_runs_today, created_at, updated_at';
+  'id, name, description, provider, model, routing_strategy, supervisor_instructions, supervisor_context_profile_id, supervisor_mcp_profile_id, supervisor_tools, voice_profile_id, heartbeat_enabled, heartbeat_goal, heartbeat_schedule, heartbeat_max_runs_per_day, heartbeat_wake_when, heartbeat_session_id, heartbeat_next_run_at, heartbeat_last_run_at, heartbeat_last_status, heartbeat_last_error, heartbeat_runs_day, heartbeat_runs_today, created_at, updated_at';
 const WORKER_COLUMNS = 'id, name, slug, role, instructions, context_profile_id, mcp_profile_id, tools, model, position';
 
 export interface TeamWorker {
@@ -39,6 +40,7 @@ export interface AgentTeam {
   supervisor_context_profile_id: string | null;
   supervisor_mcp_profile_id: string | null;
   supervisor_tools: string[];
+  voice_profile_id: string | null;
   heartbeat_enabled: boolean;
   heartbeat_goal: string | null;
   heartbeat_schedule: HeartbeatSchedule | null;
@@ -85,6 +87,7 @@ export function toTeamSpec(team: AgentTeam): TeamSpec {
       max_runs_per_day: team.heartbeat_max_runs_per_day,
       wake_when: team.heartbeat_wake_when ?? 'always',
     },
+    voice: { profile_id: team.voice_profile_id ?? null },
   };
 }
 
@@ -100,6 +103,7 @@ async function assertSpecReferences(ctx: Ctx, spec: TeamSpec) {
   const mcpIds = new Set([spec.supervisor.mcp_profile_id, ...spec.workers.map((w) => w.mcp_profile_id)].filter(Boolean) as string[]);
   for (const id of contextIds) await getContextProfile(ctx, id);
   for (const id of mcpIds) await getProfile(ctx, { profile_id: id });
+  if (spec.voice.profile_id) await getVoiceProfile(ctx, spec.voice.profile_id);
 }
 
 /** JSON with sorted object keys: Postgres jsonb does not keep key order, so plain stringify mis-detects changes. */
@@ -127,6 +131,7 @@ function teamRow(spec: TeamSpec, existing?: AgentTeam | null) {
     supervisor_context_profile_id: spec.supervisor.context_profile_id ?? null,
     supervisor_mcp_profile_id: spec.supervisor.mcp_profile_id ?? null,
     supervisor_tools: spec.supervisor.tools,
+    voice_profile_id: spec.voice.profile_id ?? null,
     heartbeat_enabled: spec.heartbeat.enabled,
     heartbeat_goal: spec.heartbeat.goal ?? null,
     heartbeat_schedule: spec.heartbeat.schedule ?? null,

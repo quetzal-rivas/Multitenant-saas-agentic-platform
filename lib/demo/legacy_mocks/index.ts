@@ -15,5 +15,4 @@ export * from './mcp_client';
 export * from './agent';
 export * from './queue';
 export * from './server';
-export * from './conversations-manager';
 export * from './platform-mcp-server';

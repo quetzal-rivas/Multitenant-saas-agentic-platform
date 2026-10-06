@@ -7,6 +7,7 @@ import { DEFAULT_MODELS, type LLMMessage, type LLMProvider } from '@/lib/agent/p
 import { PLATFORM_TOOL_DEFINITIONS } from '@/lib/mcp/tool-catalog';
 import { getContextProfile } from './context-profiles';
 import { getProfile } from './profiles';
+import { getVoiceProfile } from './voice-profiles';
 import { ServiceError } from './errors';
 
 type Ctx = Pick<AuthContext, 'tenantId' | 'userId' | 'authMode' | 'apiKeyId'>;
@@ -35,6 +36,8 @@ export const updateSessionBody = z.object({
   mcp_profile_id: z.string().uuid().nullable().optional(),
   context_profile_id: z.string().uuid().nullable().optional(),
   allowed_tools: z.array(z.enum(toolNames)).max(50).optional(),
+  /** Voice profile for this instance; null = use the team's (or the platform default). */
+  voice_profile_id: z.string().uuid().nullable().optional(),
 }).strict();
 
 export const forkSessionBody = z.object({
@@ -43,7 +46,7 @@ export const forkSessionBody = z.object({
 }).strict();
 
 const SESSION_COLUMNS =
-  'id, name, agent_type, team_id, provider, model, mcp_profile_id, context_profile_id, allowed_tools, forked_from_checkpoint, created_at, last_active_at';
+  'id, name, agent_type, team_id, provider, model, mcp_profile_id, context_profile_id, voice_profile_id, allowed_tools, forked_from_checkpoint, created_at, last_active_at';
 const CHECKPOINT_SUMMARY_COLUMNS =
   'id, checkpoint_id, session_id, parent_id, step_index, user_message, assistant_message, tools_executed, usage, metadata, created_at';
 
@@ -52,6 +55,7 @@ export interface AgentSession {
   name: string;
   agent_type: 'single' | 'team';
   team_id: string | null;
+  voice_profile_id?: string | null;
   provider: LLMProvider;
   model: string;
   mcp_profile_id: string | null;
@@ -144,6 +148,7 @@ export async function updateSession(ctx: Ctx, id: string, raw: unknown) {
   const body = updateSessionBody.parse(raw);
   await getSession(ctx, id);
   await assertAttachments(ctx, body.mcp_profile_id, body.context_profile_id);
+  if (body.voice_profile_id) await getVoiceProfile(ctx, body.voice_profile_id);
 
   const patch: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(body)) if (value !== undefined) patch[key] = value;

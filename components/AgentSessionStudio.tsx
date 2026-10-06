@@ -20,8 +20,12 @@ import {
   X,
   Loader2,
   Info,
+  Mic,
+  Volume2,
 } from 'lucide-react';
 import { PLATFORM_TOOL_DEFINITIONS } from '@/lib/mcp/tool-catalog';
+import { VoiceTalkButton } from '@/components/voice/VoiceTalkButton';
+import { useVoice, type Heard } from '@/components/voice/useVoice';
 
 // ---------------------------------------------------------------------------
 // Types mirroring /api/v1/agent-sessions responses
@@ -38,6 +42,7 @@ interface AgentSession {
   model: string;
   mcp_profile_id: string | null;
   context_profile_id: string | null;
+  voice_profile_id?: string | null;
   allowed_tools: string[];
   forked_from_checkpoint: string | null;
   created_at: string;
@@ -366,7 +371,12 @@ export const AgentSessionStudio: React.FC<AgentSessionStudioProps> = ({ initialT
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [mcpProfiles, setMcpProfiles] = useState<NamedOption[]>([]);
   const [contextProfiles, setContextProfiles] = useState<NamedOption[]>([]);
-  const [teams, setTeams] = useState<NamedOption[]>([]);
+  const [teams, setTeams] = useState<Array<NamedOption & { voice_profile_id?: string | null }>>([]);
+  const [voiceProfiles, setVoiceProfiles] = useState<NamedOption[]>([]);
+  /** Read replies aloud after a spoken message. */
+  const [speakReplies, setSpeakReplies] = useState(true);
+  /** User messages sent by voice in this view (marked with a mic). */
+  const [spoken, setSpoken] = useState<Set<string>>(new Set());
 
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -380,6 +390,8 @@ export const AgentSessionStudio: React.FC<AgentSessionStudioProps> = ({ initialT
   const [checkpointDetail, setCheckpointDetail] = useState<any | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
+  /** Plays an earlier reply on demand (the speaker icon next to each answer). */
+  const player = useVoice({ session_id: activeId ?? undefined });
 
   const active = sessions.find((s) => s.id === activeId) || null;
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
@@ -410,6 +422,7 @@ export const AgentSessionStudio: React.FC<AgentSessionStudioProps> = ({ initialT
           api<{ profiles: NamedOption[] }>('/api/mcp/profiles').catch(() => ({ profiles: [] })),
           api<{ profiles: NamedOption[] }>('/api/v1/context-profiles').catch(() => ({ profiles: [] })),
           api<{ teams: NamedOption[] }>('/api/v1/agent-teams').then((r) => setTeams(r.teams)).catch(() => undefined),
+          api<{ profiles: NamedOption[] }>('/api/v1/voice/profiles').then((r) => setVoiceProfiles(r.profiles)).catch(() => undefined),
         ]);
         setProviders(prov.providers);
         setMcpProfiles(mcp.profiles);
@@ -454,9 +467,11 @@ export const AgentSessionStudio: React.FC<AgentSessionStudioProps> = ({ initialT
     setTimeout(() => setCopied(null), 2000);
   };
 
-  const handleSend = async (text?: string) => {
+  /** Send one turn; returns the agent's final reply (used to speak it after a voice turn). */
+  const handleSend = async (text?: string, voice?: Heard): Promise<string | null> => {
     const message = (text ?? input).trim();
-    if (!message || !active || sending) return;
+    if (!message || !active || sending) return null;
+    if (voice) setSpoken((s) => new Set(s).add(message));
     setInput('');
     setTurnError(null);
     setSending(true);
@@ -465,7 +480,13 @@ export const AgentSessionStudio: React.FC<AgentSessionStudioProps> = ({ initialT
       type TurnReply = { transcript?: TranscriptItem[]; run_id?: string; progress?: { step: number; last_tool: string | null } };
       let result = await api<TurnReply>('/api/v1/chat/generate', {
         method: 'POST',
-        body: JSON.stringify({ session_id: active.id, message }),
+        body: JSON.stringify({
+          session_id: active.id,
+          message,
+          ...(voice
+            ? { channel: 'voice', voice: { stt_provider: voice.provider, audio_seconds: Math.round(voice.durationSec), stt_latency_ms: voice.latencyMs } }
+            : {}),
+        }),
       });
       // Long turns return 202 with a run id: keep checking until the result is ready.
       while (!result.transcript && result.run_id) {
@@ -473,12 +494,16 @@ export const AgentSessionStudio: React.FC<AgentSessionStudioProps> = ({ initialT
         await new Promise((r) => setTimeout(r, 2000));
         result = await api<TurnReply>(`/api/v1/agent-runs/${result.run_id}`);
       }
-      setTranscript(result.transcript || []);
+      const finalTranscript = result.transcript || [];
+      setTranscript(finalTranscript);
       await Promise.all([loadDetail(active.id), loadSessions(active.id)]);
+      const reply = [...finalTranscript].reverse().find((t) => t.role === 'assistant' && t.content?.trim());
+      return reply?.content ?? null;
     } catch (err: any) {
       setTurnError(err?.message || 'The turn failed');
       setTranscript((t) => t.slice(0, -1));
-      setInput(message);
+      if (!voice) setInput(message);
+      return null;
     } finally {
       setSending(false);
       setRunProgress(null);
@@ -590,6 +615,8 @@ export const AgentSessionStudio: React.FC<AgentSessionStudioProps> = ({ initialT
   }'`;
 
   const mcpProfile = mcpProfiles.find((p) => p.id === active?.mcp_profile_id);
+  const teamVoiceId = teams.find((t) => t.id === active?.team_id)?.voice_profile_id;
+  const teamVoice = voiceProfiles.find((p) => p.id === teamVoiceId)?.name ?? null;
   const contextProfile = contextProfiles.find((p) => p.id === active?.context_profile_id);
 
   if (loading) {
@@ -713,6 +740,7 @@ export const AgentSessionStudio: React.FC<AgentSessionStudioProps> = ({ initialT
               return (
                 <div key={i} className="flex justify-end">
                   <div className="max-w-[75%] px-4 py-2.5 rounded-2xl rounded-br-sm bg-emerald-700/30 border border-emerald-800/60 text-sm whitespace-pre-wrap">
+                    {spoken.has(item.content) && <Mic className="inline w-3 h-3 mr-1.5 text-emerald-300" aria-label="spoken" />}
                     {item.content}
                   </div>
                 </div>
@@ -724,7 +752,18 @@ export const AgentSessionStudio: React.FC<AgentSessionStudioProps> = ({ initialT
                   <Bot className="w-3.5 h-3.5 text-emerald-400" />
                 </div>
                 <div className="max-w-[80%] space-y-2 min-w-0">
-                  {item.content && <div className="text-sm text-zinc-100 whitespace-pre-wrap leading-relaxed">{item.content}</div>}
+                  {item.content && (
+                    <div className="group text-sm text-zinc-100 whitespace-pre-wrap leading-relaxed">
+                      {item.content}
+                      <button
+                        onClick={() => player.speak(item.content)}
+                        title="Read aloud"
+                        className="ml-2 align-middle opacity-0 group-hover:opacity-100 text-zinc-500 hover:text-emerald-400"
+                      >
+                        <Volume2 className="inline w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  )}
                   {item.toolCalls?.map((call) => {
                     const result = toolResults.get(call.id);
                     return (
@@ -792,6 +831,15 @@ export const AgentSessionStudio: React.FC<AgentSessionStudioProps> = ({ initialT
               placeholder={active ? `Message ${active.name}…` : 'Create an instance to start'}
               className="flex-1 bg-[#090b0f] border border-zinc-700 rounded-lg px-4 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500 disabled:opacity-50"
             />
+            {active && (
+              <VoiceTalkButton
+                target={{ session_id: active.id }}
+                disabled={sending}
+                speakReplies={speakReplies}
+                onHeard={(heard) => handleSend(heard.text, heard)}
+                onError={setTurnError}
+              />
+            )}
             <button
               type="submit"
               disabled={!active || sending || !input.trim()}
@@ -839,6 +887,33 @@ export const AgentSessionStudio: React.FC<AgentSessionStudioProps> = ({ initialT
                 <p className="text-zinc-500">Runs on your organization&apos;s stored {PROVIDER_LABELS[active.provider]} key.</p>
               </section>
               <section className="space-y-1.5">
+                <h4 className="font-mono uppercase text-zinc-500 text-[10px] tracking-wider">Voice</h4>
+                <select
+                  value={active.voice_profile_id || ''}
+                  onChange={async (e) => {
+                    try {
+                      await api(`/api/v1/agent-sessions/${active.id}`, { method: 'PATCH', body: JSON.stringify({ voice_profile_id: e.target.value || null }) });
+                      await loadSessions(active.id);
+                    } catch (err: any) {
+                      setTurnError(err?.message || 'Could not change the voice profile');
+                    }
+                  }}
+                  className="w-full bg-zinc-900 border border-zinc-700 rounded-md px-2 py-1.5 text-zinc-200"
+                >
+                  <option value="">
+                    {active.team_id && teamVoice ? `Team's profile (${teamVoice})` : 'Platform default (Gemini, then browser)'}
+                  </option>
+                  {voiceProfiles.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+                <label className="flex items-center gap-2 text-zinc-400">
+                  <input type="checkbox" checked={speakReplies} onChange={(e) => setSpeakReplies(e.target.checked)} />
+                  Read replies aloud after I speak
+                </label>
+                <p className="text-zinc-500">Tap the mic to talk. Voice profiles are set up on the Voice page.</p>
+              </section>
+              <section className="space-y-1.5">
                 <h4 className="font-mono uppercase text-zinc-500 text-[10px] tracking-wider">Context profile</h4>
                 <p className="text-zinc-200">{contextProfile?.name || 'None'}</p>
               </section>
@@ -848,13 +923,10 @@ export const AgentSessionStudio: React.FC<AgentSessionStudioProps> = ({ initialT
                 {(mcpProfile?.selectedToolNames || []).length > 0 && (
                   <div className="space-y-1">
                     {mcpProfile!.selectedToolNames!.map((t) => (
-                      <div key={t} className="flex items-center justify-between font-mono text-zinc-500">
-                        <span>{t}</span>
-                        <span className="text-[10px] text-amber-500/80">not connected</span>
-                      </div>
+                      <div key={t} className="font-mono text-zinc-500">{t}</div>
                     ))}
                     <p className="text-[11px] text-zinc-500 flex gap-1">
-                      <Info className="w-3 h-3 shrink-0 mt-0.5" /> External account tools run once OAuth connections ship.
+                      <Info className="w-3 h-3 shrink-0 mt-0.5" /> Connected-app tools use the organization&apos;s connections (MCP Hub).
                     </p>
                   </div>
                 )}

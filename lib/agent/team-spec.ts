@@ -57,6 +57,12 @@ export const teamSpecSchema = z
       })
       .strict()
       .default({ enabled: false, max_runs_per_day: 48, wake_when: 'always' }),
+    voice: z
+      .object({
+        profile_id: optionalId.describe('Voice profile used when people talk to this team (Voice page). null = platform default.'),
+      })
+      .strict()
+      .default({ profile_id: null }),
   })
   .strict()
   .superRefine((spec, ctx) => {

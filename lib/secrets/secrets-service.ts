@@ -1,7 +1,7 @@
 import { getSupabaseAdminClient } from '@/lib/supabase';
 import { envelopeEncryptSecret, envelopeDecryptSecret, EncryptedSecretPayload } from './envelope-encryption';
 
-export type BYOKProvider = 'gemini' | 'anthropic' | 'openai' | 'elevenlabs' | 'twilio' | 'tenant_supabase' | 'google_oauth' | 'slack_oauth';
+export type BYOKProvider = 'gemini' | 'anthropic' | 'openai' | 'elevenlabs' | 'xai' | 'twilio' | 'tenant_supabase' | 'google_oauth' | 'slack_oauth';
 
 export interface SecretMetadata {
   provider: BYOKProvider;
@@ -73,6 +73,17 @@ export async function testProviderConnection(provider: BYOKProvider, secretValue
           return { success: false, message: `ElevenLabs API key verification failed (${res.status}): ${errText.slice(0, 150)}` };
         }
         return { success: true, message: 'ElevenLabs API key successfully verified.' };
+      }
+
+      case 'xai': {
+        const res = await fetch('https://api.x.ai/v1/models', {
+          headers: { Authorization: `Bearer ${secretValue.trim()}` },
+        });
+        if (!res.ok) {
+          const errText = await res.text();
+          return { success: false, message: `xAI API key verification failed (${res.status}): ${errText.slice(0, 150)}` };
+        }
+        return { success: true, message: 'xAI API key successfully verified.' };
       }
 
       case 'twilio': {

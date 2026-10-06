@@ -3,12 +3,17 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { CheckCircle2, KeyRound, Loader2, Trash2, AlertTriangle } from 'lucide-react';
 
-type Provider = 'anthropic' | 'openai' | 'gemini';
+type Provider = 'anthropic' | 'openai' | 'gemini' | 'elevenlabs' | 'xai';
 
-const PROVIDERS: Array<{ id: Provider; label: string; hint: string; where: string }> = [
+const PROVIDERS: Array<{ id: Provider; label: string; hint: string; where: string; note?: string }> = [
   { id: 'anthropic', label: 'Anthropic', hint: 'sk-ant-…', where: 'console.anthropic.com → API Keys' },
-  { id: 'openai', label: 'OpenAI', hint: 'sk-…', where: 'platform.openai.com → API keys' },
-  { id: 'gemini', label: 'Google Gemini', hint: 'AIza… or AQ.…', where: 'aistudio.google.com → Get API key' },
+  { id: 'openai', label: 'OpenAI', hint: 'sk-…', where: 'platform.openai.com → API keys', note: 'Also used for voice (paid).' },
+  { id: 'gemini', label: 'Google Gemini', hint: 'AIza… or AQ.…', where: 'aistudio.google.com → Get API key', note: 'Also the free fallback for voice.' },
+];
+
+const VOICE_PROVIDERS: typeof PROVIDERS = [
+  { id: 'elevenlabs', label: 'ElevenLabs', hint: 'sk_…', where: 'elevenlabs.io → Developers → API keys', note: 'Free monthly allowance; your cloned voices appear in voice profiles.' },
+  { id: 'xai', label: 'Grok (xAI)', hint: 'xai-…', where: 'console.x.ai → API keys', note: 'Paid per use.' },
 ];
 
 interface SecretMetadata {
@@ -23,7 +28,7 @@ interface SecretMetadata {
 export const LlmKeysPanel: React.FC = () => {
   const [stored, setStored] = useState<SecretMetadata[]>([]);
   const [loading, setLoading] = useState(true);
-  const [drafts, setDrafts] = useState<Record<Provider, string>>({ anthropic: '', openai: '', gemini: '' });
+  const [drafts, setDrafts] = useState<Record<Provider, string>>({ anthropic: '', openai: '', gemini: '', elevenlabs: '', xai: '' });
   const [busy, setBusy] = useState<Provider | null>(null);
   const [messages, setMessages] = useState<Partial<Record<Provider, { ok: boolean; text: string }>>>({});
 
@@ -97,11 +102,13 @@ export const LlmKeysPanel: React.FC = () => {
         </p>
       ) : (
         <div className="space-y-4">
-          {PROVIDERS.map((p) => {
+          {[...PROVIDERS, ...VOICE_PROVIDERS].map((p, i) => {
             const meta = stored.find((s) => s.provider === p.id);
             const msg = messages[p.id];
             return (
-              <div key={p.id} className="p-4 rounded-lg border border-zinc-800 bg-[#090b10] space-y-2">
+              <React.Fragment key={p.id}>
+              {i === PROVIDERS.length && <h3 className="pt-2 text-sm font-semibold text-zinc-300">Voice keys <span className="font-normal text-zinc-500">(optional; voice profiles fall back to Gemini, then the browser)</span></h3>}
+              <div className="p-4 rounded-lg border border-zinc-800 bg-[#090b10] space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-semibold text-white">{p.label}</span>
                   {meta ? (
@@ -113,7 +120,7 @@ export const LlmKeysPanel: React.FC = () => {
                     <span className="text-xs text-zinc-500">Not set</span>
                   )}
                 </div>
-                <p className="text-xs text-zinc-500">Get one at {p.where}.</p>
+                <p className="text-xs text-zinc-500">Get one at {p.where}.{p.note ? ` ${p.note}` : ''}</p>
                 <div className="flex gap-2">
                   <input
                     type="password"
@@ -150,6 +157,7 @@ export const LlmKeysPanel: React.FC = () => {
                   </p>
                 )}
               </div>
+              </React.Fragment>
             );
           })}
         </div>

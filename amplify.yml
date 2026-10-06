@@ -9,7 +9,7 @@ frontend:
         # Amplify only exposes app environment variables to the build. Next.js reads
         # .env.production at runtime, so copy the public vars and the server-only ones the
         # SSR code needs (service-role key, KMS key, token signing key, Stripe, flags).
-        - env | grep -E '^(NEXT_PUBLIC_[A-Z_]*|SUPABASE_SERVICE_ROLE_KEY|KMS_KEY_ID|CLIENT_TOKEN_SIGNING_KEY|CLIENT_TOKEN_KID|FUNCTION_EXEC_ROLE_ARN|FUNCTION_DEPLOYER_NAME|GOOGLE_OAUTH_CLIENT_ID|GOOGLE_OAUTH_CLIENT_SECRET|STRIPE_SECRET_KEY|STRIPE_WEBHOOK_SECRET|DEMO_MODE|ENABLE_VOICE_CALLS)=' >> .env.production || true
+        - env | grep -E '^(NEXT_PUBLIC_[A-Z_]*|SUPABASE_SERVICE_ROLE_KEY|KMS_KEY_ID|CLIENT_TOKEN_SIGNING_KEY|CLIENT_TOKEN_KID|FUNCTION_EXEC_ROLE_ARN|FUNCTION_DEPLOYER_NAME|AGENT_WORKER_FUNCTION|GOOGLE_OAUTH_CLIENT_ID|GOOGLE_OAUTH_CLIENT_SECRET|STRIPE_SECRET_KEY|STRIPE_WEBHOOK_SECRET|DEMO_MODE|ENABLE_VOICE_CALLS)=' >> .env.production || true
         - echo "Wrote $(wc -l < .env.production) runtime variables to .env.production (values not printed)"
 
         - npm run build

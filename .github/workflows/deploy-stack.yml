@@ -121,6 +121,34 @@ jobs:
           npm ci
           npm run build
 
+      - name: Deploy agent worker Lambda (cc-agent-worker)
+        env:
+          AWS_REGION: ${{ secrets.AWS_REGION || vars.AWS_REGION || 'us-east-2' }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          KMS_KEY_ID: ${{ secrets.KMS_KEY_ID || secrets.AWS_KMS_KEY_ID || 'arn:aws:kms:us-east-2:229198161564:key/f8991972-fa65-4e48-828f-cabdd581685b' }}
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+        run: |
+          # Agent turns run here (up to 15 min per invocation, auto-continued); created once by
+          # scripts/aws/setup-agent-worker.sh. Skipped until that has been run.
+          if ! aws lambda get-function --function-name cc-agent-worker >/dev/null 2>&1; then
+            echo "::warning::cc-agent-worker does not exist; run scripts/aws/setup-agent-worker.sh once. Agent turns run inline until then."
+            exit 0
+          fi
+          node scripts/build-agent-worker.mjs
+          (cd dist/agent-worker && zip -q ../agent-worker.zip index.js)
+          aws lambda wait function-updated-v2 --function-name cc-agent-worker
+          aws lambda update-function-code --function-name cc-agent-worker --zip-file fileb://dist/agent-worker.zip >/dev/null
+          aws lambda wait function-updated-v2 --function-name cc-agent-worker
+          export FUNCTION_EXEC_ROLE_ARN="arn:aws:iam::$(aws sts get-caller-identity --query Account --output text):role/ContextControlFunctionExecRole"
+          python3 -c 'import json, os; keys = ["NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY", "KMS_KEY_ID", "GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET", "FUNCTION_EXEC_ROLE_ARN"]; env = {k: os.environ[k] for k in keys if os.environ.get(k)}; env.update(NODE_ENV="production", AGENT_WORKER_FUNCTION="cc-agent-worker", FUNCTION_DEPLOYER_NAME="cc-function-deployer"); print(json.dumps({"Variables": env}))' > "$RUNNER_TEMP/worker-env.json"
+          aws lambda update-function-configuration --function-name cc-agent-worker --environment "file://$RUNNER_TEMP/worker-env.json" >/dev/null
+          rm -f "$RUNNER_TEMP/worker-env.json"
+          aws lambda wait function-updated-v2 --function-name cc-agent-worker
+          echo "cc-agent-worker updated."
+
       - name: Sync Environment Variables & Deploy Bundle to AWS Amplify
         id: amplify
         env:
@@ -179,6 +207,10 @@ jobs:
           # Execution role for AI Function Studio Lambdas (CloudWatch Logs only); not a secret.
           FUNCTION_EXEC_ROLE_ARN="arn:aws:iam::$(aws sts get-caller-identity --query Account --output text):role/ContextControlFunctionExecRole"
           # Google OAuth client for MCP Hub; only sent once both secrets exist.
+          WORKER_ENV=""
+          if aws lambda get-function --function-name cc-agent-worker >/dev/null 2>&1; then
+            WORKER_ENV=",AGENT_WORKER_FUNCTION=cc-agent-worker"
+          fi
           GOOGLE_ENV=""
           if [ -n "$GOOGLE_OAUTH_CLIENT_ID" ] && [ -n "$GOOGLE_OAUTH_CLIENT_SECRET" ]; then
             GOOGLE_ENV=",GOOGLE_OAUTH_CLIENT_ID=$GOOGLE_OAUTH_CLIENT_ID,GOOGLE_OAUTH_CLIENT_SECRET=$GOOGLE_OAUTH_CLIENT_SECRET"
@@ -189,7 +221,7 @@ jobs:
             --app-id "$AMPLIFY_ID" \
             --region "$AWS_REGION" \
             --environment-variables \
-              "NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL,NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY,SUPABASE_SERVICE_ROLE_KEY=$SUPABASE_SERVICE_ROLE_KEY,STRIPE_SECRET_KEY=$STRIPE_SECRET_KEY,STRIPE_WEBHOOK_SECRET=$STRIPE_WEBHOOK_SECRET,KMS_KEY_ID=$KMS_KEY_ID,DEMO_MODE=$DEMO_MODE,NEXT_PUBLIC_DEMO_MODE=$NEXT_PUBLIC_DEMO_MODE,ENABLE_VOICE_CALLS=$ENABLE_VOICE_CALLS,CLIENT_TOKEN_SIGNING_KEY=$CLIENT_TOKEN_SIGNING_KEY,FUNCTION_EXEC_ROLE_ARN=$FUNCTION_EXEC_ROLE_ARN,FUNCTION_DEPLOYER_NAME=cc-function-deployer${GOOGLE_ENV}"
+              "NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL,NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY,SUPABASE_SERVICE_ROLE_KEY=$SUPABASE_SERVICE_ROLE_KEY,STRIPE_SECRET_KEY=$STRIPE_SECRET_KEY,STRIPE_WEBHOOK_SECRET=$STRIPE_WEBHOOK_SECRET,KMS_KEY_ID=$KMS_KEY_ID,DEMO_MODE=$DEMO_MODE,NEXT_PUBLIC_DEMO_MODE=$NEXT_PUBLIC_DEMO_MODE,ENABLE_VOICE_CALLS=$ENABLE_VOICE_CALLS,CLIENT_TOKEN_SIGNING_KEY=$CLIENT_TOKEN_SIGNING_KEY,FUNCTION_EXEC_ROLE_ARN=$FUNCTION_EXEC_ROLE_ARN,FUNCTION_DEPLOYER_NAME=cc-function-deployer${GOOGLE_ENV}${WORKER_ENV}"
 
           echo "2. Cancelling any active or pending Amplify jobs..."
           ACTIVE_JOBS=$(aws amplify list-jobs --app-id "$AMPLIFY_ID" --branch-name main --region "$AWS_REGION" --query "jobSummaries[?status=='PENDING' || status=='RUNNING'].jobId" --output text || true)

@@ -14,3 +14,4 @@ amplify_deploy.zip
 
 # Supabase CLI local state
 supabase/.temp/
+dist/

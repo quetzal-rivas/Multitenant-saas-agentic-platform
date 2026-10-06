@@ -5,6 +5,7 @@ import { runSessionTurn, type RunnerDeps } from '@/lib/agent/session-runner';
 import { ensureHeartbeatSession, getTeam, type AgentTeam } from './teams';
 import { ServiceError } from './errors';
 import { teamHasBoardWork } from './board';
+import { dispatchRun, startRun, workerConfigured } from './agent-runs';
 
 /** Stop starting new runs after this long so the tick request returns in time. */
 const TICK_BUDGET_MS = 15_000;
@@ -67,8 +68,15 @@ export async function runTeamHeartbeat(
   let outcome: HeartbeatOutcome;
   try {
     const sessionId = await ensureHeartbeatSession(runCtx, team);
-    const turn = await runSessionTurn(runCtx, sessionId, team.heartbeat_goal, opts.deps);
-    outcome = { team_id: team.id, status: 'ok', checkpoint_id: turn.checkpoint_id, next_run_at: next };
+    if (!opts.deps && workerConfigured()) {
+      // Long goals run in the worker; the run reports ok/error on the team when it ends.
+      const run = await startRun(runCtx, sessionId, team.heartbeat_goal, { origin: 'heartbeat', teamId: team.id });
+      await dispatchRun(run.id);
+      outcome = { team_id: team.id, status: 'ok', detail: `Started run ${run.id}`, next_run_at: next };
+    } else {
+      const turn = await runSessionTurn(runCtx, sessionId, team.heartbeat_goal, opts.deps);
+      outcome = { team_id: team.id, status: 'ok', checkpoint_id: turn.checkpoint_id, next_run_at: next };
+    }
   } catch (err) {
     outcome = { team_id: team.id, status: 'error', detail: (err as Error).message?.slice(0, 500), next_run_at: next };
   }

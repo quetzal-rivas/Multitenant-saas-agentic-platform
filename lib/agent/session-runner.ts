@@ -170,6 +170,35 @@ interface LoopTool {
  * Model <-> tools loop shared by single agents, supervisors and workers. Appends
  * every assistant/tool message to `messages` and returns the final text.
  */
+/** Thrown by the tool loop when its time budget is used up between steps. */
+export class RunPaused extends Error {
+  constructor() {
+    super('run paused');
+    this.name = 'RunPaused';
+  }
+}
+
+/** Everything needed to continue a turn in a later invocation. */
+export interface SavedTurnState {
+  messages: LLMMessage[];
+  executions: ToolExecutionRecord[];
+  usage: TurnResult['usage'];
+  workersUsed: string[];
+  servedBy: string;
+  /** Supervisor steps completed so far. */
+  steps: number;
+  finalText: string;
+  previousCheckpointId: string | null;
+  previousStepIndex: number;
+}
+
+export interface TurnControl {
+  runId: string;
+  saved?: SavedTurnState | null;
+  deadlineAt?: number;
+  save?: (state: SavedTurnState, progress: { step: number; last_tool: string | null }) => Promise<void>;
+}
+
 async function runToolLoop(opts: {
   generate: typeof generateLLMResponse;
   provider: AgentSession['provider'];
@@ -183,10 +212,19 @@ async function runToolLoop(opts: {
   usage: TurnResult['usage'];
   onModel: (servedBy: string) => void;
   onTool: (record: ToolExecutionRecord) => Promise<void>;
+  /** Resume support: steps already completed, text so far, and when to pause. */
+  startStep?: number;
+  initialText?: string;
+  deadlineAt?: number;
+  /** Called after each completed step (model reply + its tool results). */
+  onStep?: (stepsDone: number, finalText: string) => Promise<void>;
 }): Promise<string> {
   const defs = [...opts.tools.values()].map((t) => t.def);
-  let finalText = '';
-  for (let step = 1; step <= opts.maxSteps; step++) {
+  let finalText = opts.initialText ?? '';
+  const first = (opts.startStep ?? 0) + 1;
+  for (let step = first; step <= opts.maxSteps; step++) {
+    // Pause only between steps, and only after making progress in this invocation.
+    if (opts.deadlineAt && step > first && Date.now() >= opts.deadlineAt) throw new RunPaused();
     opts.usage.steps += 1;
     let result;
     try {
@@ -254,6 +292,7 @@ async function runToolLoop(opts: {
         ...(isError ? { isError: true } : {}),
       });
     }
+    await opts.onStep?.(step, finalText);
   }
   finalText = `${finalText ? `${finalText}\n\n` : ''}(Stopped after ${opts.maxSteps} tool steps.)`;
   opts.messages.push({ role: 'assistant', content: finalText });
@@ -271,6 +310,23 @@ export async function runSessionTurn(
   message: string,
   deps: RunnerDeps = {}
 ): Promise<TurnResult> {
+  const result = await runTurn(ctx, sessionId, message, deps, { runId: `run_${crypto.randomUUID()}` });
+  if (result === 'paused') throw new Error('Turn paused without a deadline'); // unreachable: no deadline
+  return result;
+}
+
+/**
+ * One turn, resumable: starts from the latest checkpoint (or from `control.saved`),
+ * saves state after every supervisor step, and returns 'paused' when the deadline passes
+ * between steps. Board claims are parked only when the turn ends, not when it pauses.
+ */
+export async function runTurn(
+  ctx: Ctx,
+  sessionId: string,
+  message: string,
+  deps: RunnerDeps,
+  control: TurnControl
+): Promise<TurnResult | 'paused'> {
   const generate = deps.generate || generateLLMResponse;
   const getSecret = deps.getSecret || getTenantSecret;
 
@@ -287,24 +343,40 @@ export async function runSessionTurn(
     );
   }
 
-  const previous = await latestCheckpoint(ctx, session.id);
-  const state: LLMMessage[] = [...(previous?.state || []), { role: 'user', content: message }];
-  const runId = `run_${crypto.randomUUID()}`;
+  const saved = control.saved ?? null;
+  const previous = saved ? null : await latestCheckpoint(ctx, session.id);
+  const previousCheckpointId = saved ? saved.previousCheckpointId : previous?.id || null;
+  const previousStepIndex = saved ? saved.previousStepIndex : previous?.stepIndex || 0;
+  const state: LLMMessage[] = saved ? saved.messages : [...(previous?.state || []), { role: 'user', content: message }];
+  const runId = control.runId;
   const toolCtx = { tenantId: ctx.tenantId, userId: ctx.userId, authMode: ctx.authMode, apiKeyId: ctx.apiKeyId, teamId: team?.id ?? null, runId };
   const emit = (event: Parameters<typeof emitRunEvent>[0]) => emitRunEvent(event).catch(() => undefined);
-  await emit({
-    run_id: runId,
-    tenant_id: ctx.tenantId,
-    step_name: 'start',
-    status: 'running',
-    event_type: 'agent_start',
-    payload: { sessionId: session.id, provider, model, teamId: team?.id ?? null },
-  });
+  if (!saved) {
+    await emit({
+      run_id: runId,
+      tenant_id: ctx.tenantId,
+      step_name: 'start',
+      status: 'running',
+      event_type: 'agent_start',
+      payload: { sessionId: session.id, provider, model, teamId: team?.id ?? null },
+    });
+  }
 
-  const executions: ToolExecutionRecord[] = [];
-  const usage = { inputTokens: 0, outputTokens: 0, totalTokens: 0, steps: 0 };
-  const workersUsed = new Set<string>();
-  let servedBy = model;
+  const executions: ToolExecutionRecord[] = saved ? [...saved.executions] : [];
+  const usage = saved ? { ...saved.usage } : { inputTokens: 0, outputTokens: 0, totalTokens: 0, steps: 0 };
+  const workersUsed = new Set<string>(saved?.workersUsed || []);
+  let servedBy = saved?.servedBy || model;
+  const snapshot = (steps: number, finalText: string): SavedTurnState => ({
+    messages: state,
+    executions,
+    usage,
+    workersUsed: [...workersUsed],
+    servedBy,
+    steps,
+    finalText,
+    previousCheckpointId,
+    previousStepIndex,
+  });
 
   const platformTools = (names: string[]): Map<string, LoopTool> =>
     new Map(
@@ -360,7 +432,18 @@ export async function runSessionTurn(
     return tools;
   };
 
-  const loop = (opts: { systemPrompt: string; messages: LLMMessage[]; tools: Map<string, LoopTool>; model: string; maxSteps: number; worker?: string }) =>
+  const loop = (opts: {
+    systemPrompt: string;
+    messages: LLMMessage[];
+    tools: Map<string, LoopTool>;
+    model: string;
+    maxSteps: number;
+    worker?: string;
+    startStep?: number;
+    initialText?: string;
+    deadlineAt?: number;
+    onStep?: (stepsDone: number, finalText: string) => Promise<void>;
+  }) =>
     runToolLoop({
       ...opts,
       generate,
@@ -426,9 +509,29 @@ export async function runSessionTurn(
   }
 
   let finalText: string;
+  let stepsDone = saved?.steps ?? 0;
   try {
-    finalText = await loop({ systemPrompt, messages: state, tools, model, maxSteps: MAX_AGENT_STEPS });
+    finalText = await loop({
+      systemPrompt,
+      messages: state,
+      tools,
+      model,
+      maxSteps: MAX_AGENT_STEPS,
+      startStep: stepsDone,
+      initialText: saved?.finalText,
+      deadlineAt: control.deadlineAt,
+      onStep: async (done, text) => {
+        stepsDone = done;
+        const last = executions[executions.length - 1];
+        await control.save?.(snapshot(done, text), { step: done, last_tool: last?.toolName ?? null });
+      },
+    });
   } catch (err) {
+    if (err instanceof RunPaused) {
+      // State was saved after the last completed step; claims stay with this run.
+      return 'paused';
+    }
+    await parkRunClaims(ctx.tenantId, runId).catch(() => undefined);
     await emit({
       run_id: runId,
       tenant_id: ctx.tenantId,
@@ -438,12 +541,11 @@ export async function runSessionTurn(
       payload: { error: err instanceof Error ? err.message : String(err) },
     });
     throw err;
-  } finally {
-    // Board claims outlive the run; park them so the team's next run can resume them.
-    await parkRunClaims(ctx.tenantId, runId).catch(() => undefined);
   }
+  // Board claims outlive the run; park them so the team's next run can resume them.
+  await parkRunClaims(ctx.tenantId, runId).catch(() => undefined);
 
-  const stepIndex = (previous?.stepIndex || 0) + 1;
+  const stepIndex = previousStepIndex + 1;
   const supabase = getSupabaseAdminClient();
   const { data: checkpoint, error } = await supabase
     .from('checkpoints')
@@ -455,7 +557,7 @@ export async function runSessionTurn(
       profile_id: `session:${session.id}`,
       profile_name: session.name,
       step_index: stepIndex,
-      parent_id: previous?.id || null,
+      parent_id: previousCheckpointId,
       user_message: message,
       assistant_message: finalText,
       tools_executed: executions,

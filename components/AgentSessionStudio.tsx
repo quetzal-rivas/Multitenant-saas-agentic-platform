@@ -372,6 +372,8 @@ export const AgentSessionStudio: React.FC<AgentSessionStudioProps> = ({ initialT
   const [loadError, setLoadError] = useState<string | null>(null);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
+  /** Progress of a long turn running in the background worker. */
+  const [runProgress, setRunProgress] = useState<{ step: number; last_tool: string | null } | null>(null);
   const [turnError, setTurnError] = useState<string | null>(null);
   const [modal, setModal] = useState<'create' | 'edit' | null>(null);
   const [tab, setTab] = useState<'config' | 'checkpoints' | 'api'>('config');
@@ -460,11 +462,18 @@ export const AgentSessionStudio: React.FC<AgentSessionStudioProps> = ({ initialT
     setSending(true);
     setTranscript((t) => [...t, { role: 'user', content: message }]);
     try {
-      const result = await api<{ transcript: TranscriptItem[] }>('/api/v1/chat/generate', {
+      type TurnReply = { transcript?: TranscriptItem[]; run_id?: string; progress?: { step: number; last_tool: string | null } };
+      let result = await api<TurnReply>('/api/v1/chat/generate', {
         method: 'POST',
         body: JSON.stringify({ session_id: active.id, message }),
       });
-      setTranscript(result.transcript);
+      // Long turns return 202 with a run id: keep checking until the result is ready.
+      while (!result.transcript && result.run_id) {
+        setRunProgress(result.progress ?? null);
+        await new Promise((r) => setTimeout(r, 2000));
+        result = await api<TurnReply>(`/api/v1/agent-runs/${result.run_id}`);
+      }
+      setTranscript(result.transcript || []);
       await Promise.all([loadDetail(active.id), loadSessions(active.id)]);
     } catch (err: any) {
       setTurnError(err?.message || 'The turn failed');
@@ -472,6 +481,7 @@ export const AgentSessionStudio: React.FC<AgentSessionStudioProps> = ({ initialT
       setInput(message);
     } finally {
       setSending(false);
+      setRunProgress(null);
     }
   };
 
@@ -565,6 +575,10 @@ export const AgentSessionStudio: React.FC<AgentSessionStudioProps> = ({ initialT
     "session_id": "${active?.id || '<SESSION_ID>'}",
     "message": "What tasks are scheduled right now?"
   }'`;
+
+  // Turns longer than ~20 s answer 202 { run_id }; poll until it returns 200 with the result.
+  const pollCurl = `curl ${origin}/api/v1/agent-runs/<RUN_ID> \\
+  -H "Authorization: Bearer $CONTEXT_CONTROL_API_KEY"`;
 
   const createCurl = `curl -X POST ${origin}/api/v1/agent-sessions \\
   -H "Authorization: Bearer $CONTEXT_CONTROL_API_KEY" \\
@@ -748,7 +762,10 @@ export const AgentSessionStudio: React.FC<AgentSessionStudioProps> = ({ initialT
 
           {sending && (
             <div className="flex items-center gap-2 text-xs text-zinc-400 font-mono">
-              <Loader2 className="w-3.5 h-3.5 animate-spin" /> Running agent…
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              {runProgress
+                ? `Working… step ${runProgress.step}${runProgress.last_tool ? ` · called ${runProgress.last_tool}` : ''}`
+                : 'Running agent…'}
             </div>
           )}
           {turnError && (
@@ -902,7 +919,8 @@ export const AgentSessionStudio: React.FC<AgentSessionStudioProps> = ({ initialT
                 Your organization comes from the key, so there is no tenant id in the body.
               </p>
               {[
-                ['chat', 'Send a message', chatCurl],
+                ['chat', 'Send a message (200 with the answer, or 202 with run_id for long turns)', chatCurl],
+                ['poll', 'Check a long turn (202 while working, 200 when done)', pollCurl],
                 ['create', 'Create an instance (needs agent:sessions:write)', createCurl],
               ].map(([id, title, text]) => (
                 <section key={id} className="space-y-1.5">

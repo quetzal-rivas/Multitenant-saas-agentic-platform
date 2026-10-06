@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   CalendarDays,
   ChevronLeft,
@@ -18,6 +18,8 @@ import {
   KanbanSquare,
   Ban,
   Pencil,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react';
 import type { HeartbeatSchedule } from '@/lib/agent/heartbeat-schedule';
 import { ScheduleEditor, formatWhen } from '@/components/ScheduleEditor';
@@ -151,6 +153,18 @@ export const TaskCalendarView: React.FC<{ onNavigateToStudio?: () => void }> = (
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<Task | 'new' | null>(null);
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [fullscreen, setFullscreen] = useState(false);
+
+  useEffect(() => {
+    const onChange = () => setFullscreen(document.fullscreenElement === rootRef.current);
+    document.addEventListener('fullscreenchange', onChange);
+    return () => document.removeEventListener('fullscreenchange', onChange);
+  }, []);
+  const toggleFullscreen = () => {
+    if (document.fullscreenElement) void document.exitFullscreen();
+    else void rootRef.current?.requestFullscreen?.();
+  };
 
   const range = useMemo(() => {
     if (view === 'week') {
@@ -210,7 +224,7 @@ export const TaskCalendarView: React.FC<{ onNavigateToStudio?: () => void }> = (
   };
 
   return (
-    <div className="h-full flex flex-col bg-[#090b10] text-zinc-100 overflow-hidden">
+    <div ref={rootRef} className="h-full flex flex-col bg-[#090b10] text-zinc-100 overflow-hidden">
       <header className="px-6 py-4 border-b border-zinc-800 bg-[#0d1017] flex flex-wrap items-center justify-between gap-3 shrink-0">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-lg bg-sky-950/80 border border-sky-800/80 flex items-center justify-center text-sky-400">
@@ -234,6 +248,9 @@ export const TaskCalendarView: React.FC<{ onNavigateToStudio?: () => void }> = (
           <button onClick={() => setEditing('new')} className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white font-semibold">
             <Plus className="w-3.5 h-3.5" /> New task
           </button>
+          <button onClick={toggleFullscreen} title={fullscreen ? 'Exit full screen' : 'Full screen'} className="p-1.5 rounded-md border border-zinc-700 text-zinc-400 hover:text-white">
+            {fullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+          </button>
         </div>
       </header>
 
@@ -243,8 +260,8 @@ export const TaskCalendarView: React.FC<{ onNavigateToStudio?: () => void }> = (
         </div>
       )}
 
-      <div className="flex-1 min-h-0 flex flex-col lg:flex-row overflow-y-auto lg:overflow-hidden">
-        <main className="flex-1 min-w-0 overflow-x-auto lg:overflow-auto p-4">
+      <div className="flex-1 min-h-0 overflow-y-auto">
+        <main className="min-w-0 overflow-x-auto p-4">
           {loading ? (
             <div className="h-full flex items-center justify-center text-sm text-zinc-400 gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading…</div>
           ) : (
@@ -291,17 +308,19 @@ export const TaskCalendarView: React.FC<{ onNavigateToStudio?: () => void }> = (
           )}
         </main>
 
-        <aside className="w-full lg:w-80 shrink-0 border-t lg:border-t-0 lg:border-l border-zinc-800 bg-[#0d1017] lg:overflow-y-auto">
-          <div className="px-4 py-3 border-b border-zinc-800 text-sm font-semibold text-zinc-200">Scheduled tasks</div>
+        <section className="px-4 pb-6">
+          <div className="flex items-center justify-between py-3">
+            <h2 className="text-sm font-semibold text-zinc-200">Scheduled tasks <span className="text-zinc-500 font-normal">({tasks.length})</span></h2>
+          </div>
           {tasks.length === 0 && !loading && (
             <div className="p-4 text-xs text-zinc-400 space-y-2">
               <p>No tasks yet. A task is work a team does at a time you choose, once or on a schedule. Agents can also schedule tasks with the <span className="font-mono text-zinc-300">contextcontrol_schedule_task</span> tool.</p>
               <button onClick={() => setEditing('new')} className="text-emerald-400 hover:text-emerald-300">Schedule the first task →</button>
             </div>
           )}
-          <div className="p-2 space-y-1.5">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
             {tasks.map((t) => (
-              <button key={t.id} onClick={() => setOpenTaskId(t.id)} className="w-full text-left p-2.5 rounded-lg border border-zinc-800 hover:border-zinc-600 space-y-1">
+              <button key={t.id} onClick={() => setOpenTaskId(t.id)} className="w-full text-left p-3 rounded-lg border border-zinc-800 bg-[#0d1017] hover:border-zinc-600 space-y-1">
                 <div className="flex items-start justify-between gap-2">
                   <span className="text-sm text-white leading-snug">{t.title}</span>
                   <span className={`shrink-0 text-[10px] px-1.5 py-0.5 rounded border ${STATUS_STYLE[t.status]}`}>{t.paused ? 'paused' : STATUS_LABEL[t.status] ?? t.status}</span>
@@ -315,7 +334,7 @@ export const TaskCalendarView: React.FC<{ onNavigateToStudio?: () => void }> = (
               </button>
             ))}
           </div>
-        </aside>
+        </section>
       </div>
 
       {editing && (

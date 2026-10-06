@@ -8,7 +8,9 @@ import { VoiceProviderError, providerFetch, type VoiceProvider } from '../types'
  */
 
 const BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
-export const GEMINI_STT_MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite'];
+// Flash-Lite first: transcription needs speed, not reasoning. Same generation as the
+// agent fallback chain in llm-adapter.ts (older 2.x models are closed to new keys).
+export const GEMINI_STT_MODELS = ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-3.5-flash'];
 export const GEMINI_TTS_MODELS = ['gemini-3.1-flash-tts-preview', 'gemini-2.5-flash-preview-tts'];
 
 async function generate(key: string, model: string, body: unknown, timeoutMs?: number): Promise<any> {
@@ -21,7 +23,7 @@ async function generate(key: string, model: string, body: unknown, timeoutMs?: n
   return res.json();
 }
 
-/** Try each model; a 404 (model retired) or 5xx moves to the next, other errors stop. */
+/** Try each model; retired (404), over quota (429) or failing (5xx) models move to the next. */
 async function withModels<T>(models: string[], run: (model: string) => Promise<T>): Promise<T> {
   let last: unknown;
   for (const model of models) {
@@ -30,7 +32,7 @@ async function withModels<T>(models: string[], run: (model: string) => Promise<T
     } catch (err) {
       last = err;
       const status = err instanceof VoiceProviderError ? err.status : undefined;
-      if (!(status === 404 || (status && status >= 500))) throw err;
+      if (!(status === 404 || status === 429 || (status && status >= 500))) throw err;
     }
   }
   throw last;
@@ -76,7 +78,7 @@ export const gemini: VoiceProvider = {
             ],
           },
         ],
-        generationConfig: { temperature: 0, thinkingConfig: { thinkingBudget: 0 } },
+        generationConfig: { temperature: 0 },
       })
     );
     const text = (data?.candidates?.[0]?.content?.parts || []).map((p: any) => p.text || '').join('').trim();

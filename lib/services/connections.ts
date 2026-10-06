@@ -108,6 +108,15 @@ export async function probeConnectors(tenantId: string) {
     let detail: string | null = null;
     try {
       const remote = await listRemoteTools(connector.url, token);
+      // Listing works for anyone; calls may still be refused (e.g. Google's Developer
+      // Preview enrollment). Probe with a harmless read-only call before trusting it.
+      const probe =
+        remote.find((t) => ['list_labels', 'list_calendars'].includes(t.name)) ??
+        remote.find((t) => (t.annotations as any)?.readOnlyHint && !((t.inputSchema as any)?.required || []).length);
+      if (probe) {
+        const res = await callRemoteTool(connector.url, token, probe.name, {});
+        if (res.isError) throw new Error(res.text.slice(0, 300) || `${probe.name} was refused`);
+      }
       mode = 'official';
       tools = remote.map((t) => ({
         name: remoteToolName(connector.id, t.name),

@@ -30,6 +30,8 @@ const google = {
   refreshFails: false,
   accessCounter: 0,
   remoteCalls: [] as Array<{ auth: string | null; tool: string; args: unknown }>,
+  /** Simulates Google listing tools but refusing calls until Developer Preview enrollment. */
+  gmailRefusesCalls: false,
 };
 
 async function fakeGoogle(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
@@ -84,6 +86,11 @@ async function remoteMcpFetch(input: RequestInfo | URL, init?: RequestInit): Pro
       return { content: [{ type: 'text', text: 'found 1' }], structuredContent: { threads: [{ id: 't1', subject: 'Welcome' }] } };
     }
   );
+  server.registerTool('list_labels', { description: 'List labels', annotations: { readOnlyHint: true } }, async () =>
+    google.gmailRefusesCalls
+      ? { isError: true, content: [{ type: 'text', text: 'Access requires the Google Cloud project to be enrolled in the Google Workspace Developer Preview Program.' }] }
+      : { content: [{ type: 'text', text: 'INBOX, SENT' }] }
+  );
   server.registerTool('create_draft', { description: 'Create a draft', inputSchema: { to: z.string() } }, async () => ({ content: [{ type: 'text', text: 'draft d1' }] }));
   const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
   await server.connect(transport);
@@ -137,11 +144,26 @@ describe('MCP Hub connections (fake Google + in-process remote MCP server)', () 
     const gmail = view.google.connectors.find((c) => c.id === 'gmail')!;
     const calendar = view.google.connectors.find((c) => c.id === 'calendar')!;
     assert.equal(gmail.mode, 'official');
-    assert.deepEqual(gmail.tools.map((t) => t.name).sort(), ['gmail__create_draft', 'gmail__search_threads']);
+    assert.deepEqual(gmail.tools.map((t) => t.name).sort(), ['gmail__create_draft', 'gmail__list_labels', 'gmail__search_threads']);
     assert.equal(calendar.mode, 'direct', 'refused official server falls back to the direct API');
     assert.deepEqual(calendar.tools.map((t) => t.name).sort(), ['calendar_create_event', 'calendar_list_events']);
 
     await assert.rejects(completeGoogleConnect('code-1', state), /already used/);
+  });
+
+  test('a server that lists tools but refuses calls (preview not enrolled) falls back to direct', async () => {
+    const { probeConnectors } = await import('../lib/services/connections');
+    google.gmailRefusesCalls = true;
+    try {
+      await probeConnectors(TENANT);
+      const gmail = (await listConnections(user)).google.connectors.find((c) => c.id === 'gmail')!;
+      assert.equal(gmail.mode, 'direct');
+      assert.match(gmail.detail!, /Developer Preview/);
+      assert.deepEqual(gmail.tools.map((t) => t.name).sort(), ['gmail_create_draft', 'gmail_read', 'gmail_search']);
+    } finally {
+      google.gmailRefusesCalls = false;
+      await probeConnectors(TENANT);
+    }
   });
 
   test('tools run through the official MCP server (bearer token) and the direct API', async () => {

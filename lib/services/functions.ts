@@ -63,6 +63,30 @@ function execRoleArn(): string {
 
 export const lambdaNameFor = (functionId: string) => `ccfn-${functionId.replace(/-/g, '')}`;
 
+/**
+ * Create the Lambda. In production this goes through the `cc-function-deployer` Lambda
+ * (infra/function-deployer): Amplify's compute role may not pass IAM roles, which
+ * CreateFunction requires. Without a deployer configured (local/tests) it calls Lambda directly.
+ */
+async function createLambda(config: Row, zip: Uint8Array, tags: Record<string, string>) {
+  const deployer = process.env.FUNCTION_DEPLOYER_NAME;
+  if (!deployer) {
+    await lambda().send(new CreateFunctionCommand({ ...config, Role: execRoleArn(), Code: { ZipFile: zip }, Architectures: ['arm64'], Tags: tags } as any));
+    return;
+  }
+  const res = await lambda().send(
+    new InvokeCommand({
+      FunctionName: deployer,
+      InvocationType: 'RequestResponse',
+      Payload: new TextEncoder().encode(JSON.stringify({ ...config, Tags: tags, ZipFileBase64: Buffer.from(zip).toString('base64') })),
+    })
+  );
+  if (res.FunctionError) {
+    const payload = JSON.parse(res.Payload ? new TextDecoder().decode(res.Payload) : '{}');
+    throw new ServiceError(`Could not create the Lambda: ${payload?.errorMessage || res.FunctionError}`, 'CONFLICT');
+  }
+}
+
 const isNotFound = (err: any) => err?.name === 'ResourceNotFoundException' || err?.$metadata?.httpStatusCode === 404;
 
 // ---------------------------------------------------------------------------
@@ -287,15 +311,7 @@ export async function deployFunction(ctx: FunctionCtx, id: string) {
       exists = false;
     }
     if (!exists) {
-      await lambda().send(
-        new CreateFunctionCommand({
-          ...config,
-          Role: execRoleArn(),
-          Code: { ZipFile: pkg.zip },
-          Architectures: ['arm64'],
-          Tags: { 'context-control:tenant': ctx.tenantId, 'context-control:function': fn.id },
-        })
-      );
+      await createLambda(config, pkg.zip, { 'context-control:tenant': ctx.tenantId, 'context-control:function': fn.id });
     } else {
       await waitUntilReady(name);
       await lambda().send(new UpdateFunctionConfigurationCommand(config));

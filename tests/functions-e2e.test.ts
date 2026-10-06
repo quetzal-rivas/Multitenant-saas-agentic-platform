@@ -40,6 +40,7 @@ class FakeLambda {
   fns = new Map<string, any>();
   calls: string[] = [];
   nextFunctionError: Record<string, unknown> | null = null;
+  deployerCalls = 0;
 
   async send(cmd: any) {
     const name = cmd.constructor.name as string;
@@ -63,6 +64,16 @@ class FakeLambda {
         if (!this.fns.delete(input.FunctionName)) throw notFound();
         return {};
       case 'InvokeCommand': {
+        if (input.FunctionName === 'cc-function-deployer') {
+          // Mirrors infra/function-deployer: only ccfn-<32 hex>, fixed role.
+          const req = JSON.parse(new TextDecoder().decode(input.Payload));
+          this.deployerCalls++;
+          if (!/^ccfn-[0-9a-f]{32}$/.test(req.FunctionName)) {
+            return { FunctionError: 'Unhandled', Payload: new TextEncoder().encode(JSON.stringify({ errorMessage: 'Invalid function name' })) };
+          }
+          this.fns.set(req.FunctionName, { ...req, Role: 'deployer-exec-role', Architectures: ['arm64'], zip: Buffer.from(req.ZipFileBase64, 'base64') });
+          return { Payload: new TextEncoder().encode('{}') };
+        }
         const fn = this.fns.get(input.FunctionName);
         if (!fn) throw notFound();
         if (this.nextFunctionError) {
@@ -266,6 +277,22 @@ describe('AI Function Studio (fake Lambda running real code)', () => {
     const { fix } = await fixFunction(user, broken.id, { error: 'ZeroDivisionError' }, fixDeps);
     assert.match(fix.code, /return 0/);
     assert.equal((await getFunction(user, broken.id)).function.code.includes('1 / 0'), true, 'fix is not applied automatically');
+  });
+
+  test('in production, creation goes through the deployer Lambda (Amplify cannot pass roles)', async () => {
+    process.env.FUNCTION_DEPLOYER_NAME = 'cc-function-deployer';
+    try {
+      const { function: fn } = await createFunction(user, { name: 'Via deployer', language: 'python', code: 'def main(input):\n    return {"ok": True}\n' });
+      const before = fake.calls.filter((c) => c === 'CreateFunctionCommand').length;
+      const { function: deployed } = await deployFunction(user, fn.id);
+      assert.equal(fake.deployerCalls, 1);
+      assert.equal(fake.calls.filter((c) => c === 'CreateFunctionCommand').length, before, 'no direct CreateFunction');
+      assert.equal(fake.fns.get(deployed.lambda_name)!.Role, 'deployer-exec-role');
+      const { result } = await testFunction(user, fn.id, {});
+      assert.deepEqual(result.output, { ok: true });
+    } finally {
+      delete process.env.FUNCTION_DEPLOYER_NAME;
+    }
   });
 
   test('wrappers and input validation', () => {

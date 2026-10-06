@@ -89,7 +89,7 @@ export const McpHubView: React.FC<McpHubViewProps> = ({
       const res = await fetch('/api/mcp/servers');
       if (res.ok) {
         const data = await res.json();
-        setServers(data.servers);
+        setServers(data.servers.map((s: HostedMcpServer) => ({ ...s, tools: s.tools ?? [] })));
       }
     } catch {
       setServers(HOSTED_MCP_SERVERS);
@@ -124,7 +124,8 @@ export const McpHubView: React.FC<McpHubViewProps> = ({
         if (isMounted && resS.ok) {
           const dataS = await resS.json();
           if (Array.isArray(dataS.servers)) {
-            setServers(dataS.servers);
+            // The servers API returns a catalog without per-tool lists; keep the shape the UI expects.
+            setServers(dataS.servers.map((s: HostedMcpServer) => ({ ...s, tools: s.tools ?? [] })));
           }
         }
       } catch {
@@ -750,6 +751,17 @@ export const McpHubView: React.FC<McpHubViewProps> = ({
       {/* ========================================================================= */}
       {/* TAB 2: ASSIGN MCP PROFILES & SELECTED TOOLS                               */}
       {/* ========================================================================= */}
+      {activeTab === 'profiles' && !selectedProfile && (
+        <div className="p-10 rounded-xl border border-zinc-800 bg-zinc-900/50 text-center space-y-3">
+          <h3 className="text-base font-semibold text-white">No MCP profiles yet</h3>
+          <p className="text-xs text-zinc-400 max-w-md mx-auto">
+            A profile groups tools and AI Function Studio functions. Attach it to an Agent Studio instance, a team supervisor or a worker to give them those tools.
+          </p>
+          <button onClick={() => setIsCreatingProfile(true)} className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold">
+            Create a profile
+          </button>
+        </div>
+      )}
       {activeTab === 'profiles' && selectedProfile && (
         <div className="space-y-8">
           {/* Profile Selector Toolbar */}

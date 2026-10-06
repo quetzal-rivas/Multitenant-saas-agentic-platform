@@ -2,7 +2,7 @@ import assert from 'assert';
 import crypto from 'crypto';
 import { test, describe, before, after } from 'node:test';
 import { fakePostgrest, resetTables, tables } from './helpers/fake-postgrest';
-import { createTeam, createTeamSession, getTeam, teamSpecSchema, toTeamSpec, updateTeam, workerSlug } from '../lib/services/teams';
+import { createTeam, createTeamSession, getTeam, stableJson, teamSpecSchema, toTeamSpec, updateTeam, workerSlug } from '../lib/services/teams';
 import { runSessionTurn } from '../lib/agent/session-runner';
 import { processDueHeartbeats, runTeamHeartbeat } from '../lib/services/heartbeats';
 import type { LLMGenerateOptions, LLMGenerateResult } from '../lib/agent/providers/llm-adapter';
@@ -59,6 +59,25 @@ describe('Teams (fake PostgREST, scripted model)', () => {
     assert.deepEqual(ok.workers[0].tools, ['contextcontrol_list_tasks']);
     assert.equal(workerSlug('Fácil Clerk #2'), 'facil_clerk_2');
     assert.equal(teamSpecSchema.safeParse({ ...baseSpec, supervisor: { tools: ['stripe.pay'] } }).success, false, 'fake skills are rejected');
+  });
+
+  test('saving a team without changing its schedule keeps the next heartbeat (jsonb key order)', async () => {
+    assert.equal(stableJson({ b: 1, a: [{ d: 2, c: 3 }] }), stableJson({ a: [{ c: 3, d: 2 }], b: 1 }));
+    const spec = {
+      name: 'Clock keeper',
+      llm: { provider: 'gemini' },
+      supervisor: { tools: [] },
+      heartbeat: { enabled: true, goal: 'Check in', schedule: { mode: 'interval', every: 15, unit: 'minutes', timezone: 'UTC' } },
+    };
+    const team = await createTeam(ctx, spec);
+    const row = tables.agent_teams.find((t) => t.id === team.id)!;
+    // Postgres jsonb returns keys in its own order; simulate that, and pin the planned run.
+    row.heartbeat_schedule = { unit: 'minutes', every: 15, timezone: 'UTC', mode: 'interval' };
+    row.heartbeat_next_run_at = '2030-01-01T00:00:00.000Z';
+    await updateTeam(ctx, team.id, { ...spec, name: 'Clock keeper (renamed)' });
+    assert.equal(row.heartbeat_next_run_at, '2030-01-01T00:00:00.000Z', 'renaming must not re-plan the heartbeat');
+    await updateTeam(ctx, team.id, { ...spec, heartbeat: { ...spec.heartbeat, schedule: { ...spec.heartbeat.schedule, every: 30 } } });
+    assert.notEqual(row.heartbeat_next_run_at, '2030-01-01T00:00:00.000Z', 'a real schedule change re-plans');
   });
 
   test('create team; profiles must belong to the tenant; export round-trips', async () => {

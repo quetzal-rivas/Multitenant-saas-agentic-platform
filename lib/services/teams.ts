@@ -102,12 +102,21 @@ async function assertSpecReferences(ctx: Ctx, spec: TeamSpec) {
   for (const id of mcpIds) await getProfile(ctx, { profile_id: id });
 }
 
+/** JSON with sorted object keys: Postgres jsonb does not keep key order, so plain stringify mis-detects changes. */
+export function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value as object).sort().filter((k) => (value as any)[k] !== undefined).map((k) => `${JSON.stringify(k)}:${stableJson((value as any)[k])}`).join(',')}}`;
+  }
+  return JSON.stringify(value ?? null);
+}
+
 function teamRow(spec: TeamSpec, existing?: AgentTeam | null) {
   const schedule = spec.heartbeat.enabled ? spec.heartbeat.schedule ?? null : null;
   const scheduleChanged =
     !existing ||
     existing.heartbeat_enabled !== spec.heartbeat.enabled ||
-    JSON.stringify(existing.heartbeat_schedule) !== JSON.stringify(schedule);
+    stableJson(existing.heartbeat_schedule) !== stableJson(schedule);
   return {
     name: spec.name,
     description: spec.description ?? null,

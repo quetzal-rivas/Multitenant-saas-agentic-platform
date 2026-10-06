@@ -173,11 +173,13 @@ jobs:
           fi
           
           echo "1. Updating AWS Amplify environment variables for App ID: $AMPLIFY_ID"
+          # Execution role for AI Function Studio Lambdas (CloudWatch Logs only); not a secret.
+          FUNCTION_EXEC_ROLE_ARN="arn:aws:iam::$(aws sts get-caller-identity --query Account --output text):role/ContextControlFunctionExecRole"
           aws amplify update-app \
             --app-id "$AMPLIFY_ID" \
             --region "$AWS_REGION" \
             --environment-variables \
-              "NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL,NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY,SUPABASE_SERVICE_ROLE_KEY=$SUPABASE_SERVICE_ROLE_KEY,STRIPE_SECRET_KEY=$STRIPE_SECRET_KEY,STRIPE_WEBHOOK_SECRET=$STRIPE_WEBHOOK_SECRET,KMS_KEY_ID=$KMS_KEY_ID,DEMO_MODE=$DEMO_MODE,NEXT_PUBLIC_DEMO_MODE=$NEXT_PUBLIC_DEMO_MODE,ENABLE_VOICE_CALLS=$ENABLE_VOICE_CALLS,CLIENT_TOKEN_SIGNING_KEY=$CLIENT_TOKEN_SIGNING_KEY"
+              "NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL,NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY,SUPABASE_SERVICE_ROLE_KEY=$SUPABASE_SERVICE_ROLE_KEY,STRIPE_SECRET_KEY=$STRIPE_SECRET_KEY,STRIPE_WEBHOOK_SECRET=$STRIPE_WEBHOOK_SECRET,KMS_KEY_ID=$KMS_KEY_ID,DEMO_MODE=$DEMO_MODE,NEXT_PUBLIC_DEMO_MODE=$NEXT_PUBLIC_DEMO_MODE,ENABLE_VOICE_CALLS=$ENABLE_VOICE_CALLS,CLIENT_TOKEN_SIGNING_KEY=$CLIENT_TOKEN_SIGNING_KEY,FUNCTION_EXEC_ROLE_ARN=$FUNCTION_EXEC_ROLE_ARN"
 
           echo "2. Cancelling any active or pending Amplify jobs..."
           ACTIVE_JOBS=$(aws amplify list-jobs --app-id "$AMPLIFY_ID" --branch-name main --region "$AWS_REGION" --query "jobSummaries[?status=='PENDING' || status=='RUNNING'].jobId" --output text || true)

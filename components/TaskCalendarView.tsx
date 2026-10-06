@@ -1,1164 +1,615 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Calendar as CalendarIcon,
-  Clock,
-  CheckCircle2,
-  AlertTriangle,
-  Play,
-  RotateCcw,
-  Plus,
-  Zap,
-  PhoneCall,
-  Mail,
-  RefreshCw,
-  Server,
-  Terminal,
+  CalendarDays,
   ChevronLeft,
   ChevronRight,
+  Plus,
   X,
-  Sparkles,
-  ShieldCheck,
-  Radio,
-  Flame,
-  Power,
-  Layers,
-  ArrowRight,
+  Loader2,
+  AlertTriangle,
+  CheckCircle2,
+  Play,
+  Pause,
+  Repeat,
+  Users,
+  HeartPulse,
+  KanbanSquare,
+  Ban,
+  Pencil,
 } from 'lucide-react';
-import { ScheduledTask, TaskStatus, ReasoningStep } from '@/lib/demo/legacy_mocks/db';
+import type { HeartbeatSchedule } from '@/lib/agent/heartbeat-schedule';
+import { ScheduleEditor, formatWhen } from '@/components/ScheduleEditor';
 
-interface TaskCalendarViewProps {
-  tenantId?: string;
-  onNavigateToStudio?: () => void;
+// ---------------------------------------------------------------------------
+// Types (mirror /api/v1/tasks and /api/v1/calendar)
+// ---------------------------------------------------------------------------
+
+interface Task {
+  id: string;
+  title: string;
+  instructions: string | null;
+  status: 'scheduled' | 'active' | 'completed' | 'failed' | 'escalated' | 'cancelled';
+  team_id: string | null;
+  session_id: string | null;
+  schedule: HeartbeatSchedule | null;
+  repeating: boolean;
+  target_time: string | null;
+  next_run_at: string | null;
+  paused: boolean;
+  max_retries: number;
+  retry_delay_minutes: number;
+  attempt: number;
+  escalate_to_board: boolean;
+  escalation_team_id: string | null;
+  last_run_at: string | null;
+  last_status: 'ok' | 'error' | 'skipped' | 'escalated' | null;
+  last_error: string | null;
+  last_result: string | null;
+  run_count: number;
+  upcoming?: string[];
 }
 
-export const TaskCalendarView: React.FC<TaskCalendarViewProps> = ({
-  tenantId = 'tenant_enterprise_corp',
-}) => {
-  const [tasks, setTasks] = useState<ScheduledTask[]>([]);
-  const [queueStats, setQueueStats] = useState<any>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [selectedTask, setSelectedTask] = useState<ScheduledTask | null>(null);
-  const [isScheduleModalOpen, setIsScheduleModalOpen] = useState<boolean>(false);
-  const [filterStatus, setFilterStatus] = useState<string>('ALL');
-  const [isExecuting, setIsExecuting] = useState<boolean>(false);
-  const [actionNotice, setActionNotice] = useState<string | null>(null);
-  const [nowTimestamp, setNowTimestamp] = useState<number>(0);
+interface TaskRun {
+  run_id: string;
+  status: string;
+  started_at: string;
+  finished_at: string | null;
+  steps: number;
+  tools: string[];
+  message: string | null;
+  error: string | null;
+}
 
-  // Calendar date state: current viewed month/year
-  const [currentDate, setCurrentDate] = useState<Date>(new Date());
-  const [viewMode, setViewMode] = useState<'calendar' | 'timeline' | 'queue'>('calendar');
+interface CalendarItem {
+  kind: 'task' | 'task_run' | 'heartbeat' | 'board_due';
+  id: string;
+  ref_id: string;
+  title: string;
+  at: string;
+  status?: string;
+  team_id?: string | null;
+}
 
-  // New task form state
-  const [formTitle, setFormTitle] = useState<string>('Executive Weekly Briefing via Gmail');
-  const [formInstructions, setFormInstructions] = useState<string>(
-    'Fetch metric highlights and send executive briefing to boss. If email fails, trigger voice call alert.'
-  );
-  const [formScheduledAt, setFormScheduledAt] = useState<string>(() => {
-    const future = new Date(Date.now() + 1000 * 60 * 30); // 30 mins ahead
-    return future.toISOString().slice(0, 16);
-  });
-  const [formSubscribedProfileIds, setFormSubscribedProfileIds] = useState<string>('');
-  const [formAllowedTools, setFormAllowedTools] = useState<string[]>([
-    'gmail_send_message',
-    'elevenlabs_trigger_call',
-  ]);
-  const [formFallbackTool, setFormFallbackTool] = useState<string>('elevenlabs_trigger_call');
-  const [formEscalationInstructions, setFormEscalationInstructions] = useState<string>(
-    'If email delivery fails, immediately trigger an automated voice call via ElevenLabs to alert the boss.'
-  );
-  const [formContactBoss, setFormContactBoss] = useState<string>('+1 (555) 438-9021');
-  const [formSimulateFailure, setFormSimulateFailure] = useState<boolean>(false);
-  const [formCategory, setFormCategory] = useState<'email' | 'voice' | 'calendar' | 'maintenance'>('email');
+interface Team {
+  id: string;
+  name: string;
+}
 
-  // Fetch tasks and queue stats
-  const fetchTasks = useCallback(async () => {
-    try {
-      const res = await fetch(`/api/v1/tasks?tenant_id=${tenantId}`);
-      if (res.ok) {
-        const data = await res.json();
-        setTasks(data.tasks || []);
-        setQueueStats(data.queueStats || null);
-        setNowTimestamp(Date.now());
-      }
-    } catch (err) {
-      console.error('Failed to load scheduled tasks:', err);
-    } finally {
-      setIsLoading(false);
+async function api<T>(url: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(url, { ...init, headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) }, cache: 'no-store' });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const issues = Array.isArray(body?.issues) ? ` (${body.issues.map((i: any) => `${i.path}: ${i.message}`).join('; ')})` : '';
+    throw new Error((body?.error || `Request failed (${res.status})`) + issues);
+  }
+  return body as T;
+}
+
+const inputCls = 'w-full bg-[#090b0f] border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500';
+const labelCls = 'block text-xs font-semibold text-zinc-400 mb-1';
+const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+const STATUS_STYLE: Record<string, string> = {
+  scheduled: 'text-sky-300 border-sky-800 bg-sky-950/40',
+  active: 'text-amber-300 border-amber-800 bg-amber-950/40',
+  completed: 'text-emerald-300 border-emerald-800 bg-emerald-950/40',
+  failed: 'text-rose-300 border-rose-800 bg-rose-950/40',
+  escalated: 'text-rose-300 border-rose-800 bg-rose-950/40',
+  cancelled: 'text-zinc-500 border-zinc-700 bg-zinc-900',
+};
+const STATUS_LABEL: Record<string, string> = { active: 'running' };
+
+function chipStyle(item: CalendarItem): string {
+  if (item.kind === 'heartbeat') return 'bg-violet-950/50 text-violet-300 border-violet-900';
+  if (item.kind === 'board_due') return 'bg-amber-950/40 text-amber-300 border-amber-900';
+  if (item.kind === 'task_run') {
+    if (item.status === 'done') return 'bg-emerald-950/40 text-emerald-300 border-emerald-900';
+    if (item.status === 'error' || item.status === 'cancelled') return 'bg-rose-950/40 text-rose-300 border-rose-900';
+    return 'bg-amber-950/40 text-amber-300 border-amber-900';
+  }
+  return 'bg-sky-950/40 text-sky-300 border-sky-900';
+}
+
+const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+const addDays = (d: Date, n: number) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
+const dayKey = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+const timeOf = (iso: string) => new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+
+/** Collapse many heartbeat occurrences of one team on one day into a single chip. */
+function groupDay(items: CalendarItem[]): Array<CalendarItem & { count?: number }> {
+  const out: Array<CalendarItem & { count?: number }> = [];
+  const beats = new Map<string, CalendarItem & { count: number }>();
+  for (const it of items) {
+    if (it.kind !== 'heartbeat') {
+      out.push(it);
+      continue;
     }
-  }, [tenantId]);
+    const existing = beats.get(it.ref_id);
+    if (existing) existing.count++;
+    else {
+      const g = { ...it, count: 1 };
+      beats.set(it.ref_id, g);
+      out.push(g);
+    }
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+
+export const TaskCalendarView: React.FC<{ onNavigateToStudio?: () => void }> = ({ onNavigateToStudio }) => {
+  const [view, setView] = useState<'month' | 'week'>('month');
+  const [cursor, setCursor] = useState(() => startOfDay(new Date()));
+  const [items, setItems] = useState<CalendarItem[]>([]);
+  const [truncated, setTruncated] = useState(false);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [editing, setEditing] = useState<Task | 'new' | null>(null);
+  const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+
+  const range = useMemo(() => {
+    if (view === 'week') {
+      const start = addDays(cursor, -cursor.getDay());
+      return { start, end: addDays(start, 7), days: Array.from({ length: 7 }, (_, i) => addDays(start, i)) };
+    }
+    const first = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
+    const start = addDays(first, -first.getDay());
+    return { start, end: addDays(start, 42), days: Array.from({ length: 42 }, (_, i) => addDays(start, i)) };
+  }, [view, cursor]);
+
+  const teamName = useCallback((id: string | null | undefined) => teams.find((t) => t.id === id)?.name ?? 'a team', [teams]);
+
+  const load = useCallback(async () => {
+    try {
+      const [cal, list, teamList] = await Promise.all([
+        api<{ items: CalendarItem[]; truncated: boolean }>(`/api/v1/calendar?from=${range.start.toISOString()}&to=${range.end.toISOString()}`),
+        api<{ tasks: Task[] }>('/api/v1/tasks'),
+        api<{ teams: Team[] }>('/api/v1/agent-teams').catch(() => ({ teams: [] as Team[] })),
+      ]);
+      setItems(cal.items);
+      setTruncated(cal.truncated);
+      setTasks(list.tasks);
+      setTeams(teamList.teams);
+      setError(null);
+    } catch (err: any) {
+      setError(err?.message || 'Could not load the calendar');
+    } finally {
+      setLoading(false);
+    }
+  }, [range]);
 
   useEffect(() => {
-    let active = true;
-    const initialLoad = async () => {
-      try {
-        const res = await fetch(`/api/v1/tasks?tenant_id=${tenantId}`);
-        if (res.ok && active) {
-          const data = await res.json();
-          setTasks(data.tasks || []);
-          setQueueStats(data.queueStats || null);
-          setNowTimestamp(Date.now());
-        }
-      } catch (err) {
-        console.error('Failed to load scheduled tasks:', err);
-      } finally {
-        if (active) setIsLoading(false);
-      }
-    };
+    load();
+    const t = setInterval(load, 20_000);
+    return () => clearInterval(t);
+  }, [load]);
 
-    initialLoad();
-    const interval = setInterval(initialLoad, 5000);
-    return () => {
-      active = false;
-      clearInterval(interval);
-    };
-  }, [tenantId]);
-
-  // Trigger task immediately (Run Now)
-  const handleTriggerNow = async (taskId: string) => {
-    setIsExecuting(true);
-    try {
-      const res = await fetch(`/api/v1/tasks/${taskId}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'trigger_now' }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.task) {
-          setSelectedTask(data.task);
-          setActionNotice(`Task "${data.task.title}" finished with status: ${data.task.status}`);
-          setTimeout(() => setActionNotice(null), 5000);
-        }
-        fetchTasks();
-      }
-    } catch (err) {
-      console.error('Error triggering task execution:', err);
-    } finally {
-      setIsExecuting(false);
+  const byDay = useMemo(() => {
+    const m = new Map<string, CalendarItem[]>();
+    for (const it of items) {
+      const k = dayKey(new Date(it.at));
+      m.set(k, [...(m.get(k) || []), it]);
     }
-  };
+    return m;
+  }, [items]);
 
-  // Toggle simulate failure for testing escalation
-  const handleToggleSimulateFailure = async (taskId: string) => {
-    try {
-      const res = await fetch(`/api/v1/tasks/${taskId}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'toggle_simulate_failure' }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (selectedTask && selectedTask.id === taskId) {
-          setSelectedTask({ ...selectedTask, simulate_failure: data.simulate_failure });
-        }
-        setActionNotice(
-          data.simulate_failure
-            ? 'Simulate Failure ENABLED. On next run, the primary tool will fail and trigger ElevenLabs voice escalation!'
-            : 'Simulate Failure DISABLED. Primary tool will succeed normally.'
-        );
-        setTimeout(() => setActionNotice(null), 5000);
-        fetchTasks();
-      }
-    } catch (err) {
-      console.error('Error toggling failure:', err);
-    }
-  };
+  const today = dayKey(new Date());
+  const title =
+    view === 'month'
+      ? cursor.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
+      : `${range.days[0].toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} – ${range.days[6].toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`;
+  const move = (dir: number) => setCursor((c) => (view === 'month' ? new Date(c.getFullYear(), c.getMonth() + dir, 1) : addDays(c, 7 * dir)));
 
-  // Simulate server crash
-  const handleSimulateCrash = async () => {
-    try {
-      const res = await fetch('/api/v1/tasks/system', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'simulate_crash' }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setActionNotice(`💥 ${data.message}`);
-        setTimeout(() => setActionNotice(null), 6000);
-        fetchTasks();
-      }
-    } catch (err) {
-      console.error('Crash simulation error:', err);
-    }
-  };
-
-  // Simulate server restart / recovery
-  const handleSimulateRestart = async () => {
-    try {
-      const res = await fetch('/api/v1/tasks/system', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'simulate_restart' }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setActionNotice(`🔄 ${data.message}`);
-        setTimeout(() => setActionNotice(null), 6000);
-        fetchTasks();
-      }
-    } catch (err) {
-      console.error('Restart simulation error:', err);
-    }
-  };
-
-  // Submit new task
-  const handleCreateTask = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      const scheduledIso = new Date(formScheduledAt).toISOString();
-      const payload = {
-        title: formTitle,
-        instructions: formInstructions,
-        scheduled_at: scheduledIso,
-        subscribed_profile_ids: formSubscribedProfileIds.split(',').map(s => s.trim()).filter(Boolean),
-        allowed_tools: formAllowedTools,
-        fallback_policy: {
-          on_failure: 'escalate',
-          fallback_tool: formFallbackTool,
-          escalation_instructions: formEscalationInstructions,
-          contact_overrides: {
-            boss: formContactBoss,
-          },
-          max_retries: 1,
-        },
-        category: formCategory,
-        simulate_failure: formSimulateFailure,
-        tenant_id: tenantId,
-      };
-
-      const res = await fetch('/api/v1/tasks', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        setIsScheduleModalOpen(false);
-        setActionNotice(`Task "${data.task.title}" scheduled into durable queue!`);
-        setTimeout(() => setActionNotice(null), 5000);
-        fetchTasks();
-      } else {
-        const err = await res.json();
-        alert(`Validation error: ${err.error || JSON.stringify(err.validationErrors)}`);
-      }
-    } catch (err) {
-      console.error('Failed to create task:', err);
-    }
-  };
-
-  // Reset to default demo tasks
-  const handleResetTasks = async () => {
-    try {
-      const res = await fetch('/api/v1/tasks?action=reset', { method: 'DELETE' });
-      if (res.ok) {
-        fetchTasks();
-        setSelectedTask(null);
-        setActionNotice('Restored default demo scheduled tasks.');
-        setTimeout(() => setActionNotice(null), 4000);
-      }
-    } catch (err) {
-      console.error('Failed to reset tasks:', err);
-    }
-  };
-
-  // Filter tasks
-  const filteredTasks = tasks.filter((t) => {
-    if (filterStatus === 'ALL') return true;
-    return t.status === filterStatus;
-  });
-
-  // Calendar navigation helpers
-  const nextMonth = () => {
-    setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1));
-  };
-  const prevMonth = () => {
-    setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1));
-  };
-
-  const getDaysInMonth = (year: number, month: number) => {
-    return new Date(year, month + 1, 0).getDate();
-  };
-
-  const getFirstDayOfMonth = (year: number, month: number) => {
-    return new Date(year, month, 1).getDay();
-  };
-
-  const currentYear = currentDate.getFullYear();
-  const currentMonth = currentDate.getMonth();
-  const daysInMonth = getDaysInMonth(currentYear, currentMonth);
-  const firstDay = getFirstDayOfMonth(currentYear, currentMonth);
-
-  const monthNames = [
-    'January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December'
-  ];
-
-  // Helper to get status pill styling
-  const getStatusBadge = (status: TaskStatus) => {
-    switch (status) {
-      case 'SCHEDULED':
-        return 'bg-cyan-950/80 text-cyan-400 border-cyan-800/60';
-      case 'QUEUED':
-        return 'bg-blue-950/80 text-blue-400 border-blue-800/60';
-      case 'RUNNING':
-        return 'bg-amber-950/80 text-amber-300 border-amber-800/60 animate-pulse';
-      case 'COMPLETED':
-        return 'bg-emerald-950/80 text-emerald-400 border-emerald-800/60';
-      case 'ESCALATED':
-        return 'bg-purple-950/80 text-purple-300 border-purple-800/60';
-      case 'FAILED':
-        return 'bg-rose-950/80 text-rose-400 border-rose-800/60';
-      case 'CANCELLED':
-        return 'bg-zinc-800 text-zinc-500 border-zinc-700';
-      default:
-        return 'bg-zinc-900 text-zinc-400 border-zinc-800';
-    }
-  };
-
-  // Helper for quick countdown
-  const getRelativeTime = (isoString: string) => {
-    if (!nowTimestamp) return '';
-    const diff = new Date(isoString).getTime() - nowTimestamp;
-    if (diff < 0) {
-      const agoSec = Math.round(Math.abs(diff) / 1000);
-      if (agoSec < 60) return `${agoSec}s ago`;
-      const agoMin = Math.round(agoSec / 60);
-      if (agoMin < 60) return `${agoMin}m ago`;
-      const agoHr = Math.round(agoMin / 60);
-      return `${agoHr}h ago`;
-    }
-    const sec = Math.round(diff / 1000);
-    if (sec < 60) return `in ${sec}s`;
-    const min = Math.round(sec / 60);
-    if (min < 60) return `in ${min}m`;
-    const hr = Math.round(min / 60);
-    return `in ${hr}h`;
+  const openItem = (it: CalendarItem) => {
+    if (it.kind === 'task' || it.kind === 'task_run') setOpenTaskId(it.ref_id);
   };
 
   return (
     <div className="h-full flex flex-col bg-[#090b10] text-zinc-100 overflow-hidden">
-      {/* Top Banner Notice */}
-      {actionNotice && (
-        <div className="px-6 py-2.5 bg-emerald-950/90 border-b border-emerald-800/80 text-emerald-200 text-xs font-mono flex items-center justify-between shrink-0 animate-fadeIn">
-          <div className="flex items-center gap-2">
-            <Zap className="w-4 h-4 text-emerald-400 shrink-0" />
-            <span>{actionNotice}</span>
+      <header className="px-6 py-4 border-b border-zinc-800 bg-[#0d1017] flex flex-wrap items-center justify-between gap-3 shrink-0">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-lg bg-sky-950/80 border border-sky-800/80 flex items-center justify-center text-sky-400">
+            <CalendarDays className="w-4 h-4" />
           </div>
-          <button onClick={() => setActionNotice(null)} className="text-zinc-400 hover:text-white">
-            <X className="w-3.5 h-3.5" />
+          <div>
+            <h1 className="text-base font-semibold text-white">Task Calendar</h1>
+            <p className="text-xs text-zinc-400">Scheduled work that teams run on their own, plus heartbeats and board due dates.</p>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <div className="inline-flex rounded-md border border-zinc-700 overflow-hidden">
+            {(['month', 'week'] as const).map((v) => (
+              <button key={v} onClick={() => setView(v)} className={`px-3 py-1.5 capitalize ${view === v ? 'bg-zinc-700 text-white' : 'text-zinc-400 hover:bg-zinc-800'}`}>{v}</button>
+            ))}
+          </div>
+          <button onClick={() => move(-1)} className="p-1.5 rounded-md border border-zinc-700 text-zinc-400 hover:text-white"><ChevronLeft className="w-3.5 h-3.5" /></button>
+          <button onClick={() => setCursor(startOfDay(new Date()))} className="px-3 py-1.5 rounded-md border border-zinc-700 text-zinc-300 hover:text-white">Today</button>
+          <button onClick={() => move(1)} className="p-1.5 rounded-md border border-zinc-700 text-zinc-400 hover:text-white"><ChevronRight className="w-3.5 h-3.5" /></button>
+          <span className="text-sm text-white font-medium min-w-[160px] text-center">{title}</span>
+          <button onClick={() => setEditing('new')} className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white font-semibold">
+            <Plus className="w-3.5 h-3.5" /> New task
           </button>
+        </div>
+      </header>
+
+      {error && (
+        <div className="mx-6 mt-4 p-3 rounded-lg bg-rose-950/40 border border-rose-900/60 text-xs text-rose-300 flex items-center gap-2">
+          <AlertTriangle className="w-3.5 h-3.5" /> {error}
         </div>
       )}
 
-      {/* Main Header & Durable Queue Status Bar */}
-      <div className="px-6 py-4 border-b border-zinc-800 bg-[#0d1017] flex flex-wrap items-center justify-between gap-4 shrink-0">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-emerald-950/80 border border-emerald-800/80 flex items-center justify-center text-emerald-400 shadow-sm">
-              <CalendarIcon className="w-4 h-4" />
-            </div>
-            <div>
-              <h1 className="text-base font-semibold text-white tracking-tight flex items-center gap-2">
-                Durable Task Scheduler & Calendar
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800/50">
-                  BullMQ + Redis WAL
-                </span>
-              </h1>
-              <p className="text-xs text-zinc-400">
-                Crash-resistant agent execution with LangGraph escalation fallback (Email &rarr; ElevenLabs Voice Call)
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* Queue Resilience & Actions */}
-        <div className="flex flex-wrap items-center gap-2 text-xs font-mono">
-          {/* Durable Engine Status Indicator */}
-          <div className="flex items-center gap-2 px-3 py-1.5 bg-zinc-900 border border-zinc-800 rounded-lg">
-            <Radio
-              className={`w-3.5 h-3.5 ${
-                queueStats?.isCrashed ? 'text-rose-500 animate-ping' : 'text-emerald-400 animate-pulse'
-              }`}
-            />
-            <span className="text-zinc-400">Engine:</span>
-            <span className={queueStats?.isCrashed ? 'text-rose-400 font-bold' : 'text-emerald-400 font-bold'}>
-              {queueStats?.isCrashed ? 'CRASHED (WAL SAFE)' : 'DURABLE ONLINE'}
-            </span>
-            <span className="text-zinc-600">|</span>
-            <span className="text-zinc-300">
-              {queueStats?.delayed || 0} delayed
-            </span>
-          </div>
-
-          {/* Crash Test Buttons */}
-          <div className="flex items-center gap-1">
-            <button
-              onClick={handleSimulateCrash}
-              title="Simulate process kill/crash to test durable persistence"
-              className="px-2.5 py-1.5 bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 border border-rose-800/50 rounded-lg transition-all flex items-center gap-1.5"
-            >
-              <Power className="w-3.5 h-3.5" />
-              <span>Kill Process</span>
-            </button>
-            <button
-              onClick={handleSimulateRestart}
-              title="Re-boot process and re-hydrate timers from durable journal"
-              className="px-2.5 py-1.5 bg-cyan-950/40 hover:bg-cyan-900/60 text-cyan-300 border border-cyan-800/50 rounded-lg transition-all flex items-center gap-1.5"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span>Restart & Recover</span>
-            </button>
-          </div>
-
-          {/* Schedule Task CTA */}
-          <button
-            onClick={() => setIsScheduleModalOpen(true)}
-            className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-medium rounded-lg transition-all flex items-center gap-1.5 shadow-sm"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>Schedule Task</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Filter & View Switcher Toolbar */}
-      <div className="px-6 py-2.5 bg-zinc-950/60 border-b border-zinc-800 flex flex-wrap items-center justify-between gap-3 text-xs shrink-0">
-        {/* View Switcher */}
-        <div className="flex items-center gap-1 bg-zinc-900 p-1 rounded-lg border border-zinc-800">
-          <button
-            onClick={() => setViewMode('calendar')}
-            className={`px-3 py-1 rounded-md transition-all font-medium flex items-center gap-1.5 ${
-              viewMode === 'calendar' ? 'bg-zinc-800 text-white shadow-sm' : 'text-zinc-400 hover:text-white'
-            }`}
-          >
-            <CalendarIcon className="w-3.5 h-3.5" />
-            <span>Calendar View</span>
-          </button>
-          <button
-            onClick={() => setViewMode('timeline')}
-            className={`px-3 py-1 rounded-md transition-all font-medium flex items-center gap-1.5 ${
-              viewMode === 'timeline' ? 'bg-zinc-800 text-white shadow-sm' : 'text-zinc-400 hover:text-white'
-            }`}
-          >
-            <Clock className="w-3.5 h-3.5" />
-            <span>Timeline / Agenda</span>
-          </button>
-          <button
-            onClick={() => setViewMode('queue')}
-            className={`px-3 py-1 rounded-md transition-all font-medium flex items-center gap-1.5 ${
-              viewMode === 'queue' ? 'bg-zinc-800 text-white shadow-sm' : 'text-zinc-400 hover:text-white'
-            }`}
-          >
-            <Layers className="w-3.5 h-3.5" />
-            <span>Queue Watcher</span>
-          </button>
-        </div>
-
-        {/* Status Filters */}
-        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar font-mono text-[11px]">
-          {['ALL', 'SCHEDULED', 'QUEUED', 'RUNNING', 'COMPLETED', 'ESCALATED', 'FAILED'].map((st) => (
-            <button
-              key={st}
-              onClick={() => setFilterStatus(st)}
-              className={`px-2.5 py-1 rounded-md transition-all ${
-                filterStatus === st
-                  ? 'bg-zinc-800 text-emerald-400 font-semibold border border-zinc-700'
-                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900'
-              }`}
-            >
-              {st}
-            </button>
-          ))}
-          <button
-            onClick={handleResetTasks}
-            title="Reset to default scheduled task scenarios"
-            className="px-2 py-1 text-zinc-500 hover:text-zinc-300 ml-2"
-          >
-            Reset Demo
-          </button>
-        </div>
-      </div>
-
-      {/* Main Workspace Body */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Left Side: Calendar / Timeline Matrix */}
-        <div className="flex-1 p-6 overflow-y-auto space-y-4">
-          {viewMode === 'calendar' && (
-            <div className="bg-[#0d1017] border border-zinc-800 rounded-xl p-5 space-y-4 shadow-xl">
-              {/* Calendar Month Header */}
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <h2 className="text-base font-bold text-white tracking-wide">
-                    {monthNames[currentMonth]} {currentYear}
-                  </h2>
-                  <span className="text-xs font-mono text-zinc-500">
-                    {filteredTasks.length} tasks recorded
-                  </span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <button
-                    onClick={prevMonth}
-                    className="p-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-white rounded-lg border border-zinc-800 transition-all"
-                  >
-                    <ChevronLeft className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => setCurrentDate(new Date())}
-                    className="px-2.5 py-1 text-xs font-mono bg-zinc-900 hover:bg-zinc-800 text-zinc-300 rounded-lg border border-zinc-800"
-                  >
-                    Today
-                  </button>
-                  <button
-                    onClick={nextMonth}
-                    className="p-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-white rounded-lg border border-zinc-800 transition-all"
-                  >
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
-                </div>
+      <div className="flex-1 min-h-0 flex">
+        <main className="flex-1 min-w-0 overflow-auto p-4">
+          {loading ? (
+            <div className="h-full flex items-center justify-center text-sm text-zinc-400 gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading…</div>
+          ) : (
+            <>
+              <div className="flex flex-wrap gap-3 mb-2 text-[11px] text-zinc-400">
+                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-sky-700" /> Scheduled task</span>
+                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-emerald-700" /> Ran</span>
+                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-rose-700" /> Failed</span>
+                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-violet-700" /> Heartbeat</span>
+                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-amber-700" /> Board due / running</span>
+                {truncated && <span className="text-amber-400">Very frequent schedules are shown partially.</span>}
               </div>
-
-              {/* Calendar Days Grid */}
-              <div className="grid grid-cols-7 gap-2">
-                {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => (
-                  <div
-                    key={d}
-                    className="text-center font-mono text-[11px] font-semibold text-zinc-500 py-1 uppercase tracking-wider"
-                  >
-                    {d}
-                  </div>
+              <div className="grid grid-cols-7 gap-px bg-zinc-800 border border-zinc-800 rounded-lg overflow-hidden min-w-[700px]">
+                {DAY_NAMES.map((d) => (
+                  <div key={d} className="bg-[#0d1017] px-2 py-1.5 text-[11px] text-zinc-500 font-semibold">{d}</div>
                 ))}
-
-                {/* Empty cells before month starts */}
-                {Array.from({ length: firstDay }).map((_, i) => (
-                  <div key={`empty-${i}`} className="min-h-[100px] rounded-lg bg-zinc-950/30 border border-zinc-900/50 opacity-40" />
-                ))}
-
-                {/* Day cells */}
-                {Array.from({ length: daysInMonth }).map((_, i) => {
-                  const dayNum = i + 1;
-                  const dayDate = new Date(currentYear, currentMonth, dayNum);
-                  const isToday =
-                    new Date().toDateString() === dayDate.toDateString();
-
-                  // Find tasks scheduled on this day
-                  const dayTasks = filteredTasks.filter((t) => {
-                    const taskDate = new Date(t.scheduled_at);
-                    return (
-                      taskDate.getFullYear() === currentYear &&
-                      taskDate.getMonth() === currentMonth &&
-                      taskDate.getDate() === dayNum
-                    );
-                  });
-
+                {range.days.map((day) => {
+                  const k = dayKey(day);
+                  const dayItems = groupDay(byDay.get(k) || []);
+                  const outside = view === 'month' && day.getMonth() !== cursor.getMonth();
+                  const limit = view === 'month' ? 3 : 30;
                   return (
-                    <div
-                      key={`day-${dayNum}`}
-                      onClick={() => {
-                        const target = new Date(currentYear, currentMonth, dayNum, 10, 0);
-                        setFormScheduledAt(target.toISOString().slice(0, 16));
-                        setIsScheduleModalOpen(true);
-                      }}
-                      className={`min-h-[105px] p-2 rounded-lg border transition-all cursor-pointer flex flex-col justify-between group ${
-                        isToday
-                          ? 'bg-zinc-900/80 border-emerald-500/50 shadow-sm'
-                          : 'bg-zinc-900/40 border-zinc-800/70 hover:border-zinc-700 hover:bg-zinc-900/60'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between text-xs">
-                        <span
-                          className={`font-mono text-xs font-semibold px-1.5 py-0.5 rounded ${
-                            isToday
-                              ? 'bg-emerald-500 text-black font-bold'
-                              : 'text-zinc-400 group-hover:text-white'
-                          }`}
-                        >
-                          {dayNum}
-                        </span>
-                        {dayTasks.length > 0 && (
-                          <span className="text-[10px] font-mono text-zinc-500">
-                            {dayTasks.length} {dayTasks.length === 1 ? 'task' : 'tasks'}
-                          </span>
-                        )}
-                      </div>
-
-                      {/* Day Task List */}
-                      <div className="space-y-1.5 mt-2">
-                        {dayTasks.slice(0, 3).map((t) => (
-                          <div
-                            key={t.id}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setSelectedTask(t);
-                            }}
-                            className={`p-1.5 rounded text-[11px] border flex items-center justify-between gap-1 transition-transform hover:scale-[1.02] ${getStatusBadge(
-                              t.status
-                            )}`}
-                          >
-                            <span className="truncate font-medium">{t.title}</span>
-                            {t.status === 'ESCALATED' && (
-                              <PhoneCall className="w-3 h-3 text-purple-300 shrink-0" />
-                            )}
-                          </div>
-                        ))}
-                        {dayTasks.length > 3 && (
-                          <div className="text-[10px] font-mono text-zinc-500 text-center">
-                            +{dayTasks.length - 3} more
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Hover action hint */}
-                      <div className="text-[10px] text-zinc-600 opacity-0 group-hover:opacity-100 font-mono transition-opacity text-right">
-                        + click to schedule
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {viewMode === 'timeline' && (
-            <div className="bg-[#0d1017] border border-zinc-800 rounded-xl p-5 space-y-4 shadow-xl">
-              <h2 className="text-sm font-semibold text-white font-mono uppercase tracking-wider flex items-center justify-between">
-                <span>Task Execution Agenda & Timeline</span>
-                <span className="text-xs font-normal text-zinc-400">
-                  Ordered chronologically by execution timestamp
-                </span>
-              </h2>
-
-              <div className="space-y-3">
-                {filteredTasks.map((t) => {
-                  const targetDate = new Date(t.scheduled_at);
-
-                  return (
-                    <div
-                      key={t.id}
-                      onClick={() => setSelectedTask(t)}
-                      className={`p-4 rounded-xl border transition-all cursor-pointer flex flex-col md:flex-row md:items-center justify-between gap-4 ${
-                        selectedTask?.id === t.id
-                          ? 'bg-zinc-800/80 border-emerald-500'
-                          : 'bg-zinc-900/50 border-zinc-800 hover:border-zinc-700'
-                      }`}
-                    >
-                      <div className="space-y-1.5 max-w-xl">
-                        <div className="flex items-center gap-2">
-                          <span
-                            className={`text-[10px] font-mono px-2 py-0.5 rounded border font-semibold ${getStatusBadge(
-                              t.status
-                            )}`}
-                          >
-                            {t.status}
-                          </span>
-                          <span className="text-xs font-mono text-zinc-400 flex items-center gap-1">
-                            <Clock className="w-3 h-3" />
-                            {targetDate.toLocaleString()} ({getRelativeTime(t.scheduled_at)})
-                          </span>
-                        </div>
-                        <h3 className="text-sm font-semibold text-zinc-100">{t.title}</h3>
-                        <p className="text-xs text-zinc-400 line-clamp-2">{t.instructions}</p>
-                      </div>
-
-                      <div className="flex items-center gap-2 font-mono text-xs shrink-0">
-                        {t.status === 'ESCALATED' && (
-                          <div className="px-2.5 py-1 bg-purple-950/80 border border-purple-800 text-purple-300 rounded-lg flex items-center gap-1.5 text-[11px]">
-                            <PhoneCall className="w-3 h-3 text-purple-400" />
-                            <span>ElevenLabs Escalated</span>
-                          </div>
-                        )}
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleTriggerNow(t.id);
-                          }}
-                          disabled={isExecuting}
-                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-medium rounded-lg flex items-center gap-1 transition-all"
-                        >
-                          <Play className="w-3 h-3" />
-                          <span>Run Now</span>
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {viewMode === 'queue' && (
-            <div className="bg-[#0d1017] border border-zinc-800 rounded-xl p-5 space-y-4 shadow-xl">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-sm font-semibold text-white font-mono uppercase tracking-wider">
-                    Durable BullMQ / Redis Queue Monitor
-                  </h2>
-                  <p className="text-xs text-zinc-400">
-                    Jobs survive container restarts via the durable write-ahead journal
-                  </p>
-                </div>
-                <div className="text-xs font-mono text-emerald-400 flex items-center gap-1.5">
-                  <ShieldCheck className="w-4 h-4" />
-                  <span>Durable Execution Active</span>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                <div className="p-3.5 bg-zinc-900 border border-zinc-800 rounded-lg space-y-1">
-                  <div className="text-[11px] font-mono text-zinc-400">TOTAL TASKS</div>
-                  <div className="text-2xl font-bold text-white">{tasks.length}</div>
-                </div>
-                <div className="p-3.5 bg-zinc-900 border border-zinc-800 rounded-lg space-y-1">
-                  <div className="text-[11px] font-mono text-zinc-400">DELAYED / PENDING</div>
-                  <div className="text-2xl font-bold text-cyan-400">{queueStats?.delayed || 0}</div>
-                </div>
-                <div className="p-3.5 bg-zinc-900 border border-zinc-800 rounded-lg space-y-1">
-                  <div className="text-[11px] font-mono text-zinc-400">COMPLETED</div>
-                  <div className="text-2xl font-bold text-emerald-400">
-                    {tasks.filter((t) => t.status === 'COMPLETED').length}
-                  </div>
-                </div>
-                <div className="p-3.5 bg-zinc-900 border border-zinc-800 rounded-lg space-y-1">
-                  <div className="text-[11px] font-mono text-zinc-400">ESCALATED TO VOICE</div>
-                  <div className="text-2xl font-bold text-purple-400">
-                    {tasks.filter((t) => t.status === 'ESCALATED').length}
-                  </div>
-                </div>
-              </div>
-
-              {/* Task table */}
-              <div className="border border-zinc-800 rounded-lg overflow-hidden">
-                <table className="w-full text-left text-xs font-mono">
-                  <thead className="bg-zinc-900/90 text-zinc-400 border-b border-zinc-800">
-                    <tr>
-                      <th className="p-3">Task Title</th>
-                      <th className="p-3">Target Time</th>
-                      <th className="p-3">Allowed Tools</th>
-                      <th className="p-3">Fallback Tool</th>
-                      <th className="p-3">Status</th>
-                      <th className="p-3 text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-zinc-800/60 bg-zinc-950/40">
-                    {tasks.map((t) => (
-                      <tr
-                        key={t.id}
-                        onClick={() => setSelectedTask(t)}
-                        className="hover:bg-zinc-800/40 cursor-pointer transition-colors"
-                      >
-                        <td className="p-3 font-medium text-zinc-200">{t.title}</td>
-                        <td className="p-3 text-zinc-400">{getRelativeTime(t.scheduled_at)}</td>
-                        <td className="p-3 text-zinc-300">
-                          {Array.isArray(t.allowed_tools) ? t.allowed_tools.map((tl) => tl.replace('_', ' ')).join(', ') : 'none'}
-                        </td>
-                        <td className="p-3 text-purple-300">{t.fallback_policy.fallback_tool}</td>
-                        <td className="p-3">
-                          <span
-                            className={`px-2 py-0.5 rounded border text-[10px] ${getStatusBadge(
-                              t.status
-                            )}`}
-                          >
-                            {t.status}
-                          </span>
-                        </td>
-                        <td className="p-3 text-right">
+                    <div key={k} className={`bg-[#090b10] p-1.5 ${view === 'month' ? 'min-h-[104px]' : 'min-h-[420px]'} ${outside ? 'opacity-40' : ''}`}>
+                      <div className={`text-[11px] mb-1 w-6 h-6 flex items-center justify-center rounded-full ${k === today ? 'bg-emerald-600 text-white font-bold' : 'text-zinc-400'}`}>{day.getDate()}</div>
+                      <div className="space-y-1">
+                        {dayItems.slice(0, limit).map((it) => (
                           <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleTriggerNow(t.id);
-                            }}
-                            className="text-emerald-400 hover:text-emerald-300 hover:underline"
+                            key={it.id}
+                            onClick={() => openItem(it)}
+                            title={`${it.title} · ${timeOf(it.at)}${it.kind === 'heartbeat' && it.count && it.count > 1 ? ` · ${it.count} runs` : ''}`}
+                            className={`w-full text-left truncate text-[10px] px-1.5 py-0.5 rounded border ${chipStyle(it)}`}
                           >
-                            Run Now
+                            {it.kind === 'heartbeat' ? <HeartPulse className="inline w-2.5 h-2.5 mr-0.5" /> : it.kind === 'board_due' ? <KanbanSquare className="inline w-2.5 h-2.5 mr-0.5" /> : null}
+                            {it.kind === 'heartbeat' && it.count && it.count > 1 ? `${it.title} ×${it.count}` : `${timeOf(it.at)} ${it.title}`}
                           </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                        ))}
+                        {dayItems.length > limit && <div className="text-[10px] text-zinc-500 px-1">+{dayItems.length - limit} more</div>}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
+            </>
+          )}
+        </main>
+
+        <aside className="w-80 shrink-0 border-l border-zinc-800 bg-[#0d1017] overflow-y-auto">
+          <div className="px-4 py-3 border-b border-zinc-800 text-sm font-semibold text-zinc-200">Scheduled tasks</div>
+          {tasks.length === 0 && !loading && (
+            <div className="p-4 text-xs text-zinc-400 space-y-2">
+              <p>No tasks yet. A task is work a team does at a time you choose, once or on a schedule. Agents can also schedule tasks with the <span className="font-mono text-zinc-300">contextcontrol_schedule_task</span> tool.</p>
+              <button onClick={() => setEditing('new')} className="text-emerald-400 hover:text-emerald-300">Schedule the first task →</button>
             </div>
           )}
+          <div className="p-2 space-y-1.5">
+            {tasks.map((t) => (
+              <button key={t.id} onClick={() => setOpenTaskId(t.id)} className="w-full text-left p-2.5 rounded-lg border border-zinc-800 hover:border-zinc-600 space-y-1">
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-sm text-white leading-snug">{t.title}</span>
+                  <span className={`shrink-0 text-[10px] px-1.5 py-0.5 rounded border ${STATUS_STYLE[t.status]}`}>{t.paused ? 'paused' : STATUS_LABEL[t.status] ?? t.status}</span>
+                </div>
+                <div className="text-[11px] text-zinc-500 flex flex-wrap items-center gap-x-2">
+                  <span className="flex items-center gap-1"><Users className="w-3 h-3" /> {teamName(t.team_id)}</span>
+                  {t.repeating && <span className="flex items-center gap-1"><Repeat className="w-3 h-3" /> repeats</span>}
+                  {t.next_run_at && !t.paused && <span>next {formatWhen(t.next_run_at)}</span>}
+                </div>
+                {t.last_status === 'error' && <div className="text-[11px] text-rose-400 truncate">last run failed: {t.last_error}</div>}
+              </button>
+            ))}
+          </div>
+        </aside>
+      </div>
+
+      {editing && (
+        <TaskForm
+          task={editing === 'new' ? null : editing}
+          teams={teams}
+          onClose={() => setEditing(null)}
+          onSaved={(id) => {
+            setEditing(null);
+            setOpenTaskId(id);
+            load();
+          }}
+        />
+      )}
+      {openTaskId && (
+        <TaskDrawer
+          taskId={openTaskId}
+          teamName={teamName}
+          onClose={() => setOpenTaskId(null)}
+          onEdit={(t) => {
+            setOpenTaskId(null);
+            setEditing(t);
+          }}
+          onChanged={load}
+          onNavigateToStudio={onNavigateToStudio}
+        />
+      )}
+    </div>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// Create / edit
+// ---------------------------------------------------------------------------
+
+function localInput(iso: string | null): string {
+  const d = iso ? new Date(iso) : new Date(Date.now() + 60 * 60_000);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+const TaskForm: React.FC<{ task: Task | null; teams: Team[]; onClose: () => void; onSaved: (id: string) => void }> = ({ task, teams, onClose, onSaved }) => {
+  const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  const [title, setTitle] = useState(task?.title ?? '');
+  const [instructions, setInstructions] = useState(task?.instructions ?? '');
+  const [teamId, setTeamId] = useState(task?.team_id ?? teams[0]?.id ?? '');
+  const [repeating, setRepeating] = useState(task?.repeating ?? false);
+  const [when, setWhen] = useState(localInput(task?.target_time ?? null));
+  const [schedule, setSchedule] = useState<HeartbeatSchedule>(task?.schedule ?? { mode: 'weekly', days: [1, 2, 3, 4, 5], times: ['09:00'], timezone: browserTz });
+  const [maxRetries, setMaxRetries] = useState(task?.max_retries ?? 2);
+  const [retryDelay, setRetryDelay] = useState(task?.retry_delay_minutes ?? 5);
+  const [escalate, setEscalate] = useState(task?.escalate_to_board ?? true);
+  const [escalationTeam, setEscalationTeam] = useState(task?.escalation_team_id ?? '');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const save = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      const body: Record<string, unknown> = {
+        title: title.trim(),
+        instructions: instructions.trim(),
+        team_id: teamId,
+        max_retries: maxRetries,
+        retry_delay_minutes: retryDelay,
+        escalate_to_board: escalate,
+        escalation_team_id: escalationTeam || null,
+        ...(repeating ? { schedule } : { target_time: new Date(when).toISOString() }),
+      };
+      if (task) {
+        const res = await api<{ task: Task }>(`/api/v1/tasks/${task.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ ...body, ...(repeating ? { target_time: null } : { schedule: null }) }),
+        });
+        onSaved(res.task.id);
+      } else {
+        const res = await api<{ task: Task }>('/api/v1/tasks', { method: 'POST', body: JSON.stringify(body) });
+        onSaved(res.task.id);
+      }
+    } catch (err: any) {
+      setError(err?.message || 'Could not save the task');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="w-full max-w-2xl max-h-[92vh] overflow-y-auto bg-[#0e131e] border border-zinc-700 rounded-2xl p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="text-base font-semibold text-white">{task ? 'Edit task' : 'Schedule a task'}</h3>
+          <button onClick={onClose} className="text-zinc-400 hover:text-white"><X className="w-5 h-5" /></button>
+        </div>
+        {teams.length === 0 && <p className="text-xs text-amber-400">Create a team in Team Builder first; a task is run by a team (a team without workers is a single agent).</p>}
+        <input className={inputCls} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title, e.g. Morning inbox summary" />
+        <div>
+          <label className={labelCls}>Instructions (what the team receives when the task runs)</label>
+          <textarea className={`${inputCls} min-h-[100px]`} value={instructions} onChange={(e) => setInstructions(e.target.value)} placeholder="Search my inbox for unread emails from the last 24 h and summarize them in 5 bullets." />
+        </div>
+        <div>
+          <label className={labelCls}>Team</label>
+          <select className={inputCls} value={teamId} onChange={(e) => setTeamId(e.target.value)}>
+            {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+          </select>
         </div>
 
-        {/* Right Side: Task Inspector Drawer */}
-        {selectedTask ? (
-          <div className="w-96 border-l border-zinc-800 bg-[#0c0f16] flex flex-col h-full shrink-0 shadow-2xl animate-fadeIn">
-            {/* Drawer Header */}
-            <div className="p-4 border-b border-zinc-800 flex items-center justify-between">
-              <div className="space-y-0.5">
-                <span
-                  className={`text-[10px] font-mono px-2 py-0.5 rounded border font-semibold ${getStatusBadge(
-                    selectedTask.status
-                  )}`}
-                >
-                  {selectedTask.status}
-                </span>
-                <h3 className="text-sm font-semibold text-white truncate max-w-[240px]">
-                  {selectedTask.title}
-                </h3>
-              </div>
-              <button
-                onClick={() => setSelectedTask(null)}
-                className="p-1 rounded-md text-zinc-400 hover:text-white hover:bg-zinc-800"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Drawer Content */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-4 text-xs">
-              {/* Timing info */}
-              <div className="p-3 bg-zinc-900 border border-zinc-800 rounded-lg space-y-1.5 font-mono">
-                <div className="flex items-center justify-between text-zinc-400 text-[11px]">
-                  <span>TARGET EXECUTION:</span>
-                  <span className="text-zinc-200">{getRelativeTime(selectedTask.scheduled_at)}</span>
-                </div>
-                <div className="text-zinc-300 font-semibold">
-                  {new Date(selectedTask.scheduled_at).toLocaleString()}
-                </div>
-              </div>
-
-              {/* Instructions */}
-              <div className="space-y-1">
-                <div className="text-[11px] font-mono text-zinc-400 uppercase tracking-wider">
-                  Task Instructions
-                </div>
-                <div className="p-3 rounded-lg bg-zinc-900/80 border border-zinc-800 text-zinc-200 text-xs leading-relaxed">
-                  {selectedTask.instructions}
-                </div>
-              </div>
-
-              {/* Fallback Policy & Contact Overrides */}
-              <div className="space-y-1.5">
-                <div className="text-[11px] font-mono text-zinc-400 uppercase tracking-wider flex items-center justify-between">
-                  <span>Fallback Policy & Escalation Edge</span>
-                  <span className="text-purple-400 font-semibold">ElevenLabs</span>
-                </div>
-                <div className="p-3 bg-purple-950/30 border border-purple-800/40 rounded-lg space-y-2">
-                  <div className="flex items-center justify-between text-[11px]">
-                    <span className="text-zinc-400">On Failure:</span>
-                    <span className="font-mono text-purple-300 font-bold uppercase">
-                      {selectedTask.fallback_policy.on_failure}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between text-[11px]">
-                    <span className="text-zinc-400">Fallback Tool:</span>
-                    <span className="font-mono text-purple-300">
-                      {selectedTask.fallback_policy.fallback_tool}
-                    </span>
-                  </div>
-                  <div className="text-[11px] text-zinc-300 leading-relaxed pt-1 border-t border-purple-900/50">
-                    <span className="text-zinc-400 font-mono">Escalation: </span>
-                    {selectedTask.fallback_policy.escalation_instructions}
-                  </div>
-                  {selectedTask.fallback_policy.contact_overrides && (
-                    <div className="pt-1.5 border-t border-purple-900/50 space-y-1">
-                      <div className="text-[10px] font-mono text-zinc-400">CONTACT OVERRIDES:</div>
-                      {Object.entries(selectedTask.fallback_policy.contact_overrides).map(([k, v]) => (
-                        <div key={k} className="flex items-center justify-between font-mono text-[11px]">
-                          <span className="text-zinc-400">&quot;{k}&quot; &rarr;</span>
-                          <span className="text-emerald-400 font-semibold">{v}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Simulate Failure Switch (for demo testing) */}
-              <div className="p-3 bg-zinc-900 border border-zinc-800 rounded-lg space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="font-mono text-[11px] text-zinc-300 font-semibold">
-                    Simulate Primary Failure
-                  </span>
-                  <input
-                    type="checkbox"
-                    checked={Boolean(selectedTask.simulate_failure)}
-                    onChange={() => handleToggleSimulateFailure(selectedTask.id)}
-                    className="cursor-pointer accent-rose-500 w-4 h-4"
-                  />
-                </div>
-                <p className="text-[11px] text-zinc-400 leading-normal">
-                  When enabled, the primary tool (e.g. Gmail SMTP) simulates a service failure so you can watch the LangGraph agent traverse the escalation edge and trigger the ElevenLabs voice call!
-                </p>
-              </div>
-
-              {/* LangGraph Reasoning Steps Execution Trace */}
-              {selectedTask.execution_result && (
-                <div className="space-y-2">
-                  <div className="text-[11px] font-mono text-zinc-400 uppercase tracking-wider flex items-center justify-between">
-                    <span>LangGraph Reasoning Trace</span>
-                    <span className="text-emerald-400">
-                      {selectedTask.execution_result.reasoning_steps.length} Nodes
-                    </span>
-                  </div>
-
-                  <div className="space-y-2 font-mono text-[11px]">
-                    {selectedTask.execution_result.reasoning_steps.map((step, idx) => (
-                      <div
-                        key={idx}
-                        className={`p-2.5 rounded-lg border space-y-1 ${
-                          step.node === 'escalate_and_fallback'
-                            ? 'bg-purple-950/40 border-purple-800 text-purple-200'
-                            : step.status === 'FAILED'
-                            ? 'bg-rose-950/40 border-rose-800 text-rose-200'
-                            : 'bg-zinc-900 border-zinc-800 text-zinc-300'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className="font-bold flex items-center gap-1">
-                            {step.node === 'escalate_and_fallback' && (
-                              <Flame className="w-3 h-3 text-purple-400" />
-                            )}
-                            {step.node}
-                          </span>
-                          <span
-                            className={`text-[10px] px-1 rounded ${
-                              step.status === 'SUCCESS'
-                                ? 'bg-emerald-950 text-emerald-400'
-                                : step.status === 'FAILED'
-                                ? 'bg-rose-950 text-rose-400'
-                                : 'bg-zinc-800 text-zinc-400'
-                            }`}
-                          >
-                            {step.status}
-                          </span>
-                        </div>
-                        <div className="text-[10px] text-zinc-400">{step.action}</div>
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Summary */}
-                  {selectedTask.execution_result.final_summary && (
-                    <div className="p-2.5 rounded-lg bg-emerald-950/30 border border-emerald-800/40 text-emerald-300 text-[11px]">
-                      <strong>Final Summary: </strong>
-                      {selectedTask.execution_result.final_summary}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Action Buttons */}
-              <div className="pt-2 flex items-center gap-2">
-                <button
-                  onClick={() => handleTriggerNow(selectedTask.id)}
-                  disabled={isExecuting}
-                  className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-medium rounded-lg flex items-center justify-center gap-1.5 transition-all text-xs shadow-sm"
-                >
-                  <Play className="w-3.5 h-3.5" />
-                  <span>{isExecuting ? 'Running Graph...' : 'Execute Now'}</span>
-                </button>
-                <button
-                  onClick={async () => {
-                    await fetch(`/api/v1/tasks/${selectedTask.id}`, { method: 'DELETE' });
-                    setSelectedTask(null);
-                    fetchTasks();
-                  }}
-                  className="px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg transition-all text-xs"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          </div>
+        <div className="inline-flex rounded-lg border border-zinc-700 overflow-hidden text-xs">
+          <button onClick={() => setRepeating(false)} className={`px-3 py-1.5 ${!repeating ? 'bg-emerald-600 text-white' : 'text-zinc-400 hover:bg-zinc-800'}`}>Once</button>
+          <button onClick={() => setRepeating(true)} className={`px-3 py-1.5 ${repeating ? 'bg-emerald-600 text-white' : 'text-zinc-400 hover:bg-zinc-800'}`}>Repeats</button>
+        </div>
+        {repeating ? (
+          <ScheduleEditor value={schedule} onChange={setSchedule} />
         ) : (
-          /* Empty Inspector State */
-          <div className="hidden lg:flex w-80 border-l border-zinc-800 bg-[#0c0f16]/60 p-6 flex-col items-center justify-center text-center space-y-3 text-zinc-500 shrink-0">
-            <CalendarIcon className="w-8 h-8 text-zinc-600" />
-            <div className="text-xs font-medium text-zinc-400">Select any task on the calendar</div>
-            <p className="text-[11px] text-zinc-500 max-w-xs">
-              Inspect the LangGraph reasoning nodes, MCP tool outputs, and test the ElevenLabs fallback escalation path.
-            </p>
+          <div>
+            <label className={labelCls}>When (your local time)</label>
+            <input type="datetime-local" className={inputCls} value={when} onChange={(e) => setWhen(e.target.value)} />
           </div>
         )}
-      </div>
 
-      {/* Schedule Task Intake Modal (Zod Validated) */}
-      {isScheduleModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#0f121a] border border-zinc-700 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl animate-scaleIn">
-            <div className="p-5 border-b border-zinc-800 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <div className="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
-                  <Clock className="w-4 h-4" />
-                </div>
-                <h3 className="text-sm font-semibold text-white">
-                  Schedule Durable AI Agent Task
-                </h3>
-              </div>
-              <button
-                onClick={() => setIsScheduleModalOpen(false)}
-                className="text-zinc-400 hover:text-white"
-              >
-                <X className="w-4 h-4" />
-              </button>
+        <div className="grid sm:grid-cols-2 gap-3 p-4 rounded-xl border border-zinc-800">
+          <div>
+            <label className={labelCls}>Retries after a failure</label>
+            <input type="number" min={0} max={10} className={inputCls} value={maxRetries} onChange={(e) => setMaxRetries(Math.min(10, Math.max(0, Number(e.target.value) || 0)))} />
+          </div>
+          <div>
+            <label className={labelCls}>Minutes between retries</label>
+            <input type="number" min={1} max={1440} className={inputCls} value={retryDelay} onChange={(e) => setRetryDelay(Math.min(1440, Math.max(1, Number(e.target.value) || 1)))} />
+          </div>
+          <label className="sm:col-span-2 flex items-center gap-2 text-xs text-zinc-300">
+            <input type="checkbox" checked={escalate} onChange={(e) => setEscalate(e.target.checked)} />
+            If it still fails, post an urgent task on the Supervisor Board
+          </label>
+          {escalate && (
+            <div className="sm:col-span-2">
+              <label className={labelCls}>Escalate to</label>
+              <select className={inputCls} value={escalationTeam} onChange={(e) => setEscalationTeam(e.target.value)}>
+                <option value="">Anyone (a person reviews the board)</option>
+                {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </div>
+          )}
+        </div>
+
+        {error && <p className="text-xs text-rose-400">{error}</p>}
+        <div className="flex justify-end gap-2">
+          <button onClick={onClose} className="px-3 py-2 text-xs text-zinc-400 hover:text-white">Cancel</button>
+          <button onClick={save} disabled={saving || !title.trim() || !instructions.trim() || !teamId} className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold disabled:opacity-50">
+            {saving ? 'Saving…' : task ? 'Save' : 'Schedule'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// Task drawer
+// ---------------------------------------------------------------------------
+
+const TaskDrawer: React.FC<{
+  taskId: string;
+  teamName: (id: string | null | undefined) => string;
+  onClose: () => void;
+  onEdit: (t: Task) => void;
+  onChanged: () => void;
+  onNavigateToStudio?: () => void;
+}> = ({ taskId, teamName, onClose, onEdit, onChanged, onNavigateToStudio }) => {
+  const [task, setTask] = useState<Task | null>(null);
+  const [runs, setRuns] = useState<TaskRun[]>([]);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const data = await api<{ task: Task; runs: TaskRun[] }>(`/api/v1/tasks/${taskId}`);
+      setTask(data.task);
+      setRuns(data.runs);
+    } catch (err: any) {
+      setError(err?.message || 'Could not load the task');
+    }
+  }, [taskId]);
+
+  useEffect(() => {
+    load();
+    const t = setInterval(load, 5000);
+    return () => clearInterval(t);
+  }, [load]);
+
+  const act = async (kind: string, work: () => Promise<unknown>, done?: string) => {
+    setBusy(kind);
+    setError(null);
+    setNotice(null);
+    try {
+      await work();
+      if (done) setNotice(done);
+      await load();
+      onChanged();
+    } catch (err: any) {
+      setError(err?.message || 'Failed');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 flex justify-end" onClick={onClose}>
+      <aside className="w-full max-w-md h-full bg-[#0e131e] border-l border-zinc-700 p-6 overflow-y-auto space-y-5" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-start justify-between gap-3">
+          <h3 className="text-base font-semibold text-white">{task?.title ?? 'Loading…'}</h3>
+          <button onClick={onClose} className="text-zinc-400 hover:text-white"><X className="w-5 h-5" /></button>
+        </div>
+        {error && <p className="text-xs text-rose-400">{error}</p>}
+        {notice && <p className="text-xs text-emerald-400 flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5" /> {notice}</p>}
+        {task && (
+          <>
+            <div className="flex flex-wrap gap-2 text-xs">
+              <span className={`px-2 py-0.5 rounded border ${STATUS_STYLE[task.status]}`}>{task.paused ? 'paused' : STATUS_LABEL[task.status] ?? task.status}</span>
+              {task.repeating && <span className="px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 flex items-center gap-1"><Repeat className="w-3 h-3" /> repeating</span>}
+              <span className="px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 flex items-center gap-1"><Users className="w-3 h-3" /> {teamName(task.team_id)}</span>
+            </div>
+            {task.instructions && <p className="text-sm text-zinc-300 whitespace-pre-wrap">{task.instructions}</p>}
+
+            <div className="flex flex-wrap gap-2">
+              {task.status !== 'cancelled' && (
+                <button onClick={() => act('run', () => api(`/api/v1/tasks/${task.id}`, { method: 'POST', body: JSON.stringify({ action: 'run_now' }) }), 'Started. It runs in the background worker.')} disabled={!!busy} className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold disabled:opacity-50">
+                  {busy === 'run' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />} Run now
+                </button>
+              )}
+              {task.status === 'scheduled' && (
+                <button onClick={() => act('pause', () => api(`/api/v1/tasks/${task.id}`, { method: 'PATCH', body: JSON.stringify({ paused: !task.paused }) }))} disabled={!!busy} className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-zinc-700 text-xs text-zinc-300 hover:text-white disabled:opacity-50">
+                  {task.paused ? <Play className="w-3.5 h-3.5" /> : <Pause className="w-3.5 h-3.5" />} {task.paused ? 'Resume' : 'Pause'}
+                </button>
+              )}
+              {task.status !== 'cancelled' && (
+                <button onClick={() => onEdit(task)} className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-zinc-700 text-xs text-zinc-300 hover:text-white"><Pencil className="w-3.5 h-3.5" /> Edit</button>
+              )}
+              {!['completed', 'cancelled'].includes(task.status) && (
+                <button onClick={() => window.confirm('Cancel this task? It will not run again.') && act('cancel', () => api(`/api/v1/tasks/${task.id}`, { method: 'DELETE' }))} disabled={!!busy} className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-zinc-700 text-xs text-zinc-400 hover:text-rose-400 disabled:opacity-50">
+                  <Ban className="w-3.5 h-3.5" /> Cancel
+                </button>
+              )}
             </div>
 
-            <form onSubmit={handleCreateTask} className="p-5 space-y-4 text-xs">
-              {/* Presets */}
-              <div className="space-y-1.5">
-                <label className="font-mono text-[11px] text-zinc-400 uppercase tracking-wider">
-                  Quick Presets
-                </label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setFormTitle('Weekly Summary Report via Email');
-                      setFormInstructions('Fetch metrics, build summary report, and email to boss via Gmail.');
-                      setFormAllowedTools(['gmail_send_message', 'elevenlabs_trigger_call']);
-                      setFormFallbackTool('elevenlabs_trigger_call');
-                      setFormEscalationInstructions('Trigger a voice call via ElevenLabs to alert boss of failure.');
-                      setFormContactBoss('+1 (555) 438-9021');
-                    }}
-                    className="p-2 text-left rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-200 transition-all font-mono text-[11px]"
-                  >
-                    📧 Email + Voice Fallback
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setFormTitle('Kickoff Meeting Calendar Sync');
-                      setFormInstructions('Create kickoff event on Google Calendar and send attendee invites.');
-                      setFormAllowedTools(['calendar_create_event', 'elevenlabs_trigger_call']);
-                      setFormFallbackTool('elevenlabs_trigger_call');
-                      setFormEscalationInstructions('Call organizer via ElevenLabs if calendar slot is occupied.');
-                      setFormContactBoss('+1 (555) 892-1002');
-                    }}
-                    className="p-2 text-left rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-200 transition-all font-mono text-[11px]"
-                  >
-                    📅 Calendar + Alert Call
-                  </button>
-                </div>
+            <dl className="text-xs grid grid-cols-[120px_1fr] gap-y-1.5 text-zinc-400">
+              <dt>Next run</dt><dd className="text-zinc-200">{task.paused ? 'paused' : formatWhen(task.next_run_at)}</dd>
+              <dt>Last run</dt><dd className="text-zinc-200">{formatWhen(task.last_run_at)}{task.last_status ? ` · ${task.last_status}` : ''}</dd>
+              <dt>Runs so far</dt><dd className="text-zinc-200">{task.run_count}</dd>
+              <dt>On failure</dt><dd className="text-zinc-200">retry {task.max_retries}× every {task.retry_delay_minutes} min{task.escalate_to_board ? `, then board${task.escalation_team_id ? ` (${teamName(task.escalation_team_id)})` : ''}` : ''}</dd>
+            </dl>
+            {task.upcoming && task.upcoming.length > 1 && (
+              <div className="text-xs text-zinc-400">
+                <div className="font-semibold text-zinc-300 mb-1">Upcoming</div>
+                <ol className="list-decimal list-inside space-y-0.5">{task.upcoming.map((u) => <li key={u}>{formatWhen(u, task.schedule?.timezone)}</li>)}</ol>
               </div>
+            )}
+            {task.last_result && (
+              <div className="p-3 rounded-lg bg-emerald-950/20 border border-emerald-900 text-sm text-zinc-200 whitespace-pre-wrap">
+                <div className="text-xs text-emerald-400 mb-1">Last result</div>
+                {task.last_result}
+              </div>
+            )}
+            {task.last_error && task.last_status !== 'ok' && (
+              <div className="p-3 rounded-lg bg-rose-950/20 border border-rose-900 text-sm text-rose-200 whitespace-pre-wrap">
+                <div className="text-xs text-rose-400 mb-1">Last error</div>
+                {task.last_error}
+              </div>
+            )}
 
-              {/* Title */}
-              <div className="space-y-1">
-                <label className="font-mono text-[11px] text-zinc-400">TASK TITLE</label>
-                <input
-                  type="text"
-                  required
-                  value={formTitle}
-                  onChange={(e) => setFormTitle(e.target.value)}
-                  className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-zinc-100 focus:outline-none focus:border-emerald-500"
-                />
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-xs font-semibold text-zinc-300">Run history</h4>
+                {task.session_id && onNavigateToStudio && (
+                  <button onClick={onNavigateToStudio} className="text-[11px] text-emerald-400 hover:text-emerald-300">Open transcripts in Agent Studio →</button>
+                )}
               </div>
-
-              {/* Instructions */}
-              <div className="space-y-1">
-                <label className="font-mono text-[11px] text-zinc-400">WHAT TO DO (INSTRUCTIONS / GOAL)</label>
-                <textarea
-                  required
-                  rows={2}
-                  value={formInstructions}
-                  onChange={(e) => setFormInstructions(e.target.value)}
-                  className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-zinc-100 focus:outline-none focus:border-emerald-500 resize-none"
-                />
-              </div>
-
-              {/* Heartbeat Subscriptions */}
-              <div className="space-y-1">
-                <label className="font-mono text-[11px] text-zinc-400">
-                  AGENT HEARTBEAT SUBSCRIPTIONS (PROFILE IDs)
-                </label>
-                <input
-                  type="text"
-                  value={formSubscribedProfileIds}
-                  onChange={(e) => setFormSubscribedProfileIds(e.target.value)}
-                  placeholder="e.g. team_front_desk, team_sre_ops (comma separated)"
-                  className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-zinc-100 font-mono text-xs focus:outline-none focus:border-emerald-500"
-                />
-                <p className="text-[10px] text-zinc-500">
-                  Subscribed agents will be synchronously woken up and sent the task instructions when this timer triggers.
-                </p>
-              </div>
-
-              {/* Target Execution Time */}
-              <div className="space-y-1">
-                <label className="font-mono text-[11px] text-zinc-400">
-                  WHEN TO DO IT (TARGET TIMESTAMP)
-                </label>
-                <input
-                  type="datetime-local"
-                  required
-                  value={formScheduledAt}
-                  onChange={(e) => setFormScheduledAt(e.target.value)}
-                  className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-zinc-100 font-mono focus:outline-none focus:border-emerald-500"
-                />
-              </div>
-
-              {/* Fallback Policy */}
-              <div className="p-3 bg-zinc-900/60 border border-zinc-800 rounded-lg space-y-2">
-                <div className="font-mono text-[11px] text-purple-400 font-semibold flex items-center justify-between">
-                  <span>FALLBACK ESCALATION DIRECTIVES</span>
-                  <span>ElevenLabs</span>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] text-zinc-400 font-mono">
-                    ESCALATION INSTRUCTIONS (IF PRIMARY TOOL FAILS)
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={formEscalationInstructions}
-                    onChange={(e) => setFormEscalationInstructions(e.target.value)}
-                    className="w-full bg-zinc-950 border border-zinc-700 rounded px-2.5 py-1.5 text-zinc-200"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] text-zinc-400 font-mono">
-                    CONTACT OVERRIDE: &quot;boss&quot; PHONE NUMBER
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={formContactBoss}
-                    onChange={(e) => setFormContactBoss(e.target.value)}
-                    className="w-full bg-zinc-950 border border-zinc-700 rounded px-2.5 py-1.5 text-emerald-400 font-mono"
-                  />
-                </div>
-              </div>
-
-              {/* Simulate Failure */}
-              <div className="flex items-center justify-between p-2.5 bg-zinc-900/40 border border-zinc-800 rounded-lg">
-                <div>
-                  <div className="font-mono text-zinc-200 text-xs">Simulate Primary Tool Failure</div>
-                  <div className="text-[10px] text-zinc-400">Trigger ElevenLabs voice fallback on run</div>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={formSimulateFailure}
-                  onChange={(e) => setFormSimulateFailure(e.target.checked)}
-                  className="cursor-pointer accent-rose-500 w-4 h-4"
-                />
-              </div>
-
-              {/* Submit */}
-              <div className="pt-2 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setIsScheduleModalOpen(false)}
-                  className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-medium rounded-lg flex items-center gap-1.5 shadow-sm"
-                >
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>Commit to Queue</span>
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+              {runs.length === 0 && <p className="text-xs text-zinc-500">Not run yet.</p>}
+              <ol className="space-y-2">
+                {runs.map((r) => (
+                  <li key={r.run_id} className="p-2.5 rounded-lg border border-zinc-800 text-xs space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className={r.status === 'done' ? 'text-emerald-400' : r.status === 'error' || r.status === 'cancelled' ? 'text-rose-400' : 'text-amber-400'}>{r.status === 'done' ? 'done' : r.status}</span>
+                      <span className="text-zinc-500">{formatWhen(r.started_at)}</span>
+                    </div>
+                    <div className="text-zinc-500">{r.steps} step{r.steps === 1 ? '' : 's'}{r.tools.length ? ` · ${r.tools.join(', ')}` : ''}</div>
+                    {r.message && <div className="text-zinc-300 line-clamp-3">{r.message}</div>}
+                    {r.error && <div className="text-rose-300 line-clamp-3">{r.error}</div>}
+                  </li>
+                ))}
+              </ol>
+            </div>
+          </>
+        )}
+      </aside>
     </div>
   );
 };

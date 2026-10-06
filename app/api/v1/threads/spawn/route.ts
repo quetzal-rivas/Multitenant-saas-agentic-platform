@@ -8,11 +8,9 @@ export async function POST(req: NextRequest) {
   if (blocked) return blocked;
   try {
     const body = await req.json();
-    const {
-      profile_id = 'team_front_desk_automation',
-      tenant_id = 'tenant_enterprise_corp',
-      title,
-    } = body;
+    const { profile_id = 'team_front_desk_automation', title } = body;
+    // Legacy mock blueprints live under the demo sandbox tenant; a body tenant_id is ignored.
+    const tenant_id = 'tenant_enterprise_corp';
 
     // Spawns a brand new, unique thread_id bound to this profile blueprint
     const instance = teamBlueprintManager.spawnThreadInstance(profile_id, tenant_id, title);

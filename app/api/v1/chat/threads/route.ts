@@ -8,18 +8,11 @@ export async function GET(req: NextRequest) {
   const blocked = demoOnlyGuard('/api/v1/agent-sessions');
   if (blocked) return blocked;
   const supabase = await createClient();
-  let threadId = 'session_enterprise_001';
-  let tenantId = 'tenant_enterprise_corp';
-  try {
-    if (req && req.url) {
-      const { searchParams } = new URL(req.url);
-      threadId = searchParams.get('thread_id') || 'session_enterprise_001';
-      tenantId = searchParams.get('tenant_id') || 'tenant_enterprise_corp';
-    }
-  } catch (e) {}
-
+  const threadId = req.nextUrl.searchParams.get('thread_id') || 'session_enterprise_001';
+  // Tenant comes from the session only (demo sandbox otherwise), never from the request.
+  const tenantId = 'tenant_enterprise_corp';
   let actualTenantId = tenantId;
-  if (!actualTenantId || actualTenantId.length !== 36) {
+  {
     const { data: { user } } = await supabase.auth.getUser();
     if (user) {
        const { data: orgMember } = await supabase.from('organization_members').select('organization_id').eq('user_id', user.id).limit(1).single();

@@ -1,16 +1,14 @@
-export const dynamic = 'force-static';
-import { NextRequest, NextResponse } from 'next/server';
+export const dynamic = 'force-dynamic';
+import { NextResponse } from 'next/server';
+import { demoOnlyGuard } from '@/lib/http/demo-only';
 import { teamBlueprintManager } from '@/lib/demo/legacy_mocks/team-blueprint-manager';
 import { vaultManagerStore } from '@/lib/demo/legacy_mocks/vault-manager';
 
-export async function GET(req: NextRequest) {
-  let tenantId = 'tenant_enterprise_corp';
-  try {
-    if (req && req.url) {
-      const { searchParams } = new URL(req.url);
-      tenantId = searchParams.get('tenant_id') || 'tenant_enterprise_corp';
-    }
-  } catch (e) {}
+/** Legacy mock tool catalog for the demo sandbox tenant; the request cannot pick a tenant. */
+export async function GET() {
+  const blocked = demoOnlyGuard('GET /api/v1/connections');
+  if (blocked) return blocked;
+  const tenantId = 'tenant_enterprise_corp';
 
   // 1. Ask Proprietary MCP Gateway: "What tools does this tenant have authenticated?"
   const tools = teamBlueprintManager.getTenantAuthenticatedTools(tenantId);

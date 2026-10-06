@@ -62,7 +62,7 @@ export async function dispatchRun(runId: string): Promise<boolean> {
 // ---------------------------------------------------------------------------
 
 const COLUMNS =
-  'id, tenant_id, session_id, team_id, origin, input_message, status, caller, state, progress, result, error, checkpoint_id, lease_owner, lease_expires_at, invocations, started_at, finished_at, created_at, updated_at';
+  'id, tenant_id, session_id, team_id, task_id, origin, input_message, status, caller, state, progress, result, error, checkpoint_id, lease_owner, lease_expires_at, invocations, started_at, finished_at, created_at, updated_at';
 
 async function loadRun(runId: string): Promise<Row | null> {
   const { data } = await getSupabaseAdminClient().from('agent_runs').select(COLUMNS).eq('id', runId).maybeSingle();
@@ -79,7 +79,7 @@ export async function startRun(
   ctx: RunCaller,
   sessionId: string,
   message: string,
-  opts: { origin?: 'chat' | 'heartbeat'; teamId?: string | null } = {}
+  opts: { origin?: 'chat' | 'heartbeat' | 'task'; teamId?: string | null; taskId?: string | null } = {}
 ): Promise<Row> {
   const session = await getSession(ctx, sessionId);
   const db = getSupabaseAdminClient();
@@ -107,6 +107,7 @@ export async function startRun(
       session_id: session.id,
       team_id: opts.teamId ?? session.team_id ?? null,
       origin: opts.origin ?? 'chat',
+      task_id: opts.taskId ?? null,
       input_message: message,
       status: 'queued',
       caller,
@@ -159,7 +160,14 @@ async function finish(runId: string, fields: Row, owner?: string) {
   await query;
 }
 
-async function updateHeartbeatStatus(run: Row, status: 'ok' | 'error', detail: string | null) {
+/** Tell whatever started the run (a heartbeat or a scheduled task) how it ended. */
+async function onRunFinished(run: Row, status: 'ok' | 'error', detail: string | null, message?: string | null) {
+  if (run.origin === 'task') {
+    // Imported lazily: scheduled-tasks depends on this module.
+    const { onTaskRunFinished } = await import('./scheduled-tasks');
+    await onTaskRunFinished(run, status, detail, message).catch((err) => console.error('[agent-runs] task hook failed', err));
+    return;
+  }
   if (run.origin !== 'heartbeat' || !run.team_id) return;
   await getSupabaseAdminClient()
     .from('agent_teams')
@@ -208,7 +216,7 @@ export async function executeRun(runId: string, opts: { owner: string; deadlineA
     }
     const { transcript: _t, ...summary } = outcome;
     await finish(runId, { status: 'done', result: summary, checkpoint_id: outcome.checkpoint_id, progress: { step: outcome.usage.steps, last_tool: null } }, opts.owner);
-    await updateHeartbeatStatus(run, 'ok', null);
+    await onRunFinished(run, 'ok', null, outcome.message);
     return { status: 'done', result: outcome };
   } catch (err) {
     if (err instanceof LeaseLost) {
@@ -217,7 +225,7 @@ export async function executeRun(runId: string, opts: { owner: string; deadlineA
     }
     const message = (err as Error)?.message || 'The run failed.';
     await finish(runId, { status: 'error', error: message.slice(0, 2000) }, opts.owner);
-    await updateHeartbeatStatus(run, 'error', message.slice(0, 500));
+    await onRunFinished(run, 'error', message.slice(0, 500));
     return { status: 'error', error: message };
   }
 }
@@ -287,7 +295,7 @@ export async function recoverStaleRuns(): Promise<{ restarted: number; stopped: 
     if (!isStale(r, now)) continue;
     if (now - new Date(r.created_at).getTime() > MAX_RUN_AGE_MS || (r.invocations ?? 0) >= MAX_INVOCATIONS) {
       await finish(r.id, { status: 'error', error: 'Run stopped: it took too long.' });
-      await updateHeartbeatStatus(r, 'error', 'Run stopped: it took too long.');
+      await onRunFinished(r, 'error', 'Run stopped: it took too long.');
       stopped++;
       continue;
     }

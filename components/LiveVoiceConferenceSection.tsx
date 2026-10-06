@@ -40,6 +40,8 @@ export const LiveVoiceConferenceSection: React.FC<LiveVoiceConferenceSectionProp
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [isSimulating, setIsSimulating] = useState<boolean>(false);
   const [expandedTranscriptCallId, setExpandedTranscriptCallId] = useState<string | null>(null);
+  // Set when the server says voice is off (ENABLE_VOICE_CALLS=false) or the caller can't use it.
+  const [unavailableReason, setUnavailableReason] = useState<string | null>(null);
 
   // Web Audio Synth for live conference monitor stream
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -81,28 +83,48 @@ export const LiveVoiceConferenceSection: React.FC<LiveVoiceConferenceSectionProp
     }, 850);
   };
 
-  // Initial load and periodic polling
+  // Initial load and periodic polling. Polling stops for good once the server answers
+  // 401/403/404 (voice disabled, signed out, or not available), instead of retrying every 3s.
   useEffect(() => {
     let isMounted = true;
+    let interval: ReturnType<typeof setInterval> | null = null;
 
-    const loadLiveCalls = async () => {
+    /** Returns false when polling should stop. */
+    const loadLiveCalls = async (): Promise<boolean> => {
       try {
         const res = await fetch('/api/twilio/live-calls?filter=active');
-        const data = await res.json();
-        if (isMounted && data.success && Array.isArray(data.calls)) {
+        const data = await res.json().catch(() => ({}));
+        if (!isMounted) return false;
+        if ([401, 403, 404].includes(res.status)) {
+          setUnavailableReason(
+            data.code === 'VOICE_FEATURE_DISABLED'
+              ? 'Voice calls are disabled for this deployment.'
+              : data.error || 'Live voice calls are not available.'
+          );
+          return false;
+        }
+        if (data.success && Array.isArray(data.calls)) {
           setCalls(data.calls);
         }
       } catch (err) {
         console.error('Failed to sync live calls:', err);
       }
+      return true;
     };
 
-    loadLiveCalls();
-    const interval = setInterval(loadLiveCalls, 3000);
+    loadLiveCalls().then((keepPolling) => {
+      if (!isMounted || !keepPolling) return;
+      interval = setInterval(async () => {
+        if (!(await loadLiveCalls()) && interval) {
+          clearInterval(interval);
+          interval = null;
+        }
+      }, 3000);
+    });
 
     return () => {
       isMounted = false;
-      clearInterval(interval);
+      if (interval) clearInterval(interval);
     };
   }, []);
 
@@ -281,7 +303,7 @@ export const LiveVoiceConferenceSection: React.FC<LiveVoiceConferenceSectionProp
           <span className="text-[11px] text-zinc-500 hidden sm:inline">Simulate Live Twilio Call:</span>
           <button
             onClick={() => handleSimulate('inbound')}
-            disabled={isSimulating}
+            disabled={isSimulating || Boolean(unavailableReason)}
             className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium bg-emerald-950/80 hover:bg-emerald-900/90 text-emerald-300 border border-emerald-800/60 rounded transition-colors disabled:opacity-50"
             title="Simulate outside customer calling Twilio Phone Number"
           >
@@ -291,7 +313,7 @@ export const LiveVoiceConferenceSection: React.FC<LiveVoiceConferenceSectionProp
 
           <button
             onClick={() => handleSimulate('outbound')}
-            disabled={isSimulating}
+            disabled={isSimulating || Boolean(unavailableReason)}
             className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium bg-cyan-950/80 hover:bg-cyan-900/90 text-cyan-300 border border-cyan-800/60 rounded transition-colors disabled:opacity-50"
             title="Simulate Voice Agent dialing external lead via Twilio DID"
           >
@@ -303,7 +325,12 @@ export const LiveVoiceConferenceSection: React.FC<LiveVoiceConferenceSectionProp
 
       {/* Dynamic Live Call Banners Container */}
       <div className="p-3 space-y-2.5">
-        {calls.length === 0 ? (
+        {unavailableReason ? (
+          <div className="py-2.5 px-4 rounded-lg bg-zinc-900/40 border border-zinc-800/50 flex items-center gap-2 text-xs text-zinc-400">
+            <span className="w-2 h-2 rounded-full bg-zinc-600" />
+            <span>{unavailableReason}</span>
+          </div>
+        ) : calls.length === 0 ? (
           <div className="py-2.5 px-4 rounded-lg bg-zinc-900/40 border border-zinc-800/50 flex items-center justify-between text-xs text-zinc-400">
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-emerald-500/50" />

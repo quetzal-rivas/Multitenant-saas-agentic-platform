@@ -170,9 +170,7 @@ export default function DashboardPage() {
           )}
 
           {activeTab === 'calendar' && (
-            <TaskCalendarView
-              tenantId="00000000-0000-0000-0000-000000000001"
-            />
+            <TaskCalendarView onNavigateToStudio={() => setActiveTab('session-studio')} />
           )}
 
           {activeTab === 'board' && (

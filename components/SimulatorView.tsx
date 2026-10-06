@@ -134,20 +134,21 @@ export const SimulatorView: React.FC<SimulatorViewProps> = ({
     const fetchTeams = async () => {
       try {
         setLoadingTeams(true);
-        const res = await fetch('/api/v1/teams?tenant_id=tenant_enterprise_corp');
+        // The workspace comes from the session cookie; the server never reads a tenant from the URL.
+        const res = await fetch('/api/v1/agent-teams');
         if (res.ok) {
           const data = await res.json();
-          if (isMounted && data.teams && Array.isArray(data.teams)) {
-            const formatted = data.teams.map((t: any) => ({
+          if (isMounted && Array.isArray(data.teams) && data.teams.length > 0) {
+            const formatted: TeamBlueprintOption[] = data.teams.map((t: any) => ({
               id: t.id,
               name: t.name,
-              workersCount: t.workers?.length || 0,
-              routingStrategy: t.routingStrategy || 'supervisor_router',
-              supervisorPrompt: t.supervisorPrompt,
-              workers: t.workers || [],
+              workersCount: t.worker_count ?? 0,
+              routingStrategy: t.routing_strategy || 'supervisor_router',
+              supervisorPrompt: t.supervisor_instructions ?? undefined,
+              workers: [],
             }));
             setTeams(formatted);
-            setSelectedProfileId((prev) => (prev ? prev : formatted[0].id));
+            setSelectedProfileId((prev) => (formatted.some((t) => t.id === prev) ? prev : formatted[0].id));
           }
         }
       } catch (e) {
@@ -566,7 +567,9 @@ export const SimulatorView: React.FC<SimulatorViewProps> = ({
                   <div>
                     <span className="text-zinc-500">Specialist Nodes:</span>{' '}
                     <span className="text-zinc-300">
-                      {selectedTeam.workers.map((w) => w.name).join(', ')}
+                      {selectedTeam.workers.length > 0
+                        ? selectedTeam.workers.map((w) => w.name).join(', ')
+                        : `${selectedTeam.workersCount} workers`}
                     </span>
                   </div>
                 </div>

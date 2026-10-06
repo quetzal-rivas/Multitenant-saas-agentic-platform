@@ -160,9 +160,13 @@ describe('Platform MCP end-to-end (SDK transport, fake PostgREST)', () => {
     assert.equal(row.created_by, null);
     assert.ok(row.created_via_api_key_id);
 
+    // Scheduled tasks are run by a team of the same organization.
+    const teamId = crypto.randomUUID();
+    (tables.agent_teams ||= []).push({ id: teamId, tenant_id: TENANT_A, name: 'Ops', archived_at: null, provider: 'gemini', model: 'gemini-3.8-flash', supervisor_tools: [] });
     const scheduled = await call(keyAWrite, 'contextcontrol_schedule_task', {
       title: 'Follow up',
       instructions: 'Ping lead',
+      team_id: teamId,
       target_time: new Date(Date.now() + 3_600_000).toISOString(),
     });
     const taskId = scheduled.body.result.structuredContent.task.id;

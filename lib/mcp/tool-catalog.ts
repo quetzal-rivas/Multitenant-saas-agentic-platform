@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { heartbeatScheduleSchema } from '@/lib/agent/heartbeat-schedule';
 
 /**
  * Single source of truth for the Context Control platform tool surface.
@@ -55,7 +56,7 @@ const responseFormat = z
   .optional()
   .describe("'markdown' (default) for a readable summary, 'json' for the raw records.");
 const uuid = (what: string) => z.string().uuid().describe(`${what} (UUID). Use the matching list tool to find it.`);
-const taskStatus = z.enum(['scheduled', 'active', 'completed', 'escalated', 'cancelled']);
+const taskStatus = z.enum(['scheduled', 'active', 'completed', 'failed', 'escalated', 'cancelled']);
 const profileSettings = z.record(z.string(), z.unknown());
 
 export const listProfilesArgs = z.object({
@@ -89,10 +90,16 @@ export const listTasksArgs = z.object({
 export const getTaskArgs = z.object({ task_id: uuid('Task id') }).strict();
 export const scheduleTaskArgs = z.object({
   title: z.string().trim().min(1).max(255),
-  instructions: z.string().trim().min(1).max(10000).describe('What the task should do when it runs.'),
-  target_time: z.string().datetime({ offset: true }).describe('Future ISO 8601 time with offset, e.g. 2026-12-01T09:00:00Z.'),
-  profile_id: uuid('Active profile to run the task with').optional(),
-}).strict();
+  instructions: z.string().trim().min(1).max(10000).describe('What the team should do when the task runs (the message it receives).'),
+  target_time: z.string().datetime({ offset: true }).optional()
+    .describe('One-off: future ISO 8601 time with offset, e.g. 2026-12-01T09:00:00Z. Omit when giving a repeating schedule.'),
+  schedule: heartbeatScheduleSchema.optional()
+    .describe('Repeating: {mode:"interval",every,unit,timezone} | {mode:"weekly",days,times,timezone} | {mode:"cron",expression,timezone}.'),
+  team_id: uuid('Team that runs the task. Defaults to the calling team inside a team run.').optional(),
+  max_retries: z.number().int().min(0).max(10).optional().describe('Retries after a failed run (default 2).'),
+  escalate_to_board: z.boolean().optional().describe('After the last failed retry, post an urgent Supervisor Board task (default true).'),
+  profile_id: uuid('Deprecated; teams carry their own profiles.').optional(),
+}).strict().refine((a) => !!a.target_time !== !!a.schedule, { message: 'Give exactly one of target_time (one-off) or schedule (repeating).' });
 export const cancelTaskArgs = z.object({ task_id: uuid('Task id of a not-yet-started task') }).strict();
 
 export const listApiKeysArgs = z.object({ response_format: responseFormat }).strict();
@@ -170,6 +177,11 @@ const taskRecord = z.looseObject({
   description: z.string().nullable(),
   status: z.string(),
   target_time: z.string().nullable(),
+  team_id: z.string().nullable().optional(),
+  schedule: z.unknown().optional(),
+  next_run_at: z.string().nullable().optional().describe('When it runs next (null when finished or paused).'),
+  last_status: z.string().nullable().optional(),
+  last_result: z.string().nullable().optional(),
   created_at: z.string(),
 });
 const apiKeyRecord = z.looseObject({
@@ -294,7 +306,7 @@ export const PLATFORM_TOOL_DEFINITIONS = [
     name: 'contextcontrol_schedule_task',
     title: 'Schedule task',
     description:
-      'Record a task to run at a future time, optionally bound to an active profile. The record is durable; execution requires the deferred task worker. Returns { task }.',
+      'Schedule work for a team: one-off at target_time or repeating on a schedule. When due, the team runs the instructions as an agent run; failures are retried and then escalated to the Supervisor Board. Returns { task }.',
     requiredScope: 'mcp:tasks:write',
     sideEffect: 'write',
     annotations: write(false, false),

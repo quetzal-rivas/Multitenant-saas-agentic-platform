@@ -1,18 +1,19 @@
-export const dynamic = 'force-static';
+export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
+import { demoOnlyGuard } from '@/lib/http/demo-only';
 import { teamBlueprintManager } from '@/lib/demo/legacy_mocks/team-blueprint-manager';
 
+// Legacy in-memory team blueprints for the demo playground. The tenant is fixed to the
+// demo sandbox; a tenant_id in the request is never honoured. Real teams: /api/v1/agent-teams.
+const DEMO_TENANT = 'tenant_enterprise_corp';
+const REPLACEMENT = '/api/v1/agent-teams';
+
 export async function GET(req: NextRequest) {
+  const blocked = demoOnlyGuard(REPLACEMENT);
+  if (blocked) return blocked;
   try {
-    let tenantId = 'tenant_enterprise_corp';
-    let profileId: string | null = null;
-    try {
-      if (req && req.url) {
-        const { searchParams } = new URL(req.url);
-        tenantId = searchParams.get('tenant_id') || 'tenant_enterprise_corp';
-        profileId = searchParams.get('profile_id');
-      }
-    } catch (e) {}
+    const tenantId = DEMO_TENANT;
+    const profileId = req.nextUrl.searchParams.get('profile_id');
 
     if (profileId) {
       const profile = teamBlueprintManager.getProfile(profileId);
@@ -38,10 +39,12 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const blocked = demoOnlyGuard(REPLACEMENT);
+  if (blocked) return blocked;
   try {
     const body = await req.json();
+    const tenant_id = DEMO_TENANT;
     const {
-      tenant_id = 'tenant_enterprise_corp',
       name,
       supervisor_prompt = '',
       supervisor_skills = [],
@@ -96,6 +99,8 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  const blocked = demoOnlyGuard(REPLACEMENT);
+  if (blocked) return blocked;
   try {
     const { searchParams } = new URL(req?.url || 'http://localhost');
     const profileId = searchParams.get('profile_id');

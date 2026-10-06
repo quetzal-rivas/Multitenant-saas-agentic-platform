@@ -1,96 +1,59 @@
 export const dynamic = 'force-dynamic';
-import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/utils/supabase/server';
 
-async function getTenantId(req: NextRequest, supabase: any) {
-  let tenantId: string | undefined = undefined;
-  if (req && req.url) {
-    const { searchParams } = new URL(req.url);
-    tenantId = searchParams.get('tenant_id') || undefined;
-  }
-  let actualTenantId = tenantId;
-  if (!actualTenantId || actualTenantId.length !== 36) {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (user) {
-       const { data: orgMember } = await supabase.from('organization_members').select('organization_id').eq('user_id', user.id).limit(1).single();
-       if (orgMember) {
-         actualTenantId = orgMember.organization_id;
-       }
-    }
-  }
-  return actualTenantId || '00000000-0000-0000-0000-000000000001';
-}
+import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
+import { requireAuth, requireRole } from '@/lib/auth/require-auth';
+import { errorResponse } from '@/lib/http/route-errors';
+import { heartbeatScheduleSchema } from '@/lib/agent/heartbeat-schedule';
+import { listTasks, scheduleTask, upcomingRuns, updateTask } from '@/lib/services/tasks';
+
+// The tenant always comes from the signed-in session; any tenant_id in the request is ignored.
 
 export async function GET(req: NextRequest) {
   try {
-    const supabase = await createClient();
-    const tenantId = await getTenantId(req, supabase);
-    const { data: tasks, error } = await supabase.from('supervisor_tasks').select('*').eq('tenant_id', tenantId).order('created_at', { ascending: false });
-    
-    if (error) throw error;
-    
-    // Map them back to legacy shape if needed
-    const mappedTasks = tasks?.map(t => ({
-      ...t,
-      instructions: t.description,
-      scheduled_at: t.target_time,
-      ...(t.metadata || {})
-    }));
-    
-    return NextResponse.json(mappedTasks || []);
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    const auth = await requireAuth(req, 'session');
+    const { tasks } = await listTasks(auth, { limit: 100 });
+    return NextResponse.json({ tasks: tasks.map((t: any) => ({ ...t, upcoming: upcomingRuns(t, 3) })) });
+  } catch (err) {
+    return errorResponse(err, 'tasks:list');
   }
 }
+
+const createBody = z
+  .object({
+    title: z.string().trim().min(1).max(255),
+    instructions: z.string().trim().min(1).max(10_000),
+    team_id: z.string().uuid(),
+    target_time: z.string().datetime({ offset: true }).optional(),
+    schedule: heartbeatScheduleSchema.optional(),
+    max_retries: z.number().int().min(0).max(10).optional(),
+    retry_delay_minutes: z.number().int().min(1).max(1440).optional(),
+    escalate_to_board: z.boolean().optional(),
+    escalation_team_id: z.string().uuid().nullable().optional(),
+  })
+  .strict()
+  .refine((b) => !!b.target_time !== !!b.schedule, { message: 'Give exactly one of target_time (one-off) or schedule (repeating).' });
 
 export async function POST(req: NextRequest) {
   try {
-    const supabase = await createClient();
-    const body = await req.json();
-    const tenantId = await getTenantId(req, supabase);
-    
-    const { data: insertedTask, error: insertError } = await supabase.from('supervisor_tasks').insert({
-       title: body.title || 'New Task',
-       description: body.instructions || body.description || '',
-       status: 'scheduled',
-       target_time: body.scheduled_at || body.targetTime || new Date(Date.now() + 1000 * 60 * 15).toISOString(),
-       tenant_id: tenantId,
-       metadata: {
-           allowed_tools: body.allowed_tools,
-           fallback_policy: body.fallback_policy,
-           category: body.category,
-           simulate_failure: body.simulate_failure,
-           is_simulation: body.is_simulation
-       }
-    }).select().single();
-    
-    if (insertError) {
-      return NextResponse.json(
-        { error: insertError.message, validationErrors: [] },
-        { status: 400 }
-      );
-    }
-
-    return NextResponse.json({ success: true, task: insertedTask }, { status: 201 });
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
-  }
-}
-
-export async function DELETE(req: NextRequest) {
-  try {
-    const supabase = await createClient();
-    const { searchParams } = new URL(req?.url || 'http://localhost');
-    const action = searchParams.get('action');
-
-    if (action === 'reset') {
-      const tenantId = await getTenantId(req, supabase);
-      await supabase.from('supervisor_tasks').delete().eq('tenant_id', tenantId);
-      return NextResponse.json({ success: true, tasks: [] });
-    }
-
-    return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    const auth = await requireAuth(req, 'session');
+    requireRole(auth, ['owner', 'admin']);
+    const body = createBody.parse(await req.json());
+    const { task } = await scheduleTask(auth, {
+      title: body.title,
+      instructions: body.instructions,
+      team_id: body.team_id,
+      target_time: body.target_time,
+      schedule: body.schedule,
+      max_retries: body.max_retries,
+      escalate_to_board: body.escalate_to_board,
+    });
+    const extra: Record<string, unknown> = {};
+    if (body.retry_delay_minutes !== undefined) extra.retry_delay_minutes = body.retry_delay_minutes;
+    if (body.escalation_team_id !== undefined) extra.escalation_team_id = body.escalation_team_id;
+    const final = Object.keys(extra).length ? (await updateTask(auth, task.id, extra)).task : task;
+    return NextResponse.json({ task: { ...final, upcoming: upcomingRuns(final, 3) } }, { status: 201 });
+  } catch (err) {
+    return errorResponse(err, 'tasks:create');
   }
 }

@@ -7,8 +7,13 @@ import { isServiceError } from '@/lib/services/errors';
 import * as profiles from '@/lib/services/profiles';
 import * as tasks from '@/lib/services/tasks';
 import * as board from '@/lib/services/board';
+import { deployedFunctionRows, functionIdsForProfiles, invokeFunction } from '@/lib/services/functions';
+import { functionToolName } from '@/lib/functions/function-spec';
+import { z } from 'zod';
 import {
+  AGENT_SCOPES,
   PLATFORM_TOOL_DEFINITIONS,
+  hasScope,
   canonicalToolName,
   getAuthorizedPlatformTools,
   type PlatformToolDefinition,
@@ -138,7 +143,8 @@ export function buildPlatformMcpServer(ctx: ToolCtx, tools: readonly PlatformToo
   const server = new McpServer(MCP_SERVER_INFO, {
     capabilities: { tools: {} },
     instructions:
-      'Manage this Context Control organization: MCP profiles, scheduled tasks and API key inventory. ' +
+      'Manage this Context Control organization: MCP profiles, scheduled tasks, the Supervisor Board and API key inventory. ' +
+      'Tools named fn_* are your organization\'s own deployed functions. ' +
       'List tools return pages (use offset/next_offset). Ids come from the list tools.',
   });
 
@@ -165,6 +171,42 @@ export function buildPlatformMcpServer(ctx: ToolCtx, tools: readonly PlatformToo
     );
   }
   return server;
+}
+
+/**
+ * Register deployed AI Function Studio functions as `fn_<slug>` tools. A key bound to an
+ * MCP profile only gets that profile's functions.
+ */
+export async function registerFunctionTools(server: McpServer, ctx: ToolCtx, profileId: string | null): Promise<string[]> {
+  const ids = profileId ? await functionIdsForProfiles(ctx, [profileId]) : null;
+  const rows = await deployedFunctionRows(ctx, ids);
+  for (const fn of rows) {
+    let inputSchema: z.ZodType;
+    try {
+      inputSchema = z.fromJSONSchema({ type: 'object', properties: {}, ...(fn.input_schema || {}) });
+    } catch {
+      inputSchema = z.looseObject({});
+    }
+    server.registerTool(
+      functionToolName(fn.function_slug),
+      {
+        title: fn.name,
+        description: fn.description || fn.name,
+        inputSchema: inputSchema as any,
+        annotations: { title: fn.name, readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+      },
+      async (args: Row): Promise<CallToolResult> => {
+        try {
+          const result = await invokeFunction(ctx, fn, args, 'mcp');
+          const text = result.status === 'ok' ? JSON.stringify(result.output, null, 2) : `Error: ${result.error ?? result.status}`;
+          return { isError: result.status !== 'ok', content: [{ type: 'text', text: capText(text) }] };
+        } catch (error) {
+          return toolFailure(error);
+        }
+      }
+    );
+  }
+  return rows.map((f) => functionToolName(f.function_slug));
 }
 
 function jsonRpcAuthError(status: number, message: string): Response {
@@ -196,6 +238,7 @@ export async function handlePlatformMcpRequest(req: Request): Promise<Response> 
 
   const ctx: ToolCtx = { tenantId: key.tenantId, userId: `key_${key.id}`, authMode: 'api_key', apiKeyId: key.id };
   const server = buildPlatformMcpServer(ctx, getAuthorizedPlatformTools(key.toolsWhitelist, key.scopes));
+  if (hasScope(key.scopes, AGENT_SCOPES.functionsInvoke)) await registerFunctionTools(server, ctx, key.profileId);
   const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
 
   try {

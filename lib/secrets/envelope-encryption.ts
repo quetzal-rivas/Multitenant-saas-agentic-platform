@@ -48,6 +48,10 @@ export async function envelopeEncryptSecret(
     dataKeyPlaintext = Buffer.from(response.Plaintext);
     encryptedDataKeyB64 = Buffer.from(response.CiphertextBlob).toString('base64');
   } catch (kmsErr) {
+    // Never store an unprotected data key in production: fail closed instead.
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error(`Could not encrypt the secret with KMS: ${(kmsErr as Error)?.message || 'unknown error'}`);
+    }
     // Local fallback for local development / offline testing when KMS is unavailable
     dataKeyPlaintext = crypto.randomBytes(32);
     encryptedDataKeyB64 = `dev_data_key_${dataKeyPlaintext.toString('base64')}`;

@@ -4,13 +4,15 @@ import { getSupabaseAdminClient } from '@/lib/supabase';
 import type { AuthContext } from '@/lib/auth/require-auth';
 import { getTenantSecret } from '@/lib/secrets/secrets-service';
 import { executePlatformTool } from '@/lib/mcp/platform-mcp-server';
-import { PLATFORM_TOOL_DEFINITIONS, canonicalToolName, getAuthorizedPlatformTools, toolInputJsonSchema } from '@/lib/mcp/tool-catalog';
+import { AGENT_SCOPES, PLATFORM_TOOL_DEFINITIONS, canonicalToolName, getAuthorizedPlatformTools, hasScope, toolInputJsonSchema } from '@/lib/mcp/tool-catalog';
 import { getSession, latestCheckpoint, toTranscript, type AgentSession } from '@/lib/services/agent-sessions';
 import { contextProfileInstructions, getContextProfile } from '@/lib/services/context-profiles';
 import { getProfile } from '@/lib/services/profiles';
 import { getTeam, type AgentTeam, type TeamWorker } from '@/lib/services/teams';
 import { ServiceError, isServiceError } from '@/lib/services/errors';
 import { parkRunClaims } from '@/lib/services/board';
+import { deployedFunctionRows, functionIdsForProfiles, invokeFunction } from '@/lib/services/functions';
+import { functionToolName } from '@/lib/functions/function-spec';
 import { emitRunEvent } from './supervisor-graph';
 import { generateLLMResponse, type LLMMessage, type LLMToolDefinition } from './providers/llm-adapter';
 
@@ -320,6 +322,35 @@ export async function runSessionTurn(
       ])
     );
 
+  /** Deployed functions grouped in the given MCP profile, as `fn_<slug>` tools. */
+  const functionTools = async (profileId: string | null | undefined): Promise<Array<[string, LoopTool]>> => {
+    if (!profileId) return [];
+    if (ctx.authMode === 'api_key' && !hasScope(ctx.scopes, AGENT_SCOPES.functionsInvoke)) return [];
+    const ids = await functionIdsForProfiles(toolCtx, [profileId]);
+    const rows = await deployedFunctionRows(toolCtx, ids);
+    return rows.map((fn) => [
+      functionToolName(fn.function_slug),
+      {
+        def: {
+          name: functionToolName(fn.function_slug),
+          description: fn.description || fn.name,
+          parameters: { type: 'object', properties: {}, ...(fn.input_schema || {}) },
+        },
+        run: async (args: Record<string, any>) => {
+          const result = await invokeFunction(toolCtx, fn, args, 'agent');
+          if (result.status !== 'ok') {
+            throw new ServiceError(`${fn.function_slug} ${result.status === 'timeout' ? 'timed out' : 'failed'}: ${result.error ?? 'unknown error'}`, 'CONFLICT');
+          }
+          return { output: result.output, duration_ms: result.duration_ms };
+        },
+      },
+    ]);
+  };
+  const withFunctions = async (tools: Map<string, LoopTool>, profileId: string | null | undefined) => {
+    for (const [name, tool] of await functionTools(profileId)) tools.set(name, tool);
+    return tools;
+  };
+
   const loop = (opts: { systemPrompt: string; messages: LLMMessage[]; tools: Map<string, LoopTool>; model: string; maxSteps: number; worker?: string }) =>
     runToolLoop({
       ...opts,
@@ -347,7 +378,7 @@ export async function runSessionTurn(
   let tools: Map<string, LoopTool>;
   if (team) {
     systemPrompt = await buildSupervisorPrompt(ctx, team);
-    tools = platformTools(team.supervisor_tools);
+    tools = await withFunctions(platformTools(team.supervisor_tools), team.supervisor_mcp_profile_id);
     for (const worker of team.workers) {
       const name = delegateToolName(worker);
       tools.set(name, {
@@ -371,7 +402,7 @@ export async function runSessionTurn(
           const answer = await loop({
             systemPrompt: await buildWorkerPrompt(ctx, team, worker),
             messages: [{ role: 'user', content: brief }],
-            tools: platformTools(worker.tools),
+            tools: await withFunctions(platformTools(worker.tools), worker.mcp_profile_id),
             model: worker.model || team.model,
             maxSteps: MAX_WORKER_STEPS,
             worker: worker.name,
@@ -382,7 +413,7 @@ export async function runSessionTurn(
     }
   } else {
     systemPrompt = await buildSystemPrompt(ctx, session);
-    tools = platformTools(session.allowed_tools);
+    tools = await withFunctions(platformTools(session.allowed_tools), session.mcp_profile_id);
   }
 
   let finalText: string;

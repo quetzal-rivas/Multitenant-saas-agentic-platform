@@ -17,6 +17,7 @@ function toDashboardProfile(p: any, apiKey?: string) {
     selectedToolNames: p.settings?.selectedToolNames || [],
     selectedSkillNames: p.settings?.selectedSkillNames || [],
     boundContextProfileSlugs: p.settings?.boundContextProfileSlugs || [],
+    functionIds: p.settings?.function_ids || [],
     apiKey,
     isActive: p.is_active,
     createdAt: p.created_at,

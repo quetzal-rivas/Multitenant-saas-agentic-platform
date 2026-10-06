@@ -2,7 +2,7 @@ import crypto from 'crypto';
 
 /**
  * In-memory PostgREST stand-in for end-to-end tests through the real supabase-js
- * client. Supports the filters the services use: eq, is.null, order, limit.
+ * client. Supports the filters the services use: eq, is.null, lte, gte, order, limit.
  */
 
 export type Row = Record<string, any>;
@@ -18,6 +18,7 @@ function matches(row: Row, params: URLSearchParams): boolean {
     if (op === 'eq' && String(value) !== raw) return false;
     if (op === 'is' && raw === 'null' && value !== null && value !== undefined) return false;
     if (op === 'lte' && !(value !== null && value !== undefined && String(value) <= raw)) return false;
+    if (op === 'gte' && !(value !== null && value !== undefined && String(value) >= raw)) return false;
   }
   return true;
 }

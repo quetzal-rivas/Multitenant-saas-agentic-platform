@@ -41,7 +41,6 @@ import {
   McpSkill,
 } from '@/lib/demo/legacy_mocks/types';
 import { HOSTED_MCP_SERVERS, MCP_SKILLS } from '@/lib/demo/legacy_mocks/hosted-servers';
-import { McpProfileManager } from '@/lib/demo/legacy_mocks/profile-manager';
 import { PLATFORM_TOOL_DEFINITIONS } from '@/lib/mcp/tool-catalog';
 import { API_KEY_PLACEHOLDER, generateClientConfigSnippets, platformMcpEndpoint } from '@/lib/mcp/client-config';
 import { ContextProfile } from '@/lib/types';
@@ -58,8 +57,9 @@ export const McpHubView: React.FC<McpHubViewProps> = ({
 }) => {
   // State
   const [servers, setServers] = useState<HostedMcpServer[]>(HOSTED_MCP_SERVERS);
-  const [mcpProfiles, setMcpProfiles] = useState<McpServerProfile[]>(() => McpProfileManager.listProfiles());
-  const [selectedProfileId, setSelectedProfileId] = useState<string>(() => McpProfileManager.listProfiles()[0]?.id || '');
+  // Real profiles from the database only (no demo fallback).
+  const [mcpProfiles, setMcpProfiles] = useState<McpServerProfile[]>([]);
+  const [selectedProfileId, setSelectedProfileId] = useState<string>('');
   const [activeTab, setActiveTab] = useState<'servers' | 'profiles' | 'clients' | 'tester' | 'platform-control'>('servers');
   const [isCopied, setIsCopied] = useState<string | null>(null);
   const [isConnectingOAuth, setIsConnectingOAuth] = useState<string | null>(null);
@@ -104,7 +104,7 @@ export const McpHubView: React.FC<McpHubViewProps> = ({
         setMcpProfiles(data.profiles);
       }
     } catch {
-      setMcpProfiles(McpProfileManager.listProfiles());
+      // keep what we have
     }
   }, []);
 
@@ -119,9 +119,7 @@ export const McpHubView: React.FC<McpHubViewProps> = ({
         ]);
         if (isMounted && resP.ok) {
           const dataP = await resP.json();
-          if (Array.isArray(dataP.profiles) && dataP.profiles.length > 0) {
-            setMcpProfiles(dataP.profiles);
-          }
+          if (Array.isArray(dataP.profiles)) setMcpProfiles(dataP.profiles);
         }
         if (isMounted && resS.ok) {
           const dataS = await resS.json();
@@ -815,6 +813,13 @@ export const McpHubView: React.FC<McpHubViewProps> = ({
             </div>
           </div>
 
+          <ProfileFunctionsPicker
+            profile={selectedProfile}
+            onSaved={(functionIds) =>
+              setMcpProfiles((prev) => prev.map((p) => (p.id === selectedProfile.id ? { ...p, functionIds } : p)))
+            }
+          />
+
           {/* Main 2-Column Assignment Board */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             {/* Left 2 Cols: Tools Selector (The Chosen Tools) */}
@@ -1304,3 +1309,69 @@ export const McpHubView: React.FC<McpHubViewProps> = ({
     </div>
   );
 };
+
+/** Group AI Function Studio functions into this profile; agents using the profile get them as fn_* tools. */
+function ProfileFunctionsPicker({ profile, onSaved }: { profile: McpServerProfile; onSaved: (ids: string[]) => void }) {
+  const [functions, setFunctions] = useState<Array<{ id: string; name: string; function_slug: string; status: string; description: string | null }> | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const selected = profile.functionIds || [];
+
+  useEffect(() => {
+    fetch('/api/v1/functions', { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : { functions: [] }))
+      .then((d) => setFunctions(d.functions || []))
+      .catch(() => setFunctions([]));
+  }, []);
+
+  const toggle = async (id: string) => {
+    const next = selected.includes(id) ? selected.filter((f) => f !== id) : [...selected, id];
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/mcp/profiles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'update', id: profile.id, data: { function_ids: next } }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || 'Could not save');
+      onSaved(next);
+    } catch (err: any) {
+      setError(err?.message || 'Could not save');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="p-5 rounded-xl bg-[#0e1117] border border-zinc-800 space-y-3">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-base font-bold text-white">Functions</h3>
+          <p className="text-xs text-zinc-400">
+            Your AI Function Studio functions. Instances, teams and workers that use this profile can call the checked ones as <code className="text-emerald-400">fn_*</code> tools.
+          </p>
+        </div>
+        <span className="text-xs font-mono px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800">{selected.length} selected</span>
+      </div>
+      {functions === null && <p className="text-xs text-zinc-500">Loading…</p>}
+      {functions?.length === 0 && <p className="text-xs text-zinc-500">No functions yet. Create one in AI Function Studio.</p>}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+        {functions?.map((fn) => {
+          const on = selected.includes(fn.id);
+          return (
+            <label key={fn.id} className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer ${on ? 'bg-emerald-950/20 border-emerald-900' : 'border-zinc-800 hover:border-zinc-700'}`}>
+              <input type="checkbox" checked={on} disabled={saving} onChange={() => toggle(fn.id)} className="mt-0.5" />
+              <span className="min-w-0">
+                <span className="block text-xs font-mono text-white">fn_{fn.function_slug}</span>
+                <span className="block text-[11px] text-zinc-400 truncate">{fn.description || fn.name}</span>
+                {fn.status !== 'deployed' && <span className="block text-[10px] text-amber-400 mt-0.5">Not deployed yet: agents get it once it is deployed</span>}
+              </span>
+            </label>
+          );
+        })}
+      </div>
+      {error && <p className="text-xs text-rose-400">{error}</p>}
+    </div>
+  );
+}

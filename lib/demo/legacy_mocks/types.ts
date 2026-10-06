@@ -160,6 +160,8 @@ export interface McpServerProfile {
   selectedToolNames: string[];
   selectedSkillNames: string[];
   boundContextProfileSlugs: string[];
+  /** AI Function Studio functions grouped in this profile (settings.function_ids). */
+  functionIds?: string[];
   createdAt: string;
   updatedAt: string;
   lastActive?: string;

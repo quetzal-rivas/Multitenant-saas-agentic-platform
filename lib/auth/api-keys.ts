@@ -35,6 +35,8 @@ export interface VerifiedApiKey {
   tenantId: string;
   scopes: string[];
   toolsWhitelist: string[];
+  /** MCP profile the key is bound to (limits which functions it can call). */
+  profileId: string | null;
   rateLimitRpm: number;
   legacy: boolean;
 }
@@ -96,7 +98,7 @@ export async function verifyApiKey(rawKey: string): Promise<VerifiedApiKey | nul
   const supabase = getSupabaseAdminClient();
   const { data, error } = await supabase
     .from('mcp_api_keys')
-    .select('id, tenant_id, scopes, tools_whitelist, rate_limit_rpm, revoked_at, expires_at')
+    .select('id, tenant_id, scopes, tools_whitelist, profile_id, rate_limit_rpm, revoked_at, expires_at')
     .eq('key_hash', apiKeyHashLiteral(rawKey))
     .maybeSingle();
 
@@ -126,6 +128,7 @@ export async function verifyApiKey(rawKey: string): Promise<VerifiedApiKey | nul
     tenantId: data.tenant_id,
     scopes: legacy ? scopes.filter((s) => s === '*' || s.endsWith(':read')).map((s) => (s === '*' ? 'mcp:*:read' : s)) : scopes,
     toolsWhitelist: data.tools_whitelist || [],
+    profileId: data.profile_id ?? null,
     rateLimitRpm: data.rate_limit_rpm,
     legacy,
   };

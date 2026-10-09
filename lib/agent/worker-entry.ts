@@ -9,7 +9,12 @@ import { claimRun, dispatchRun, executeRun } from '@/lib/services/agent-runs';
 
 const BUDGET_MS = Number(process.env.AGENT_WORKER_BUDGET_MS) || 13 * 60_000;
 
-export async function handler(event: { run_id?: string } = {}, context?: { awsRequestId?: string }) {
+export async function handler(event: { run_id?: string; inbound_event_ids?: string[] } = {}, context?: { awsRequestId?: string }) {
+  // Inbound Gateway: route freshly received webhook events (each starts its own run).
+  if (Array.isArray(event.inbound_event_ids)) {
+    const { processInboundEvents } = await import('@/lib/services/inbound');
+    return { ok: true, inbound: await processInboundEvents(event.inbound_event_ids.slice(0, 50)) };
+  }
   const runId = event.run_id;
   if (!runId) return { ok: false, error: 'run_id is required' };
   const owner = `lambda:${context?.awsRequestId ?? crypto.randomUUID()}`;

@@ -7,7 +7,7 @@ import { errorResponse } from '@/lib/http/route-errors';
 import { listConversations } from '@/lib/services/conversations';
 
 const query = z.object({
-  kind: z.enum(['agent', 'team', 'heartbeat', 'task']).optional(),
+  kind: z.enum(['agent', 'team', 'heartbeat', 'task', 'inbound']).optional(),
   voice: z.enum(['true', 'false']).transform((v) => v === 'true').optional(),
   status: z.enum(['running', 'failed']).optional(),
   team_id: z.string().uuid().optional(),

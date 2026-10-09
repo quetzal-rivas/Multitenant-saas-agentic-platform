@@ -4,14 +4,15 @@ import { getSession, latestCheckpoint, listSessions, toTranscript, type AgentSes
 
 /**
  * Conversations inbox: every agent instance in the organization (Agent Studio chats,
- * team instances, heartbeat and scheduled-task instances), with what happened in it.
+ * team instances, heartbeat and scheduled-task instances, and Inbound Gateway threads
+ * such as WhatsApp chats or phone calls), with what happened in it.
  * Built from agent_sessions + agent_runs + checkpoints; nothing is stored twice.
  */
 
 type Ctx = Pick<AuthContext, 'tenantId' | 'userId' | 'authMode' | 'apiKeyId'>;
 type Row = Record<string, any>;
 
-export type ConversationKind = 'agent' | 'team' | 'heartbeat' | 'task';
+export type ConversationKind = 'agent' | 'team' | 'heartbeat' | 'task' | 'inbound';
 
 export interface ConversationSummary {
   id: string;
@@ -20,6 +21,9 @@ export interface ConversationSummary {
   team_id: string | null;
   team_name: string | null;
   task_id: string | null;
+  /** Inbound threads: external channel and contact. */
+  channel: string | null;
+  contact: { id?: string; name?: string | null } | null;
   provider: string;
   model: string;
   voice: boolean;
@@ -35,9 +39,10 @@ const RUN_SCAN_LIMIT = 1000;
 
 async function context(ctx: Ctx) {
   const db = getSupabaseAdminClient();
-  const [teams, tasks, runs] = await Promise.all([
+  const [teams, tasks, threads, runs] = await Promise.all([
     db.from('agent_teams').select('id, name, heartbeat_session_id').eq('tenant_id', ctx.tenantId),
     db.from('supervisor_tasks').select('id, session_id').eq('tenant_id', ctx.tenantId),
+    db.from('inbound_threads').select('id, session_id, channel, contact, conversation_key').eq('tenant_id', ctx.tenantId),
     db
       .from('agent_runs')
       .select('id, session_id, origin, channel, status, error, input_message, created_at')
@@ -48,14 +53,16 @@ async function context(ctx: Ctx) {
   const teamName = new Map<string, string>((teams.data || []).map((t: Row) => [t.id, t.name]));
   const heartbeatSessions = new Set((teams.data || []).map((t: Row) => t.heartbeat_session_id).filter(Boolean));
   const taskBySession = new Map<string, string>((tasks.data || []).filter((t: Row) => t.session_id).map((t: Row) => [t.session_id, t.id]));
+  const threadBySession = new Map<string, Row>((threads.data || []).filter((t: Row) => t.session_id).map((t: Row) => [t.session_id, t]));
   const runsBySession = new Map<string, Row[]>();
   for (const r of runs.data || []) runsBySession.set(r.session_id, [...(runsBySession.get(r.session_id) || []), r]);
-  return { teamName, heartbeatSessions, taskBySession, runsBySession };
+  return { teamName, heartbeatSessions, taskBySession, threadBySession, runsBySession };
 }
 
 function kindOf(s: AgentSession, c: Awaited<ReturnType<typeof context>>): ConversationKind {
   if (c.heartbeatSessions.has(s.id)) return 'heartbeat';
   if (c.taskBySession.has(s.id)) return 'task';
+  if (c.threadBySession.has(s.id)) return 'inbound';
   return s.team_id ? 'team' : 'agent';
 }
 
@@ -69,6 +76,8 @@ function summarize(s: AgentSession, c: Awaited<ReturnType<typeof context>>): Con
     team_id: s.team_id,
     team_name: s.team_id ? c.teamName.get(s.team_id) ?? null : null,
     task_id: c.taskBySession.get(s.id) ?? null,
+    channel: c.threadBySession.get(s.id)?.channel ?? null,
+    contact: c.threadBySession.get(s.id)?.contact ?? null,
     provider: s.provider,
     model: s.model,
     voice: runs.some((r) => r.channel === 'voice'),
@@ -102,7 +111,7 @@ export async function listConversations(ctx: Ctx, filters: ConversationFilters =
       if (filters.status === 'failed') return x.last_status === 'error';
       return true;
     })
-    .filter((x) => !q || x.name.toLowerCase().includes(q) || (x.team_name || '').toLowerCase().includes(q) || (x.last_message || '').toLowerCase().includes(q))
+    .filter((x) => !q || x.name.toLowerCase().includes(q) || (x.team_name || '').toLowerCase().includes(q) || (x.last_message || '').toLowerCase().includes(q) || [x.contact?.name, x.contact?.id].some((v) => (v || '').toLowerCase().includes(q)))
     .sort((a, b) => (a.last_active_at < b.last_active_at ? 1 : -1));
   const counts = {
     all: all.length,
@@ -110,6 +119,7 @@ export async function listConversations(ctx: Ctx, filters: ConversationFilters =
     team: all.filter((x) => x.kind === 'team').length,
     heartbeat: all.filter((x) => x.kind === 'heartbeat').length,
     task: all.filter((x) => x.kind === 'task').length,
+    inbound: all.filter((x) => x.kind === 'inbound').length,
     voice: all.filter((x) => x.voice).length,
   };
   return { conversations, counts };
@@ -117,7 +127,7 @@ export async function listConversations(ctx: Ctx, filters: ConversationFilters =
 
 export async function getConversation(ctx: Ctx, sessionId: string) {
   const session = await getSession(ctx, sessionId);
-  const [c, latest, runs] = await Promise.all([
+  const [c, latest, runs, thread] = await Promise.all([
     context(ctx),
     latestCheckpoint(ctx, sessionId),
     getSupabaseAdminClient()
@@ -127,9 +137,32 @@ export async function getConversation(ctx: Ctx, sessionId: string) {
       .eq('tenant_id', ctx.tenantId)
       .order('created_at', { ascending: false })
       .limit(50),
+    getSupabaseAdminClient().from('inbound_threads').select('id, channel, contact, conversation_key').eq('session_id', session.id).eq('tenant_id', ctx.tenantId).maybeSingle(),
   ]);
+  // Inbound threads: the original messages and whether each reply was delivered.
+  const inbound = thread.data
+    ? (
+        await getSupabaseAdminClient()
+          .from('inbound_events')
+          .select('id, received_at, status, error, normalized, run_id, reply_status')
+          .eq('thread_id', thread.data.id)
+          .eq('tenant_id', ctx.tenantId)
+          .order('received_at', { ascending: false })
+          .limit(50)
+      ).data?.map((e: Row) => ({
+        event_id: e.id,
+        received_at: e.received_at,
+        status: e.status,
+        error: e.error,
+        text: e.normalized?.text ?? '',
+        sender: e.normalized?.sender ?? null,
+        run_id: e.run_id,
+        reply: e.reply_status ?? null,
+      })) ?? []
+    : null;
   return {
     conversation: summarize(session, c),
+    inbound,
     transcript: toTranscript(latest?.state || []),
     runs: (runs.data || []).map((r: Row) => ({
       run_id: r.id,

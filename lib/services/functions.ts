@@ -30,7 +30,7 @@ import { ServiceError } from './errors';
  */
 
 export type FunctionCtx = Pick<AuthContext, 'tenantId' | 'userId' | 'authMode' | 'apiKeyId'> & { teamId?: string | null };
-export type InvocationSource = 'test' | 'agent' | 'mcp';
+export type InvocationSource = 'test' | 'agent' | 'mcp' | 'inbound';
 type Row = Record<string, any>;
 
 const COLUMNS =

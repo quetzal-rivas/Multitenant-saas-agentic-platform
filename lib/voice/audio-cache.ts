@@ -73,3 +73,21 @@ export async function putCachedAudio(key: string, audio: SpeechAudio): Promise<v
     console.error('[voice-cache] write failed', err?.name || err);
   }
 }
+
+/** Call recordings and other inbound media: kept under inbound/<tenant>/ (longer lifecycle than tts/). */
+export async function putInboundMedia(tenantId: string, name: string, audio: SpeechAudio): Promise<string | null> {
+  const key = `inbound/${tenantId}/${name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+  if (override) {
+    await override.put(key, audio);
+    return key;
+  }
+  const bucketName = bucket();
+  if (!bucketName) return null;
+  try {
+    await s3().send(new PutObjectCommand({ Bucket: bucketName, Key: key, Body: audio.audio, ContentType: audio.mime }), { abortSignal: AbortSignal.timeout(20_000) });
+    return key;
+  } catch (err: any) {
+    console.error('[inbound-media] write failed', err?.name || err);
+    return null;
+  }
+}

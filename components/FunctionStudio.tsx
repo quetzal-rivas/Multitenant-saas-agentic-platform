@@ -18,7 +18,9 @@ import {
   History,
   Settings2,
   Braces,
+  Inbox,
 } from 'lucide-react';
+import { ROUTER_INPUT_SCHEMA, ROUTER_TEMPLATES } from '@/lib/inbound/router-template';
 
 // ---------------------------------------------------------------------------
 // Types (mirror /api/v1/functions)
@@ -133,7 +135,7 @@ export function FunctionStudio() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [creating, setCreating] = useState<null | 'choose' | 'ai' | 'blank'>(null);
+  const [creating, setCreating] = useState<null | 'choose' | 'ai' | 'blank' | 'router'>(null);
 
   const load = useCallback(async (selectId?: string) => {
     try {
@@ -239,8 +241,8 @@ export function FunctionStudio() {
 // ---------------------------------------------------------------------------
 
 const NewFunctionModal: React.FC<{
-  mode: 'choose' | 'ai' | 'blank';
-  setMode: (m: null | 'choose' | 'ai' | 'blank') => void;
+  mode: 'choose' | 'ai' | 'blank' | 'router';
+  setMode: (m: null | 'choose' | 'ai' | 'blank' | 'router') => void;
   onCreated: (id: string) => void;
 }> = ({ mode, setMode, onCreated }) => {
   const [language, setLanguage] = useState<Language>('python');
@@ -302,7 +304,7 @@ const NewFunctionModal: React.FC<{
         </div>
 
         {mode === 'choose' && (
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-3 gap-3">
             <button onClick={() => setMode('ai')} className="p-4 rounded-xl border border-emerald-800 bg-emerald-950/20 text-left hover:border-emerald-600">
               <Sparkles className="w-5 h-5 text-emerald-400 mb-2" />
               <div className="text-sm font-semibold text-white">Describe it (AI)</div>
@@ -312,6 +314,11 @@ const NewFunctionModal: React.FC<{
               <Code2 className="w-5 h-5 text-zinc-300 mb-2" />
               <div className="text-sm font-semibold text-white">Blank</div>
               <div className="text-xs text-zinc-400 mt-1">Start from a small template.</div>
+            </button>
+            <button onClick={() => setMode('router')} className="p-4 rounded-xl border border-amber-800 bg-amber-950/10 text-left hover:border-amber-600">
+              <Inbox className="w-5 h-5 text-amber-400 mb-2" />
+              <div className="text-sm font-semibold text-white">Webhook router</div>
+              <div className="text-xs text-zinc-400 mt-1">Decides which team answers each incoming message (Webhooks page).</div>
             </button>
           </div>
         )}
@@ -326,13 +333,24 @@ const NewFunctionModal: React.FC<{
           </div>
         )}
 
-        {mode === 'blank' && (
+        {(mode === 'blank' || mode === 'router') && (
           <>
-            <input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} placeholder="Name, e.g. Convert temperature" autoFocus />
+            <input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} placeholder={mode === 'router' ? 'Name, e.g. WhatsApp router' : 'Name, e.g. Convert temperature'} autoFocus />
+            {mode === 'router' && (
+              <p className="text-xs text-zinc-400">
+                Receives each incoming event and returns which team answers it. Deploy it, then pick it as the router of an endpoint on the Webhooks page.
+              </p>
+            )}
             <div className="flex justify-end">
               <button
                 disabled={busy || !name.trim()}
-                onClick={() => create({ name: name.trim(), language, code: TEMPLATES[language], input_schema: DEFAULT_SCHEMA, description: '' })}
+                onClick={() =>
+                  create(
+                    mode === 'router'
+                      ? { name: name.trim(), language, code: ROUTER_TEMPLATES[language], input_schema: ROUTER_INPUT_SCHEMA, description: 'Inbound Gateway router: decides which team answers an incoming event.' }
+                      : { name: name.trim(), language, code: TEMPLATES[language], input_schema: DEFAULT_SCHEMA, description: '' }
+                  )
+                }
                 className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold disabled:opacity-50"
               >
                 {busy ? 'Creating…' : 'Create'}

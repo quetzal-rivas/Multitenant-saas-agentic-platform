@@ -16,6 +16,7 @@ import {
   Volume2,
   Wrench,
   XCircle,
+  Inbox,
 } from 'lucide-react';
 import { useVoice } from '@/components/voice/useVoice';
 
@@ -25,7 +26,20 @@ import { useVoice } from '@/components/voice/useVoice';
  * turns are marked; any reply can be read aloud with the instance's voice profile.
  */
 
-type Kind = 'agent' | 'team' | 'heartbeat' | 'task';
+type Kind = 'agent' | 'team' | 'heartbeat' | 'task' | 'inbound';
+
+const CHANNEL_LABEL: Record<string, string> = { whatsapp: 'WhatsApp', messenger: 'Messenger', instagram: 'Instagram', phone_call: 'Phone call', sms: 'SMS', webhook: 'Webhook' };
+
+interface InboundMessage {
+  event_id: string;
+  received_at: string;
+  status: string;
+  error: string | null;
+  text: string;
+  sender: { id: string; name?: string | null } | null;
+  run_id: string | null;
+  reply: { sent: boolean; channel?: string; error?: string; skipped?: string; at?: string } | null;
+}
 
 interface Conversation {
   id: string;
@@ -34,6 +48,8 @@ interface Conversation {
   team_id: string | null;
   team_name: string | null;
   task_id: string | null;
+  channel: string | null;
+  contact: { id?: string; name?: string | null } | null;
   provider: string;
   model: string;
   voice: boolean;
@@ -55,7 +71,7 @@ interface TranscriptItem {
 
 interface Run {
   run_id: string;
-  origin: 'chat' | 'heartbeat' | 'task';
+  origin: 'chat' | 'heartbeat' | 'task' | 'inbound';
   channel: 'text' | 'voice';
   voice: { stt_provider?: string; audio_seconds?: number } | null;
   status: string;
@@ -81,9 +97,10 @@ const KIND_META: Record<Kind, { label: string; icon: React.ElementType; cls: str
   team: { label: 'Team', icon: Users, cls: 'text-purple-300 border-purple-800 bg-purple-950/40' },
   heartbeat: { label: 'Heartbeat', icon: HeartPulse, cls: 'text-violet-300 border-violet-800 bg-violet-950/40' },
   task: { label: 'Task', icon: CalendarClock, cls: 'text-sky-300 border-sky-800 bg-sky-950/40' },
+  inbound: { label: 'Inbound', icon: Inbox, cls: 'text-amber-300 border-amber-800 bg-amber-950/40' },
 };
 
-const ORIGIN_LABEL: Record<Run['origin'], string> = { chat: 'chat', heartbeat: 'heartbeat', task: 'scheduled task' };
+const ORIGIN_LABEL: Record<Run['origin'], string> = { chat: 'chat', heartbeat: 'heartbeat', task: 'scheduled task', inbound: 'inbound message' };
 
 function ago(iso: string): string {
   const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
@@ -110,8 +127,8 @@ export const Conversations: React.FC<{ onOpenInStudio?: (sessionId: string) => v
   const [status, setStatus] = useState<'' | 'running' | 'failed'>('');
   const [q, setQ] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
-  const [detail, setDetail] = useState<{ conversation: Conversation; transcript: TranscriptItem[]; runs: Run[] } | null>(null);
-  const [tab, setTab] = useState<'transcript' | 'runs'>('transcript');
+  const [detail, setDetail] = useState<{ conversation: Conversation; transcript: TranscriptItem[]; runs: Run[]; inbound: InboundMessage[] | null } | null>(null);
+  const [tab, setTab] = useState<'transcript' | 'runs' | 'messages'>('transcript');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const voice = useVoice({ session_id: selected ?? undefined });
@@ -150,6 +167,7 @@ export const Conversations: React.FC<{ onOpenInStudio?: (sessionId: string) => v
 
   useEffect(() => {
     setDetail(null);
+    setTab('transcript');
     if (selected) loadDetail(selected);
   }, [selected, loadDetail]);
 
@@ -177,6 +195,7 @@ export const Conversations: React.FC<{ onOpenInStudio?: (sessionId: string) => v
     ['team', 'Teams', counts.team],
     ['heartbeat', 'Heartbeats', counts.heartbeat],
     ['task', 'Tasks', counts.task],
+    ['inbound', 'Inbound', counts.inbound],
     ['voice', 'Voice', counts.voice],
   ];
 
@@ -244,6 +263,7 @@ export const Conversations: React.FC<{ onOpenInStudio?: (sessionId: string) => v
                 </div>
                 <div className="flex items-center gap-1.5 text-[10px]">
                   <span className={`flex items-center gap-1 px-1.5 py-0.5 rounded border ${meta.cls}`}><Icon className="w-2.5 h-2.5" /> {meta.label}</span>
+                  {conv.channel && <span className="px-1.5 py-0.5 rounded border border-zinc-700 text-zinc-300">{CHANNEL_LABEL[conv.channel] ?? conv.channel}</span>}
                   {conv.voice && <span className="flex items-center gap-1 px-1.5 py-0.5 rounded border text-rose-300 border-rose-800 bg-rose-950/40"><Mic className="w-2.5 h-2.5" /> voice</span>}
                   {conv.team_name && conv.kind !== 'team' && <span className="text-zinc-500 truncate">{conv.team_name}</span>}
                   <span className="ml-auto"><StatusIcon status={conv.last_status} /></span>
@@ -286,13 +306,13 @@ export const Conversations: React.FC<{ onOpenInStudio?: (sessionId: string) => v
               </div>
             </header>
             <div className="flex border-b border-zinc-800 text-xs bg-[#0e1118]">
-              {(['transcript', 'runs'] as const).map((t) => (
+              {(detail.inbound ? (['transcript', 'messages', 'runs'] as const) : (['transcript', 'runs'] as const)).map((t) => (
                 <button
                   key={t}
                   onClick={() => setTab(t)}
                   className={`px-4 py-2.5 capitalize border-b-2 ${tab === t ? 'border-emerald-500 text-emerald-400' : 'border-transparent text-zinc-400 hover:text-zinc-200'}`}
                 >
-                  {t === 'runs' ? `Runs (${detail.runs.length})` : 'Transcript'}
+                  {t === 'runs' ? `Runs (${detail.runs.length})` : t === 'messages' ? `Messages & replies (${detail.inbound?.length ?? 0})` : 'Transcript'}
                 </button>
               ))}
               {voice.error && <span className="ml-auto self-center pr-4 text-rose-400">{voice.error}</span>}
@@ -350,6 +370,33 @@ export const Conversations: React.FC<{ onOpenInStudio?: (sessionId: string) => v
                     </div>
                   );
                 })}
+
+              {tab === 'messages' && detail.inbound && (
+                <div className="space-y-2">
+                  {c.contact && (
+                    <p className="text-xs text-zinc-400">
+                      {CHANNEL_LABEL[c.channel ?? ''] ?? c.channel} contact: <span className="text-zinc-200">{c.contact.name || c.contact.id}</span>
+                      {c.contact.name && c.contact.id ? ` (${c.contact.id})` : ''}
+                    </p>
+                  )}
+                  {detail.inbound.length === 0 && <p className="text-sm text-zinc-500">No messages recorded (older than 30 days are removed).</p>}
+                  {detail.inbound.map((m) => (
+                    <div key={m.event_id} className="p-3 rounded-lg border border-zinc-800 bg-[#0d1017] text-xs space-y-1">
+                      <div className="flex items-center gap-2 text-zinc-500">
+                        <span>{new Date(m.received_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                        <span>· {m.status}</span>
+                        {m.reply && (
+                          <span className={`ml-auto ${m.reply.sent ? 'text-emerald-400' : m.reply.error ? 'text-rose-400' : 'text-zinc-500'}`}>
+                            {m.reply.sent ? `reply delivered via ${CHANNEL_LABEL[m.reply.channel ?? ''] ?? m.reply.channel}` : m.reply.error ? `reply failed: ${m.reply.error}` : m.reply.skipped}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-zinc-200 whitespace-pre-wrap">{m.text}</p>
+                      {m.error && <p className="text-rose-400">{m.error}</p>}
+                    </div>
+                  ))}
+                </div>
+              )}
 
               {tab === 'runs' && detail.runs.length === 0 && <p className="text-sm text-zinc-500">No runs recorded for this instance yet.</p>}
               {tab === 'runs' &&

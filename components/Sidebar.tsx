@@ -244,9 +244,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
             >
               <div className="flex items-center gap-2.5">
                 <Globe2 className={`w-4 h-4 ${activeTab === 'endpoints' ? 'text-emerald-400' : 'text-zinc-400'}`} />
-                <span>Endpoints</span>
+                <span>Webhooks</span>
               </div>
-              <span className="text-[10px] font-mono text-emerald-400">REST</span>
+              <span className="text-[10px] font-mono text-amber-300">INBOUND</span>
             </button>
           </nav>
         </div>

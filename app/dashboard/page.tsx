@@ -6,7 +6,7 @@ import { Sidebar } from '@/components/Sidebar';
 import { ProfilesView } from '@/components/ProfilesView';
 import { ContextBuilder } from '@/components/ContextBuilder';
 import { SourcesView } from '@/components/SourcesView';
-import { EndpointsView } from '@/components/EndpointsView';
+import { InboundGatewayView } from '@/components/InboundGatewayView';
 import { ApiKeysView } from '@/components/ApiKeysView';
 import { LogsView } from '@/components/LogsView';
 import { SdkIntegrationsView } from '@/components/SdkIntegrationsView';
@@ -246,7 +246,7 @@ export default function DashboardPage() {
 
           {activeTab === 'sources' && <SourcesView sources={sources} />}
 
-          {activeTab === 'endpoints' && <EndpointsView />}
+          {activeTab === 'endpoints' && <InboundGatewayView onNavigate={setActiveTab} />}
 
           {activeTab === 'api-keys' && <ApiKeysView />}
 

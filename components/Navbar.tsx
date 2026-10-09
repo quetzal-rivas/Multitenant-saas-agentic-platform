@@ -4,6 +4,9 @@ import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Layers, Terminal, Sparkles, Shield, Activity, ChevronRight, Key, Cpu, Server, Building2 } from 'lucide-react';
 
+/** Breadcrumb names for tabs whose id differs from their page name. */
+const TAB_LABELS: Record<string, string> = { endpoints: 'webhooks', 'session-studio': 'agent studio', 'function-studio': 'AI function studio', 'mcp-hub': 'MCP hub & tools', calendar: 'task calendar', board: 'supervisor board' };
+
 interface NavbarProps {
   activeTab?: string;
   setActiveTab?: (tab: string) => void;
@@ -63,7 +66,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           <ChevronRight className="w-3.5 h-3.5 mx-1 text-zinc-600" />
           <span className="text-zinc-400">Workspace</span>
           <ChevronRight className="w-3.5 h-3.5 mx-1 text-zinc-600" />
-          <span className="text-zinc-200 capitalize font-medium">{activeTab.replace('-', ' ')}</span>
+          <span className="text-zinc-200 capitalize font-medium">{(TAB_LABELS[activeTab] ?? activeTab).replace(/-/g, ' ')}</span>
         </div>
       </div>
 

@@ -24,6 +24,8 @@ import { GeminiTestModal } from '@/components/GeminiTestModal';
 import { CreateProfileModal } from '@/components/CreateProfileModal';
 import { AccountSettingsView } from '@/components/AccountSettingsView';
 import { VoiceStudio } from '@/components/VoiceStudio';
+import { LiveCallsView } from '@/components/LiveCallsView';
+import { LiveCallBanner } from '@/components/LiveCallBanner';
 import { FunctionStudio } from '@/components/FunctionStudio';
 import { DemoBanner } from '@/components/DemoBanner';
 import { INITIAL_PROFILES, INITIAL_SOURCES, isDemoMode } from '@/lib/demo';
@@ -141,6 +143,8 @@ export default function DashboardPage() {
         onOpenNewProfile={() => setIsCreateModalOpen(true)}
       />
 
+      <LiveCallBanner onOpen={() => setActiveTab('calls')} hidden={activeTab === 'calls'} />
+
       {/* Main Layout Body */}
       <div className="flex-1 flex overflow-hidden">
         {/* Left Developer Sidebar */}
@@ -184,6 +188,8 @@ export default function DashboardPage() {
 
           {activeTab === 'voice' && <VoiceStudio />}
 
+          {activeTab === 'calls' && <LiveCallsView onNavigate={setActiveTab} />}
+
           {activeTab === 'function-studio' && (
             <FunctionStudio />
           )}
@@ -192,6 +198,7 @@ export default function DashboardPage() {
             <Conversations
               onOpenInStudio={(sessionId) => handleLaunchThread('', sessionId)}
               onOpenCalendar={() => setActiveTab('calendar')}
+              onOpenCalls={() => setActiveTab('calls')}
             />
           )}
 

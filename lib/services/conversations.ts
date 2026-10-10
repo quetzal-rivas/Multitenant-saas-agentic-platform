@@ -12,7 +12,7 @@ import { getSession, latestCheckpoint, listSessions, toTranscript, type AgentSes
 type Ctx = Pick<AuthContext, 'tenantId' | 'userId' | 'authMode' | 'apiKeyId'>;
 type Row = Record<string, any>;
 
-export type ConversationKind = 'agent' | 'team' | 'heartbeat' | 'task' | 'inbound';
+export type ConversationKind = 'agent' | 'team' | 'heartbeat' | 'task' | 'inbound' | 'call';
 
 export interface ConversationSummary {
   id: string;
@@ -24,6 +24,8 @@ export interface ConversationSummary {
   /** Inbound threads: external channel and contact. */
   channel: string | null;
   contact: { id?: string; name?: string | null } | null;
+  /** Live Rooms: the call this instance belongs to. */
+  room_id: string | null;
   provider: string;
   model: string;
   voice: boolean;
@@ -39,10 +41,11 @@ const RUN_SCAN_LIMIT = 1000;
 
 async function context(ctx: Ctx) {
   const db = getSupabaseAdminClient();
-  const [teams, tasks, threads, runs] = await Promise.all([
+  const [teams, tasks, threads, rooms, runs] = await Promise.all([
     db.from('agent_teams').select('id, name, heartbeat_session_id').eq('tenant_id', ctx.tenantId),
     db.from('supervisor_tasks').select('id, session_id').eq('tenant_id', ctx.tenantId),
     db.from('inbound_threads').select('id, session_id, channel, contact, conversation_key').eq('tenant_id', ctx.tenantId),
+    db.from('rooms').select('id, session_id, customer_number, kind, status').eq('tenant_id', ctx.tenantId).order('created_at', { ascending: false }).limit(500),
     db
       .from('agent_runs')
       .select('id, session_id, origin, channel, status, error, input_message, created_at')
@@ -54,15 +57,17 @@ async function context(ctx: Ctx) {
   const heartbeatSessions = new Set((teams.data || []).map((t: Row) => t.heartbeat_session_id).filter(Boolean));
   const taskBySession = new Map<string, string>((tasks.data || []).filter((t: Row) => t.session_id).map((t: Row) => [t.session_id, t.id]));
   const threadBySession = new Map<string, Row>((threads.data || []).filter((t: Row) => t.session_id).map((t: Row) => [t.session_id, t]));
+  const roomBySession = new Map<string, Row>((rooms.data || []).filter((r: Row) => r.session_id).map((r: Row) => [r.session_id, r]));
   const runsBySession = new Map<string, Row[]>();
   for (const r of runs.data || []) runsBySession.set(r.session_id, [...(runsBySession.get(r.session_id) || []), r]);
-  return { teamName, heartbeatSessions, taskBySession, threadBySession, runsBySession };
+  return { teamName, heartbeatSessions, taskBySession, threadBySession, roomBySession, runsBySession };
 }
 
 function kindOf(s: AgentSession, c: Awaited<ReturnType<typeof context>>): ConversationKind {
   if (c.heartbeatSessions.has(s.id)) return 'heartbeat';
   if (c.taskBySession.has(s.id)) return 'task';
   if (c.threadBySession.has(s.id)) return 'inbound';
+  if (c.roomBySession.has(s.id)) return 'call';
   return s.team_id ? 'team' : 'agent';
 }
 
@@ -76,8 +81,9 @@ function summarize(s: AgentSession, c: Awaited<ReturnType<typeof context>>): Con
     team_id: s.team_id,
     team_name: s.team_id ? c.teamName.get(s.team_id) ?? null : null,
     task_id: c.taskBySession.get(s.id) ?? null,
-    channel: c.threadBySession.get(s.id)?.channel ?? null,
-    contact: c.threadBySession.get(s.id)?.contact ?? null,
+    channel: c.threadBySession.get(s.id)?.channel ?? (c.roomBySession.has(s.id) ? 'phone_call' : null),
+    contact: c.threadBySession.get(s.id)?.contact ?? (c.roomBySession.get(s.id)?.customer_number ? { id: c.roomBySession.get(s.id)!.customer_number } : null),
+    room_id: c.roomBySession.get(s.id)?.id ?? null,
     provider: s.provider,
     model: s.model,
     voice: runs.some((r) => r.channel === 'voice'),
@@ -120,6 +126,7 @@ export async function listConversations(ctx: Ctx, filters: ConversationFilters =
     heartbeat: all.filter((x) => x.kind === 'heartbeat').length,
     task: all.filter((x) => x.kind === 'task').length,
     inbound: all.filter((x) => x.kind === 'inbound').length,
+    call: all.filter((x) => x.kind === 'call').length,
     voice: all.filter((x) => x.voice).length,
   };
   return { conversations, counts };

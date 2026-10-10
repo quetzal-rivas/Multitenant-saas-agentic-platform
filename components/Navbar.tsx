@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Layers, Terminal, Sparkles, Shield, Activity, ChevronRight, Key, Cpu, Server, Building2 } from 'lucide-react';
 
 /** Breadcrumb names for tabs whose id differs from their page name. */
-const TAB_LABELS: Record<string, string> = { endpoints: 'webhooks', 'session-studio': 'agent studio', 'function-studio': 'AI function studio', 'mcp-hub': 'MCP hub & tools', calendar: 'task calendar', board: 'supervisor board' };
+const TAB_LABELS: Record<string, string> = { endpoints: 'webhooks', 'session-studio': 'agent studio', 'function-studio': 'AI function studio', 'mcp-hub': 'MCP hub & tools', calendar: 'task calendar', board: 'supervisor board', calls: 'live calls' };
 
 interface NavbarProps {
   activeTab?: string;

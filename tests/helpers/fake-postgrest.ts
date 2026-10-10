@@ -19,6 +19,10 @@ function matches(row: Row, params: URLSearchParams): boolean {
     if (op === 'is' && raw === 'null' && value !== null && value !== undefined) return false;
     if (op === 'lte' && !(value !== null && value !== undefined && String(value) <= raw)) return false;
     if (op === 'gte' && !(value !== null && value !== undefined && String(value) >= raw)) return false;
+    if (op === 'in') {
+      const list = raw.replace(/^\(|\)$/g, '').split(',').map((v) => v.replace(/^"|"$/g, ''));
+      if (!list.includes(String(value))) return false;
+    }
   }
   return true;
 }

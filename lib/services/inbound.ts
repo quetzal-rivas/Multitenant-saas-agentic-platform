@@ -583,6 +583,11 @@ export async function processInboundEvents(ids: string[]): Promise<Array<{ id: s
       const { data: endpoint } = await db.from('inbound_endpoints').select(ENDPOINT_COLUMNS).eq('id', ev.endpoint_id).maybeSingle();
       if (!endpoint) throw new ServiceError('The endpoint was deleted.', 'NOT_FOUND');
       const event = ev.normalized as NormalizedEvent;
+      // Live Rooms calls: ElevenLabs post-call results belong to the call's room, not a new thread.
+      if (await attachToRoom(endpoint, event, ev.id)) {
+        out.push({ id, status: 'routed' });
+        continue;
+      }
       if (event.type === 'call_audio') {
         await attachCallAudio(endpoint, event, ev.id);
         out.push({ id, status: 'routed' });
@@ -634,6 +639,23 @@ async function attachCallAudio(endpoint: Row, event: NormalizedEvent, eventId: s
     thread_id: threadId,
     route_detail: { decided_by: 'none', action: 'route', reason: !key ? 'Recording could not be stored (no media bucket).' : threadId ? 'Recording stored and linked to the call.' : 'Recording stored; it is linked when the transcript arrives.' },
   });
+}
+
+async function attachToRoom(endpoint: Row, event: NormalizedEvent, eventId: string): Promise<boolean> {
+  let roomId = (event.meta?.room_id as string | null) ?? null;
+  if (!roomId && event.type === 'call_audio' && event.meta?.conversation_id) {
+    const { data: t } = await getSupabaseAdminClient().from('inbound_events').select('normalized').eq('endpoint_id', endpoint.id).eq('provider_event_id', `transcription:${event.meta.conversation_id}`).maybeSingle();
+    roomId = ((t?.normalized as NormalizedEvent | undefined)?.meta?.room_id as string | null) ?? null;
+  }
+  if (!roomId) return false;
+  const { attachPostCall } = await import('./rooms');
+  const attached = await attachPostCall(endpoint.tenant_id, roomId, {
+    summary: event.type === 'call_result' ? ((event.meta?.summary as string | null) ?? null) : null,
+    audioKey: event.type === 'call_audio' ? ((event.meta?.audio_key as string | null) ?? null) : null,
+  });
+  if (!attached) return false;
+  await setEvent(eventId, { status: 'routed', route_detail: { decided_by: 'none', action: 'route', reason: `Attached to live call ${roomId}.` } });
+  return true;
 }
 
 /** Transcript routed: pick up a recording that arrived before it. */

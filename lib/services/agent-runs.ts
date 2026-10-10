@@ -67,7 +67,7 @@ export async function invokeWorker(payload: Record<string, unknown>): Promise<bo
 // ---------------------------------------------------------------------------
 
 const COLUMNS =
-  'id, tenant_id, session_id, team_id, task_id, inbound_thread_id, origin, channel, voice, input_message, status, caller, state, progress, result, error, checkpoint_id, lease_owner, lease_expires_at, invocations, started_at, finished_at, created_at, updated_at';
+  'id, tenant_id, session_id, team_id, task_id, inbound_thread_id, room_id, origin, channel, voice, input_message, status, caller, state, progress, result, error, checkpoint_id, lease_owner, lease_expires_at, invocations, started_at, finished_at, created_at, updated_at';
 
 async function loadRun(runId: string): Promise<Row | null> {
   const { data } = await getSupabaseAdminClient().from('agent_runs').select(COLUMNS).eq('id', runId).maybeSingle();
@@ -85,8 +85,9 @@ export async function startRun(
   sessionId: string,
   message: string,
   opts: {
-    origin?: 'chat' | 'heartbeat' | 'task' | 'inbound';
+    origin?: 'chat' | 'heartbeat' | 'task' | 'inbound' | 'room';
     inboundThreadId?: string | null;
+    roomId?: string | null;
     teamId?: string | null;
     taskId?: string | null;
     /** 'voice': the message was spoken and the reply will be; replies follow the voice profile's style. */
@@ -122,6 +123,7 @@ export async function startRun(
       origin: opts.origin ?? 'chat',
       task_id: opts.taskId ?? null,
       inbound_thread_id: opts.inboundThreadId ?? null,
+      room_id: opts.roomId ?? null,
       channel: opts.channel ?? 'text',
       voice: opts.voice ?? null,
       input_message: message,
@@ -178,6 +180,11 @@ async function finish(runId: string, fields: Row, owner?: string) {
 
 /** Tell whatever started the run (a heartbeat or a scheduled task) how it ended. */
 async function onRunFinished(run: Row, status: 'ok' | 'error', detail: string | null, message?: string | null) {
+  if (run.origin === 'room') {
+    const { onRoomRunFinished } = await import('./rooms');
+    await onRoomRunFinished(run, status, detail, message).catch((err) => console.error('[agent-runs] room hook failed', err));
+    return;
+  }
   if (run.origin === 'inbound') {
     const { onInboundRunFinished } = await import('./inbound');
     await onInboundRunFinished(run, status, detail, message).catch((err) => console.error('[agent-runs] inbound hook failed', err));

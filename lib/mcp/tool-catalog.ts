@@ -221,6 +221,33 @@ const page = {
 const profileOutput = z.object({ profile: profileRecord });
 const taskOutput = z.object({ task: taskRecord });
 
+// Live Rooms (calls). room_id may be omitted when the caller is a voice agent: the MCP
+// server fills it from the call's _meta (ElevenLabs sends the room of the live call).
+const roomId = z.string().uuid().optional().describe('Room (live call) id. Voice agents can omit it: it is filled in from the live call.');
+export const roomContextArgs = z.object({ room_id: roomId }).strict();
+export const roomTranscriptArgs = z
+  .object({ room_id: roomId, since_seq: z.number().int().min(0).optional().describe('Return utterances after this sequence number (0 or omitted: from the start).') })
+  .strict();
+export const roomNoteArgs = z
+  .object({
+    room_id: roomId,
+    text: z.string().trim().min(1).max(1000).describe('What a human should see now, e.g. "Caller wants to cancel; mentions PROFECO".'),
+    level: z.enum(['info', 'warn', 'alert']).optional().describe("'alert' for urgent issues (shown in red), 'warn' for risks, 'info' otherwise."),
+  })
+  .strict();
+export const askTeamArgs = z
+  .object({ room_id: roomId, question: z.string().trim().min(1).max(4000).describe('What the team should find out or do, with the details the caller gave.') })
+  .strict();
+export const teamAnswerArgs = z.object({ run_id: z.string().uuid().describe('run_id returned by contextcontrol_ask_team.') }).strict();
+export const placeCallArgs = z
+  .object({
+    to: z.string().regex(/^\+[1-9]\d{7,14}$/, 'E.164, e.g. +5215512345678').describe('Number to call in E.164 format.'),
+    voice_agent_id: z.string().uuid().optional().describe('Voice agent that talks on the call. Defaults to the only one, if there is exactly one.'),
+    purpose: z.string().trim().max(2000).optional().describe('Why we are calling; the voice agent sees it at the start of the call.'),
+  })
+  .strict();
+const roomOutput = z.object({}).passthrough();
+
 const READ: ToolAnnotations = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
 const write = (destructive: boolean, idempotent: boolean): ToolAnnotations => ({
   readOnlyHint: false,
@@ -446,7 +473,71 @@ export const PLATFORM_TOOL_DEFINITIONS = [
     schema: boardHandoverArgs,
     outputSchema: boardTaskOutput,
   },
+  {
+    name: 'contextcontrol_room_context',
+    title: 'Call context',
+    description: 'Who is on this live call, why, and what you should know (from the voice agent\'s context profile). Voice agents call this at the start of every call. Returns { room, context }.',
+    requiredScope: 'mcp:rooms:read',
+    sideEffect: 'read',
+    annotations: READ,
+    schema: roomContextArgs,
+    outputSchema: roomOutput,
+  },
+  {
+    name: 'contextcontrol_room_transcript',
+    title: 'Call transcript',
+    description: 'What has been said on a live (or ended) call, per speaker (customer, agent, staff), after since_seq. Returns { utterances: [{ seq, speaker_role, text, at }], last_seq, status }.',
+    requiredScope: 'mcp:rooms:read',
+    sideEffect: 'read',
+    annotations: READ,
+    schema: roomTranscriptArgs,
+    outputSchema: roomOutput,
+  },
+  {
+    name: 'contextcontrol_room_note',
+    title: 'Live call note',
+    description: 'Post a note on a call that people watching it see right away (alerts in red). Returns { note }.',
+    requiredScope: 'mcp:rooms:write',
+    sideEffect: 'write',
+    annotations: write(false, false),
+    schema: roomNoteArgs,
+    outputSchema: roomOutput,
+  },
+  {
+    name: 'contextcontrol_ask_team',
+    title: 'Ask the team',
+    description: 'Hand a question or task from the call to the team behind this voice agent (it has the organization\'s tools and knowledge). Waits a few seconds: returns { status: "done", answer } or { status: "working", run_id } (then call contextcontrol_team_answer).',
+    requiredScope: 'mcp:rooms:write',
+    sideEffect: 'write',
+    annotations: write(false, false),
+    schema: askTeamArgs,
+    outputSchema: roomOutput,
+  },
+  {
+    name: 'contextcontrol_team_answer',
+    title: 'Team answer',
+    description: 'Check on a question handed to the team with contextcontrol_ask_team. Returns { status: "done"|"working"|"failed", answer?, error? }.',
+    requiredScope: 'mcp:rooms:read',
+    sideEffect: 'read',
+    annotations: READ,
+    schema: teamAnswerArgs,
+    outputSchema: roomOutput,
+  },
+  {
+    name: 'contextcontrol_place_call',
+    title: 'Place a phone call',
+    description: 'Call a phone number with one of the organization\'s voice agents (outbound). Checks consent attestation, do-not-call list, calling hours and daily limits first. Returns { room_id, status }.',
+    requiredScope: 'mcp:calls:write',
+    sideEffect: 'write',
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    schema: placeCallArgs,
+    outputSchema: roomOutput,
+  },
 ] as const satisfies readonly PlatformToolDefinition[];
+
+/** Tools a voice agent's MCP key gets (not place_call). */
+export const ROOM_TOOL_NAMES = ['contextcontrol_room_context', 'contextcontrol_room_transcript', 'contextcontrol_room_note', 'contextcontrol_ask_team', 'contextcontrol_team_answer'] as const;
+export const ROOM_SCOPES = ['mcp:rooms:read', 'mcp:rooms:write'] as const;
 
 export type PlatformToolName = (typeof PLATFORM_TOOL_DEFINITIONS)[number]['name'];
 

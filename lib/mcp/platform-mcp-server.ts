@@ -7,6 +7,7 @@ import { isServiceError } from '@/lib/services/errors';
 import * as profiles from '@/lib/services/profiles';
 import * as tasks from '@/lib/services/tasks';
 import * as board from '@/lib/services/board';
+import * as rooms from '@/lib/services/rooms';
 import { deployedFunctionRows, functionIdsForProfiles, invokeFunction } from '@/lib/services/functions';
 import { connectorToolsFor, runConnectorTool } from '@/lib/services/connections';
 import { functionToolName } from '@/lib/functions/function-spec';
@@ -56,6 +57,12 @@ const TOOL_HANDLERS: Record<PlatformToolName, (ctx: ToolCtx, args: any) => Promi
   contextcontrol_board_fail_task: board.failBoardTask,
   contextcontrol_board_release_task: board.releaseBoardTask,
   contextcontrol_board_add_note: board.addBoardNote,
+  contextcontrol_room_context: rooms.roomContextTool,
+  contextcontrol_room_transcript: rooms.roomTranscriptTool,
+  contextcontrol_room_note: rooms.roomNoteTool,
+  contextcontrol_ask_team: rooms.askTeamTool,
+  contextcontrol_team_answer: (ctx, args) => rooms.teamAnswerTool(ctx, args),
+  contextcontrol_place_call: rooms.placeCallTool,
   contextcontrol_board_request_handover: board.requestBoardHandover,
   contextcontrol_board_handover: board.handoverBoardTask,
 };
@@ -160,8 +167,11 @@ export function buildPlatformMcpServer(ctx: ToolCtx, tools: readonly PlatformToo
         outputSchema: tool.outputSchema,
         annotations: { title: tool.title, ...tool.annotations },
       },
-      async (args: Row): Promise<CallToolResult> => {
+      async (args: Row, extra?: { _meta?: Record<string, unknown> }): Promise<CallToolResult> => {
         try {
+          // Voice agents (ElevenLabs) send the live call's room in _meta; fill it in.
+          const metaRoom = extra?._meta?.room_id;
+          if ('room_id' in tool.schema.shape && !args.room_id && typeof metaRoom === 'string' && metaRoom && metaRoom !== 'test-room') args = { ...args, room_id: metaRoom };
           const result = await TOOL_HANDLERS[name](ctx, args);
           const text = args.response_format === 'json' ? JSON.stringify(result, null, 2) : renderMarkdown(name, result);
           return { content: [{ type: 'text', text: capText(text) }], structuredContent: result };

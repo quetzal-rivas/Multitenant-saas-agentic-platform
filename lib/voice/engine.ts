@@ -33,7 +33,7 @@ export type TranscribeResult =
   | { text: string; provider: VoiceProviderId; attempts: Attempt[] }
   | { fallback: 'browser'; attempts: Attempt[] };
 
-export type SpeakResult = (SpeechAudio & { provider: VoiceProviderId; attempts: Attempt[]; cached: boolean }) | { fallback: 'browser'; attempts: Attempt[] };
+export type SpeakResult = (SpeechAudio & { provider: VoiceProviderId; attempts: Attempt[]; cached: boolean; cache_key: string }) | { fallback: 'browser'; attempts: Attempt[] };
 
 type SecretGetter = (tenantId: string, provider: BYOKProvider) => Promise<string | null>;
 let secretGetter: SecretGetter = getTenantSecret;
@@ -151,7 +151,7 @@ export async function speakWithFallback(tenantId: string, profile: VoiceProfileL
     // Already spoken once with this exact voice and text: serve it from S3 (no provider call, no quota).
     const cacheKey = audioCacheKey(tenantId, provider, text, opts);
     const cached = await getCachedAudio(cacheKey);
-    if (cached) return { ...cached, provider, attempts, cached: true };
+    if (cached) return { ...cached, provider, attempts, cached: true, cache_key: cacheKey };
 
     const impl = VOICE_PROVIDER_IMPLS[provider]!;
     const key = await keyFor(tenantId, provider);
@@ -166,7 +166,7 @@ export async function speakWithFallback(tenantId: string, profile: VoiceProfileL
     try {
       const speech = await impl.synthesize(key, text, opts);
       await Promise.all([recordVoiceUsage(tenantId, provider, { tts_chars: text.length }), putCachedAudio(cacheKey, speech)]);
-      return { ...speech, provider, attempts, cached: false };
+      return { ...speech, provider, attempts, cached: false, cache_key: cacheKey };
     } catch (err) {
       attempts.push({ provider, error: describe(err) });
     }

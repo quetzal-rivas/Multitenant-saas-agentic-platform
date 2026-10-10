@@ -17,6 +17,7 @@ import {
   Wrench,
   XCircle,
   Inbox,
+  PhoneCall,
 } from 'lucide-react';
 import { useVoice } from '@/components/voice/useVoice';
 
@@ -26,7 +27,7 @@ import { useVoice } from '@/components/voice/useVoice';
  * turns are marked; any reply can be read aloud with the instance's voice profile.
  */
 
-type Kind = 'agent' | 'team' | 'heartbeat' | 'task' | 'inbound';
+type Kind = 'agent' | 'team' | 'heartbeat' | 'task' | 'inbound' | 'call';
 
 const CHANNEL_LABEL: Record<string, string> = { whatsapp: 'WhatsApp', messenger: 'Messenger', instagram: 'Instagram', phone_call: 'Phone call', sms: 'SMS', webhook: 'Webhook' };
 
@@ -50,6 +51,7 @@ interface Conversation {
   task_id: string | null;
   channel: string | null;
   contact: { id?: string; name?: string | null } | null;
+  room_id?: string | null;
   provider: string;
   model: string;
   voice: boolean;
@@ -71,7 +73,7 @@ interface TranscriptItem {
 
 interface Run {
   run_id: string;
-  origin: 'chat' | 'heartbeat' | 'task' | 'inbound';
+  origin: 'chat' | 'heartbeat' | 'task' | 'inbound' | 'room';
   channel: 'text' | 'voice';
   voice: { stt_provider?: string; audio_seconds?: number } | null;
   status: string;
@@ -98,9 +100,10 @@ const KIND_META: Record<Kind, { label: string; icon: React.ElementType; cls: str
   heartbeat: { label: 'Heartbeat', icon: HeartPulse, cls: 'text-violet-300 border-violet-800 bg-violet-950/40' },
   task: { label: 'Task', icon: CalendarClock, cls: 'text-sky-300 border-sky-800 bg-sky-950/40' },
   inbound: { label: 'Inbound', icon: Inbox, cls: 'text-amber-300 border-amber-800 bg-amber-950/40' },
+  call: { label: 'Call', icon: PhoneCall, cls: 'text-emerald-300 border-emerald-800 bg-emerald-950/40' },
 };
 
-const ORIGIN_LABEL: Record<Run['origin'], string> = { chat: 'chat', heartbeat: 'heartbeat', task: 'scheduled task', inbound: 'inbound message' };
+const ORIGIN_LABEL: Record<Run['origin'], string> = { chat: 'chat', heartbeat: 'heartbeat', task: 'scheduled task', inbound: 'inbound message', room: 'live call' };
 
 function ago(iso: string): string {
   const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
@@ -117,9 +120,10 @@ function StatusIcon({ status }: { status: string | null }) {
   return null;
 }
 
-export const Conversations: React.FC<{ onOpenInStudio?: (sessionId: string) => void; onOpenCalendar?: () => void }> = ({
+export const Conversations: React.FC<{ onOpenInStudio?: (sessionId: string) => void; onOpenCalendar?: () => void; onOpenCalls?: () => void }> = ({
   onOpenInStudio,
   onOpenCalendar,
+  onOpenCalls,
 }) => {
   const [list, setList] = useState<Conversation[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
@@ -196,6 +200,7 @@ export const Conversations: React.FC<{ onOpenInStudio?: (sessionId: string) => v
     ['heartbeat', 'Heartbeats', counts.heartbeat],
     ['task', 'Tasks', counts.task],
     ['inbound', 'Inbound', counts.inbound],
+    ['call', 'Calls', counts.call],
     ['voice', 'Voice', counts.voice],
   ];
 
@@ -295,6 +300,9 @@ export const Conversations: React.FC<{ onOpenInStudio?: (sessionId: string) => v
                 </p>
               </div>
               <div className="flex items-center gap-2 text-xs">
+                {c.kind === 'call' && onOpenCalls && (
+                  <button onClick={onOpenCalls} className="px-3 py-1.5 rounded-md border border-zinc-700 text-zinc-300 hover:text-white">Open in Live Calls</button>
+                )}
                 {c.kind === 'task' && onOpenCalendar && (
                   <button onClick={onOpenCalendar} className="px-3 py-1.5 rounded-md border border-zinc-700 text-zinc-300 hover:text-white">Open in Task Calendar</button>
                 )}

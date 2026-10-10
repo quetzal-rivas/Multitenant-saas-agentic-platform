@@ -16,6 +16,7 @@ decide what to keep. Nothing in this folder is type-checked, linted, tested, bun
 | `components/LiveVoiceConferenceSection.tsx`, `lib/demo/twilio-conference-manager.ts`, `app-routes/twilio/live-calls/route.ts` | "Live voice conference" monitor: fake Twilio calls and a synthesized hum | Mock; phone calls are not built yet | Browser voice turns (Voice page, Agent Studio mic). Phone calls are a later phase |
 | `lib/voice/voice-service.ts`, `tests/phase5-voice.test.ts` | Twilio webhook signature check, TCPA attestation helpers, `ENABLE_VOICE_CALLS` flag | Only used by the mock route; kept for the future phone phase | `lib/voice/engine.ts` (speech-to-text / text-to-speech with fallback) |
 | `components/EndpointsView.tsx` | "Endpoints" page: a hard-coded catalog of fake services (BullMQ scheduler, LangGraph engine, post-call CRM sync…) | Mock data | Webhooks page (`components/InboundGatewayView.tsx`): real inbound endpoints with signature checks and routing |
+| `snippets/onboarding-step3-mock-twilio-numbers.tsx.txt` | Onboarding step 3: fake 555 Twilio numbers and a "port custom number" form the server ignored | Mock | Optional "Connect your Twilio account" step (real verification) and Live Calls → Twilio & numbers |
 
 ## AWS resources from the old backend (not touched)
 Moving these files does not delete anything in AWS. Earlier experiments left resources such as a

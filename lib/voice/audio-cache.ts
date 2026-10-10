@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import type { VoiceProviderId } from './profile-spec';
 import type { SpeechAudio, SynthesizeOptions } from './types';
 
@@ -88,6 +89,19 @@ export async function putInboundMedia(tenantId: string, name: string, audio: Spe
     return key;
   } catch (err: any) {
     console.error('[inbound-media] write failed', err?.name || err);
+    return null;
+  }
+}
+
+/** Short-lived public URL for a cached clip (Twilio <Play> fetches it during a call). */
+export async function presignedAudioUrl(key: string, seconds = 900): Promise<string | null> {
+  if (override) return `https://cache.test/${key}`;
+  const name = bucket();
+  if (!name) return null;
+  try {
+    return await getSignedUrl(s3(), new GetObjectCommand({ Bucket: name, Key: key }), { expiresIn: seconds });
+  } catch (err: any) {
+    console.error('[voice-cache] presign failed', err?.name || err);
     return null;
   }
 }

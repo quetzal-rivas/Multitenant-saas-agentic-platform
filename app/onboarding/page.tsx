@@ -15,20 +15,10 @@ export default function OnboardingPage() {
     { name: 'ELEVENLABS_API_KEY', value: '' },
     { name: 'GEMINI_API_TOKEN', value: '' }
   ]);
-  const [selectedTwilioNumber, setSelectedTwilioNumber] = useState<string>('+1 (555) 839-2041');
-  const [showCustomPorting, setShowCustomPorting] = useState<boolean>(false);
-  const [customTwilioNumber, setCustomTwilioNumber] = useState<string>('');
-  const [customTwilioSid, setCustomTwilioSid] = useState<string>('');
-  const [customTwilioToken, setCustomTwilioToken] = useState<string>('');
+  const [twilioSid, setTwilioSid] = useState<string>('');
+  const [twilioToken, setTwilioToken] = useState<string>('');
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-
-  const AVAILABLE_TWILIO_NUMBERS = [
-    { number: '+1 (555) 839-2041', label: 'Primary Enterprise Voice Line (US East)' },
-    { number: '+1 (555) 912-3344', label: 'DevOps Incident Pager Line (US West)' },
-    { number: '+1 (555) 438-9021', label: 'Executive Concierge Line (US Central)' },
-    { number: '+44 20 7946 0912', label: 'International Ops Line (UK London)' },
-  ];
 
   const handleCompleteOnboarding = async () => {
     setSubmitting(true);
@@ -40,9 +30,6 @@ export default function OnboardingPage() {
         body: JSON.stringify({
           orgName,
           apiKeys: apiKeys.filter(k => k.value.trim() !== ''),
-          twilioNumber: showCustomPorting ? customTwilioNumber : selectedTwilioNumber,
-          twilioSid: showCustomPorting ? customTwilioSid : undefined,
-          twilioToken: showCustomPorting ? customTwilioToken : undefined,
         }),
       });
 
@@ -50,6 +37,20 @@ export default function OnboardingPage() {
       if (!res.ok || !data.success) {
         setErrorMsg(data.error || 'Failed to complete onboarding setup');
       } else {
+        // Optional: connect the organization's own Twilio account (verified server-side).
+        if (twilioSid.trim() && twilioToken.trim()) {
+          const tel = await fetch('/api/v1/telephony', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'connect', account_sid: twilioSid.trim(), auth_token: twilioToken.trim() }),
+          });
+          if (!tel.ok) {
+            const t = await tel.json().catch(() => ({}));
+            setErrorMsg(`Workspace created, but Twilio was not connected: ${t.error || tel.status}. Connect it later in Live Calls. Continuing in 8 seconds…`);
+            setTimeout(() => router.push('/organizations'), 8000);
+            return;
+          }
+        }
         if (Array.isArray(data.secretsFailed) && data.secretsFailed.length > 0) {
           // The workspace exists; tell the user which keys were rejected before moving on.
           const rejected = data.secretsFailed.map((f: { field: string; reason: string }) => `${f.field}: ${f.reason}`).join('\n');
@@ -237,86 +238,59 @@ export default function OnboardingPage() {
           <div className="space-y-6">
             <div>
               <div className="flex items-center gap-2 text-emerald-400 font-mono text-xs mb-2">
-                <Phone className="w-4 h-4" /> STEP 3 OF 3
+                <Phone className="w-4 h-4" /> STEP 3 OF 3 · OPTIONAL
               </div>
-              <h2 className="text-2xl font-bold text-white">Telephony & Voice Provisioning</h2>
+              <h2 className="text-2xl font-bold text-white">Phone calls</h2>
               <p className="text-zinc-400 text-sm mt-1">
-                Select an available system Twilio line to bind to your workspace for automated ElevenLabs voice call escalations.
+                Voice agents answer and place calls on your own telephony account, with the numbers you already have there. Calls and minutes are billed by your provider. You can skip this and connect later in Live Calls.
               </p>
             </div>
 
-            {!showCustomPorting ? (
-              <>
-                <div>
-                  <label className="block text-xs font-medium text-zinc-300 mb-2">Available System Twilio Phone Lines</label>
-                  <select
-                    value={selectedTwilioNumber}
-                    onChange={(e) => setSelectedTwilioNumber(e.target.value)}
-                    className="w-full px-4 py-3 rounded-xl bg-zinc-950 border border-zinc-800 text-white text-sm font-mono focus:outline-none focus:border-emerald-500"
-                  >
-                    {AVAILABLE_TWILIO_NUMBERS.map((item) => (
-                      <option key={item.number} value={item.number}>
-                        {item.number} — {item.label}
-                      </option>
-                    ))}
-                  </select>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div className="p-3 rounded-xl border border-emerald-600 bg-emerald-950/20 text-xs">
+                <div className="flex items-center gap-2 text-sm text-white">
+                  <span className="px-1.5 py-0.5 rounded bg-red-950 text-red-300 border border-red-900 text-[10px] font-mono">Twilio</span> Your Twilio account
                 </div>
-                <button
-                  onClick={() => setShowCustomPorting(true)}
-                  className="text-xs text-emerald-400 hover:text-emerald-300 font-mono flex items-center gap-1 mt-2 transition-colors"
-                >
-                  + Port custom Number
-                </button>
-              </>
-            ) : (
-              <div className="space-y-4 p-4 rounded-xl bg-zinc-900/50 border border-zinc-800">
-                <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-sm font-semibold text-white">Custom Twilio Credentials</h3>
-                  <button
-                    onClick={() => setShowCustomPorting(false)}
-                    className="text-xs text-zinc-400 hover:text-white transition-colors"
-                  >
-                    Use System Number
-                  </button>
-                </div>
-                <div>
-                  <label className="block text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-1">Phone Number</label>
-                  <input
-                    type="text"
-                    value={customTwilioNumber}
-                    onChange={(e) => setCustomTwilioNumber(e.target.value)}
-                    placeholder="+1 (555) 000-0000"
-                    className="w-full px-3 py-2 rounded-lg bg-zinc-950 border border-zinc-700 text-white text-xs font-mono focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-1">Twilio Account SID</label>
-                  <input
-                    type="text"
-                    value={customTwilioSid}
-                    onChange={(e) => setCustomTwilioSid(e.target.value)}
-                    placeholder="AC..."
-                    className="w-full px-3 py-2 rounded-lg bg-zinc-950 border border-zinc-700 text-white text-xs font-mono focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-1">Twilio Auth Token</label>
-                  <input
-                    type="password"
-                    value={customTwilioToken}
-                    onChange={(e) => setCustomTwilioToken(e.target.value)}
-                    placeholder="Secret token"
-                    className="w-full px-3 py-2 rounded-lg bg-zinc-950 border border-zinc-700 text-white text-xs font-mono focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
+                <p className="text-zinc-400 mt-1">Numbers in 100+ countries, porting, SMS.</p>
               </div>
-            )}
+              <div className="p-3 rounded-xl border border-zinc-800 text-xs opacity-60">
+                <div className="flex items-center gap-2 text-sm text-white">
+                  <span className="px-1.5 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-900 text-[10px] font-mono">AWS</span> Amazon Chime SDK
+                </div>
+                <p className="text-zinc-400 mt-1">Coming soon: numbers in your own AWS account.</p>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-1">Twilio Account SID</label>
+                <input
+                  type="text"
+                  value={twilioSid}
+                  onChange={(e) => setTwilioSid(e.target.value)}
+                  placeholder="AC…"
+                  autoComplete="off"
+                  className="w-full px-3 py-2 rounded-lg bg-zinc-950 border border-zinc-700 text-white text-xs font-mono focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-1">Twilio Auth Token</label>
+                <input
+                  type="password"
+                  value={twilioToken}
+                  onChange={(e) => setTwilioToken(e.target.value)}
+                  placeholder="From the Twilio Console home page"
+                  autoComplete="off"
+                  className="w-full px-3 py-2 rounded-lg bg-zinc-950 border border-zinc-700 text-white text-xs font-mono focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+              <p className="text-[11px] text-zinc-500">We verify the credentials with Twilio, store them encrypted, and list your existing numbers. Buy or port numbers in the Twilio Console.</p>
+            </div>
 
             <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-xs text-emerald-300 space-y-1 font-mono">
-              <div className="font-bold flex items-center gap-1.5"><Sparkles className="w-4 h-4" /> Workspace Provisioning Ready:</div>
-              <div>• Tenant: {orgName}</div>
-              <div>• Telephony: {showCustomPorting ? (customTwilioNumber || 'Pending Configuration') : selectedTwilioNumber}</div>
-              <div>• PostgresSaver RLS Boundary: Enabled</div>
+              <div className="font-bold flex items-center gap-1.5"><Sparkles className="w-4 h-4" /> Ready to create:</div>
+              <div>• Organization: {orgName}</div>
+              <div>• Phone calls: {twilioSid.trim() && twilioToken.trim() ? 'connect Twilio' : 'skip for now'}</div>
             </div>
 
             <div className="flex gap-3">

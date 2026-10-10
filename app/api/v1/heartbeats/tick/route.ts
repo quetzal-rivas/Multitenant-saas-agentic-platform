@@ -7,6 +7,7 @@ import { processDueHeartbeats, verifyHeartbeatSecret } from '@/lib/services/hear
 import { recoverStaleRuns } from '@/lib/services/agent-runs';
 import { processDueTasks } from '@/lib/services/scheduled-tasks';
 import { sweepInbound } from '@/lib/services/inbound';
+import { sweepRooms } from '@/lib/services/rooms';
 
 /**
  * Called every minute by Supabase pg_cron (public.trigger_heartbeat_tick) with the
@@ -33,7 +34,12 @@ export async function POST(req: NextRequest) {
       console.error('[heartbeats:tick] inbound sweep failed', err);
       return null;
     });
-    return NextResponse.json({ processed: outcomes.length, outcomes, tasks, runs, inbound });
+    // Live calls: silence / check-in triggers, stuck calls, transcript retention.
+    const rooms = await sweepRooms().catch((err) => {
+      console.error('[heartbeats:tick] rooms sweep failed', err);
+      return null;
+    });
+    return NextResponse.json({ processed: outcomes.length, outcomes, tasks, runs, inbound, rooms });
   } catch (err) {
     return errorResponse(err, 'heartbeats:tick');
   }

@@ -136,7 +136,8 @@ describe('Phase 3 Real Agent Loop & MCP Gateway Verification', () => {
       assert.equal((toolOutputJsonSchema(tool) as any).type, 'object');
       const a = tool.annotations;
       assert.equal(a.readOnlyHint, tool.sideEffect === 'read');
-      assert.equal(a.openWorldHint, false);
+      // Only tools that reach people outside the platform are open-world (placing a phone call).
+      assert.equal(a.openWorldHint, tool.name === 'contextcontrol_place_call', `${tool.name} openWorldHint`);
       if (a.readOnlyHint) assert.equal(a.destructiveHint, false);
     }
     const byName = Object.fromEntries(PLATFORM_TOOL_DEFINITIONS.map((t) => [t.name, t.annotations]));

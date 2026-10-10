@@ -21,6 +21,12 @@ export function verify(input: VerifyInput): VerifyResult {
   return safeEqual(v0, `v0=${hmacHex('sha256', secret, `${t}.${input.rawBody}`)}`) ? { ok: true } : { ok: false, reason: 'Signature does not match.' };
 }
 
+/** Calls placed through Live Rooms carry the room id (SIP header X-Room-Id → {{sip_room_id}}). */
+function roomIdOf(data: any): string | null {
+  const v = data?.conversation_initiation_client_data?.dynamic_variables?.sip_room_id;
+  return typeof v === 'string' && /^[0-9a-f-]{36}$/i.test(v) ? v : null;
+}
+
 function phoneOf(data: any): string | null {
   const phone = data?.metadata?.phone_call || data?.conversation_initiation_client_data?.dynamic_variables || {};
   return str(phone.external_number || phone.system__caller_id || phone.from_number || phone.caller_id) || null;
@@ -49,7 +55,7 @@ export function normalize(body: any): NormalizedEvent[] {
         summary ? `Summary: ${summary}` : '',
         turns.length ? `Transcript:\n${turns.join('\n')}` : '',
       ].filter(Boolean).join('\n\n'),
-      meta: { conversation_id: conversationId, agent_id: data.agent_id, has_audio: !!data.has_audio, call_successful: data.analysis?.call_successful, duration_secs: duration },
+      meta: { conversation_id: conversationId, agent_id: data.agent_id, has_audio: !!data.has_audio, call_successful: data.analysis?.call_successful, duration_secs: duration, summary: summary || null, room_id: roomIdOf(data) },
     }];
   }
   if (type === 'post_call_audio') {

@@ -21,6 +21,7 @@ import {
   Terminal,
   UserCircle,
   Mic,
+  PhoneCall,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -112,6 +113,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </div>
               <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800/50">
                 INBOX
+              </span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('calls')}
+              className={`w-full flex items-center justify-between px-3 py-2 rounded-md text-xs font-medium transition-all ${
+                activeTab === 'calls'
+                  ? 'bg-zinc-800/90 text-white font-semibold border-l-2 border-emerald-500 pl-2.5'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40'
+              }`}
+            >
+              <div className="flex items-center gap-2.5">
+                <PhoneCall className={`w-4 h-4 ${activeTab === 'calls' ? 'text-emerald-400' : 'text-zinc-400'}`} />
+                <span>Live Calls</span>
+              </div>
+              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800/50">
+                ROOMS
               </span>
             </button>
 

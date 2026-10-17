@@ -168,7 +168,7 @@ export function FunctionStudio() {
 
   return (
     <div className="h-full flex bg-[#090b10] text-zinc-100 overflow-hidden">
-      <aside className={`${mobileDetail ? 'hidden' : 'flex'} md:flex w-full md:w-64 shrink-0 border-r border-zinc-800 bg-[#0d1017] flex-col`}>
+      <aside className={`${mobileDetail ? 'hidden' : 'flex'} lg:flex w-full lg:w-64 shrink-0 border-r border-zinc-800 bg-[#0d1017] flex-col`}>
         <div className="px-4 py-4 border-b border-zinc-800 flex items-center justify-between">
           <div>
             <h1 className="text-sm font-semibold text-white flex items-center gap-1.5"><Code2 className="w-4 h-4 text-emerald-400" /> AI Function Studio</h1>
@@ -202,8 +202,8 @@ export function FunctionStudio() {
         </div>
       </aside>
 
-      <main className={`${mobileDetail ? 'block' : 'hidden'} md:block flex-1 min-w-0 overflow-y-auto`}>
-        <div className="md:hidden px-4 pt-3"><button onClick={() => setMobileDetail(false)} className="text-xs text-emerald-400">← All functions</button></div>
+      <main className={`${mobileDetail ? 'block' : 'hidden'} lg:block flex-1 min-w-0 overflow-y-auto`}>
+        <div className="lg:hidden px-4 pt-3"><button onClick={() => setMobileDetail(false)} className="text-xs text-emerald-400">← All functions</button></div>
         {error && (
           <div className="m-6 p-3 rounded-lg bg-rose-950/40 border border-rose-900/60 text-xs text-rose-300 flex items-center gap-2">
             <AlertTriangle className="w-3.5 h-3.5" /> {error}

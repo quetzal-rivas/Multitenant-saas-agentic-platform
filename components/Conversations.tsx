@@ -211,7 +211,7 @@ export const Conversations: React.FC<{ onOpenInStudio?: (sessionId: string) => v
   return (
     <div className="h-[calc(100vh-3.5rem)] flex bg-[#090b10] text-zinc-100 overflow-hidden">
       {/* Inbox */}
-      <aside className={`${mobileDetail ? 'hidden' : 'flex'} md:flex w-full md:w-80 shrink-0 border-r border-zinc-800 flex-col`}>
+      <aside className={`${mobileDetail ? 'hidden' : 'flex'} lg:flex w-full lg:w-80 shrink-0 border-r border-zinc-800 flex-col`}>
         <div className="p-4 border-b border-zinc-800 space-y-3 bg-[#0d1017]">
           <div className="flex items-center justify-between">
             <h1 className="text-base font-semibold text-white flex items-center gap-2"><MessageSquare className="w-4 h-4 text-emerald-400" /> Conversations</h1>
@@ -286,7 +286,7 @@ export const Conversations: React.FC<{ onOpenInStudio?: (sessionId: string) => v
       </aside>
 
       {/* Detail */}
-      <section className={`${mobileDetail ? 'flex' : 'hidden'} md:flex flex-1 min-w-0 flex-col`}>
+      <section className={`${mobileDetail ? 'flex' : 'hidden'} lg:flex flex-1 min-w-0 flex-col`}>
         {error && (
           <div className="m-4 p-3 rounded-lg bg-rose-950/40 border border-rose-900/60 text-xs text-rose-300 flex items-center gap-2">
             <AlertTriangle className="w-3.5 h-3.5" /> {error}
@@ -298,7 +298,7 @@ export const Conversations: React.FC<{ onOpenInStudio?: (sessionId: string) => v
           <>
             <header className="px-4 sm:px-6 py-4 border-b border-zinc-800 bg-[#0d1017] flex flex-wrap items-center justify-between gap-3">
               <div className="min-w-0">
-                <button onClick={() => setMobileDetail(false)} className="md:hidden text-xs text-emerald-400 mb-1">← All conversations</button>
+                <button onClick={() => setMobileDetail(false)} className="lg:hidden text-xs text-emerald-400 mb-1">← All conversations</button>
                 <h2 className="text-base font-semibold text-white truncate">{c.name}</h2>
                 <p className="text-xs text-zinc-400">
                   {KIND_META[c.kind].label}

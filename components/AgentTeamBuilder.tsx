@@ -353,7 +353,7 @@ export const AgentTeamBuilder: React.FC<AgentTeamBuilderProps> = ({ onLaunchThre
   return (
     <div className="h-full flex bg-[#090b10] text-zinc-100 overflow-hidden">
       {/* Team list */}
-      <aside className={`${mobileDetail ? 'hidden' : 'flex'} md:flex w-full md:w-64 shrink-0 border-r border-zinc-800 bg-[#0d1017] flex-col`}>
+      <aside className={`${mobileDetail ? 'hidden' : 'flex'} lg:flex w-full lg:w-64 shrink-0 border-r border-zinc-800 bg-[#0d1017] flex-col`}>
         <div className="p-4 border-b border-zinc-800 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-white flex items-center gap-2">
             <Users className="w-4 h-4 text-emerald-400" /> Teams
@@ -390,10 +390,10 @@ export const AgentTeamBuilder: React.FC<AgentTeamBuilderProps> = ({ onLaunchThre
       </aside>
 
       {/* Editor */}
-      <main className={`${mobileDetail ? 'flex' : 'hidden'} md:flex flex-1 flex-col min-w-0`}>
+      <main className={`${mobileDetail ? 'flex' : 'hidden'} lg:flex flex-1 flex-col min-w-0`}>
         <header className="px-4 sm:px-6 py-4 border-b border-zinc-800 flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
-            <button onClick={() => setMobileDetail(false)} className="md:hidden text-xs text-emerald-400 mb-1">← All teams</button>
+            <button onClick={() => setMobileDetail(false)} className="lg:hidden text-xs text-emerald-400 mb-1">← All teams</button>
             <h1 className="text-lg font-semibold text-white">{selectedId ? draft.name || 'Untitled team' : 'New team'}</h1>
             <p className="text-xs text-zinc-400">
               A supervisor that can delegate to workers. With no workers it is a single agent.

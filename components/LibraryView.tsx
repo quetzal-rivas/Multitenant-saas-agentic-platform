@@ -892,8 +892,8 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
       {/* MODAL 1: INSPECT SKILL MODAL                                              */}
       {/* ========================================================================= */}
       {inspectingSkill && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#0e1117] border border-zinc-800 rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl animate-in zoom-in-95 duration-150">
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-start justify-center overflow-y-auto p-4">
+          <div className="my-auto bg-[#0e1117] border border-zinc-800 rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl animate-in zoom-in-95 duration-150">
             {/* Modal Header */}
             <div className="p-6 border-b border-zinc-800 flex items-start justify-between gap-4">
               <div className="flex items-start gap-3">
@@ -1042,8 +1042,8 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
       {/* MODAL 2: UPLOAD SKILL MANIFEST MODAL                                      */}
       {/* ========================================================================= */}
       {isUploadModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#0e1117] border border-zinc-800 rounded-2xl w-full max-w-xl overflow-hidden flex flex-col shadow-2xl animate-in zoom-in-95 duration-150">
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-start justify-center overflow-y-auto p-4">
+          <div className="my-auto bg-[#0e1117] border border-zinc-800 rounded-2xl w-full max-w-xl overflow-hidden flex flex-col shadow-2xl animate-in zoom-in-95 duration-150">
             {/* Header */}
             <div className="p-6 border-b border-zinc-800 flex items-center justify-between">
               <div className="flex items-center gap-2.5">
@@ -1160,8 +1160,8 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
       {/* MODAL 3: CREATE CUSTOM SKILL BUILDER                                      */}
       {/* ========================================================================= */}
       {isCreateModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#0e1117] border border-zinc-800 rounded-2xl w-full max-w-2xl overflow-hidden flex flex-col shadow-2xl animate-in zoom-in-95 duration-150">
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-start justify-center overflow-y-auto p-4">
+          <div className="my-auto bg-[#0e1117] border border-zinc-800 rounded-2xl w-full max-w-2xl overflow-hidden flex flex-col shadow-2xl animate-in zoom-in-95 duration-150">
             {/* Header */}
             <div className="p-6 border-b border-zinc-800 flex items-center justify-between">
               <div className="flex items-center gap-2.5">

@@ -508,8 +508,8 @@ function ItemInfo({
     onNavigate?.(tab);
   };
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="w-full max-w-sm rounded-xl bg-[#0e131e] border border-zinc-700 p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-start justify-center overflow-y-auto p-4" onClick={onClose}>
+      <div className="my-auto w-full max-w-sm rounded-xl bg-[#0e131e] border border-zinc-700 p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-2">
             {heartbeat ? <HeartPulse className="w-4 h-4 text-violet-300" /> : <KanbanSquare className="w-4 h-4 text-amber-300" />}
@@ -607,8 +607,8 @@ const TaskForm: React.FC<{ task: Task | null; teams: Team[]; onClose: () => void
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="w-full max-w-2xl max-h-[92vh] overflow-y-auto bg-[#0e131e] border border-zinc-700 rounded-2xl p-6 space-y-4">
+    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-start justify-center overflow-y-auto p-4">
+      <div className="my-auto w-full max-w-2xl max-h-[92vh] overflow-y-auto bg-[#0e131e] border border-zinc-700 rounded-2xl p-6 space-y-4">
         <div className="flex items-center justify-between">
           <h3 className="text-base font-semibold text-white">{task ? 'Edit task' : 'Schedule a task'}</h3>
           <button onClick={onClose} className="text-zinc-400 hover:text-white"><X className="w-5 h-5" /></button>

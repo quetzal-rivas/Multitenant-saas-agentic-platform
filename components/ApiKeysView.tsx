@@ -753,8 +753,8 @@ export const ApiKeysView: React.FC = () => {
       {/* DIALOG 1: EDIT SCOPES DIALOG (FINE-GRAINED MCP TOOLS WHITELIST) */}
       {/* ==================================================================== */}
       {editingKey && (
-        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-2xl bg-[#0e131e] border border-zinc-700 rounded-2xl p-6 space-y-5 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-start justify-center overflow-y-auto p-4">
+          <div className="my-auto w-full max-w-2xl bg-[#0e131e] border border-zinc-700 rounded-2xl p-6 space-y-5 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
             {/* Dialog Header */}
             <div className="flex items-start justify-between border-b border-zinc-800 pb-4">
               <div>
@@ -926,8 +926,8 @@ export const ApiKeysView: React.FC = () => {
       {/* MODAL 2: CREATE WORKSPACE KEY MODAL */}
       {/* ==================================================================== */}
       {showCreateModal && (
-        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-lg bg-[#0e131e] border border-zinc-700 rounded-2xl p-6 space-y-5 shadow-2xl">
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-start justify-center overflow-y-auto p-4">
+          <div className="my-auto w-full max-w-lg bg-[#0e131e] border border-zinc-700 rounded-2xl p-6 space-y-5 shadow-2xl">
             <div className="flex items-start justify-between border-b border-zinc-800 pb-3">
               <h3 className="text-base font-bold text-white">Create Workspace Secret Key</h3>
               <button
@@ -1078,8 +1078,8 @@ export const ApiKeysView: React.FC = () => {
       {/* MODAL 3: ONE-TIME SECRET REVEAL */}
       {/* ==================================================================== */}
       {revealedKey && (
-        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-lg bg-[#0e131e] border border-emerald-800/70 rounded-2xl p-6 space-y-4 shadow-2xl">
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-start justify-center overflow-y-auto p-4">
+          <div className="my-auto w-full max-w-lg bg-[#0e131e] border border-emerald-800/70 rounded-2xl p-6 space-y-4 shadow-2xl">
             <div className="flex items-center gap-2">
               <CheckCircle2 className="w-5 h-5 text-emerald-400" />
               <h3 className="text-base font-bold text-white">Key created: {revealedKey.name}</h3>

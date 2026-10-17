@@ -183,8 +183,8 @@ export const CreateProfileModal: React.FC<CreateProfileModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="w-full max-w-2xl bg-[#0e121a] border border-zinc-800 rounded-xl shadow-2xl overflow-hidden space-y-6 p-6">
+    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-start justify-center overflow-y-auto p-4">
+      <div className="my-auto w-full max-w-2xl bg-[#0e121a] border border-zinc-800 rounded-xl shadow-2xl overflow-hidden space-y-6 p-6">
         <div className="flex items-center justify-between pb-4 border-b border-zinc-800">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-lg bg-emerald-950 flex items-center justify-center border border-emerald-800 text-emerald-400">

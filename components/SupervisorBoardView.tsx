@@ -348,8 +348,8 @@ const NewTaskModal: React.FC<{ teams: Team[]; onClose: () => void; onCreated: ()
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="w-full max-w-lg bg-[#0e131e] border border-zinc-700 rounded-2xl p-6 space-y-4">
+    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-start justify-center overflow-y-auto p-4">
+      <div className="my-auto w-full max-w-lg bg-[#0e131e] border border-zinc-700 rounded-2xl p-6 space-y-4">
         <div className="flex items-center justify-between">
           <h3 className="text-base font-semibold text-white">Post a task</h3>
           <button onClick={onClose} className="text-zinc-400 hover:text-white"><X className="w-5 h-5" /></button>

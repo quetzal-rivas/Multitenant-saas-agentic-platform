@@ -764,8 +764,8 @@ export const SourcesView: React.FC<SourcesViewProps> = ({
       {/* 2. TEST PING DATA PREVIEW OVERLAY (DATA EXPLORER SHEET) */}
       {/* ==================================================================== */}
       {previewSheetSource && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-3xl bg-[#0b0e16] border border-zinc-800 rounded-2xl shadow-2xl flex flex-col max-h-[90vh] font-mono animate-in zoom-in-95 duration-150 overflow-hidden">
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-start justify-center overflow-y-auto p-4">
+          <div className="my-auto w-full max-w-3xl bg-[#0b0e16] border border-zinc-800 rounded-2xl shadow-2xl flex flex-col max-h-[90vh] font-mono animate-in zoom-in-95 duration-150 overflow-hidden">
             {/* Modal Header */}
             <div className="p-5 border-b border-zinc-800 bg-[#101421] flex items-center justify-between">
               <div className="flex items-center gap-3">

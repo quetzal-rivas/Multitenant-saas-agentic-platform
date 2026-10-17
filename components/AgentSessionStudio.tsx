@@ -177,8 +177,8 @@ const InstanceModal: React.FC<{
   const noProviders = mode === 'create' && configured.length === 0;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="w-full max-w-lg bg-[#0e131e] border border-zinc-700 rounded-2xl p-6 space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto">
+    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-start justify-center overflow-y-auto p-4">
+      <div className="my-auto w-full max-w-lg bg-[#0e131e] border border-zinc-700 rounded-2xl p-6 space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto">
         <div className="flex items-start justify-between">
           <div>
             <h3 className="text-base font-bold text-white">{mode === 'create' ? 'New agent instance' : 'Edit instance'}</h3>
@@ -1079,8 +1079,8 @@ export const AgentSessionStudio: React.FC<AgentSessionStudioProps> = ({ initialT
       )}
 
       {checkpointDetail && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-2xl bg-[#0e131e] border border-zinc-700 rounded-2xl p-6 space-y-4 shadow-2xl max-h-[90vh] flex flex-col">
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-start justify-center overflow-y-auto p-4">
+          <div className="my-auto w-full max-w-2xl bg-[#0e131e] border border-zinc-700 rounded-2xl p-6 space-y-4 shadow-2xl max-h-[90vh] flex flex-col">
             <div className="flex items-start justify-between">
               <div>
                 <h3 className="text-base font-bold text-white">Checkpoint · step {checkpointDetail.step_index}</h3>

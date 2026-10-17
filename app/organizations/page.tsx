@@ -190,8 +190,8 @@ export default function OrganizationsPage() {
 
       {/* Create Modal */}
       {isCreating && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#0f121a] border border-zinc-700 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl">
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-start justify-center overflow-y-auto p-4">
+          <div className="my-auto bg-[#0f121a] border border-zinc-700 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl">
             <div className="p-5 border-b border-zinc-800 flex items-center justify-between">
               <h3 className="text-sm font-semibold text-white">Create New Organization</h3>
               <button onClick={() => setIsCreating(false)} className="text-zinc-400 hover:text-white">
@@ -220,8 +220,8 @@ export default function OrganizationsPage() {
 
       {/* Manage/Invite Modal */}
       {managingOrg && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#0f121a] border border-zinc-700 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl">
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-start justify-center overflow-y-auto p-4">
+          <div className="my-auto bg-[#0f121a] border border-zinc-700 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl">
             <div className="p-5 border-b border-zinc-800 flex items-center justify-between">
               <div>
                 <h3 className="text-sm font-semibold text-white flex items-center gap-2">

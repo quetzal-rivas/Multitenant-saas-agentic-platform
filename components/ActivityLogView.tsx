@@ -159,7 +159,7 @@ export const ActivityLogView: React.FC<{ onNavigate?: (tab: string) => void }> =
       </header>
 
       <div className="flex-1 flex min-h-0">
-        <aside className={`${mobileDetail ? 'hidden' : 'flex'} md:flex w-full md:w-[420px] shrink-0 border-r border-zinc-800 flex-col min-h-0`}>
+        <aside className={`${mobileDetail ? 'hidden' : 'flex'} lg:flex w-full lg:w-[400px] shrink-0 border-r border-zinc-800 flex-col min-h-0`}>
           {error && <p className="m-4 text-xs text-rose-300">{error}</p>}
           <div className="flex-1 overflow-y-auto">
             {!loading && entries.length === 0 && !error && (
@@ -204,14 +204,14 @@ export const ActivityLogView: React.FC<{ onNavigate?: (tab: string) => void }> =
           </div>
         </aside>
 
-        <section className={`${mobileDetail ? 'block' : 'hidden'} md:block flex-1 min-w-0 overflow-y-auto`}>
-          <div className="md:hidden px-4 pt-3">
+        <section className={`${mobileDetail ? 'block' : 'hidden'} lg:block flex-1 min-w-0 overflow-y-auto`}>
+          <div className="lg:hidden px-4 pt-3">
             <button onClick={() => setMobileDetail(false)} className="text-xs text-emerald-400">← All logs</button>
           </div>
           {selected ? (
             <EntryDetail key={`${selected.kind}:${selected.id}`} entry={selected} onNavigate={onNavigate} />
           ) : (
-            <div className="h-full hidden md:flex items-center justify-center text-sm text-zinc-500 p-8 text-center">
+            <div className="h-full hidden lg:flex items-center justify-center text-sm text-zinc-500 p-8 text-center">
               Select an entry to see its details. Agent runs show every step and tool call.
             </div>
           )}

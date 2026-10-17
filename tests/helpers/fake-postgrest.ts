@@ -59,6 +59,32 @@ function respond(rows: Row[], accept: string | null, status = 200, total?: numbe
 
 let clock = 0;
 
+/**
+ * Database functions emulated in JS (single-threaded, so as atomic as the real ones).
+ * Keep in sync with supabase/migrations (scripts/ci/sql-tests checks the real SQL).
+ */
+const RPC: Record<string, (args: Row) => unknown> = {
+  start_agent_run({ p_run, p_max_concurrent, p_max_tokens_day }: Row) {
+    const runs = (tables.agent_runs ||= []);
+    const tenant = p_run.tenant_id;
+    if (p_run.client_ref) {
+      const existing = runs.find((r) => r.tenant_id === tenant && r.client_ref === p_run.client_ref);
+      if (existing) return { outcome: 'reused', run_id: existing.id };
+    }
+    const org = (tables.organizations ||= []).find((o) => o.id === tenant);
+    if (org?.agents_paused_at) return { outcome: 'paused', paused_at: org.agents_paused_at };
+    const active = runs.filter((r) => r.tenant_id === tenant && (r.status === 'queued' || r.status === 'running'));
+    if (active.length >= p_max_concurrent) return { outcome: 'concurrency', active: active.length, limit: p_max_concurrent };
+    const now = new Date();
+    const dayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
+    const used = runs.filter((r) => r.tenant_id === tenant && String(r.created_at) >= dayStart).reduce((n, r) => n + (r.tokens_used ?? 0), 0);
+    if (used >= p_max_tokens_day) return { outcome: 'daily_cap', used, limit: p_max_tokens_day };
+    if (active.some((r) => r.session_id === p_run.session_id)) return { outcome: 'busy' };
+    runs.push({ ...p_run });
+    return { outcome: 'created', run_id: p_run.id };
+  },
+};
+
 export async function fakePostgrest(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
   const table = url.pathname.split('/rest/v1/')[1];
@@ -68,6 +94,11 @@ export async function fakePostgrest(input: RequestInfo | URL, init?: RequestInit
   const rows = (tables[table] ||= []);
   const select = url.searchParams.get('select');
 
+  if (table.startsWith('rpc/')) {
+    const fn = RPC[table.slice(4)];
+    if (!fn) return new Response(JSON.stringify({ message: `unknown function ${table}` }), { status: 404 });
+    return new Response(JSON.stringify(fn(JSON.parse(String(init?.body || '{}')))), { status: 200 });
+  }
   if (method === 'GET') {
     const all = sortRows(rows.filter((r) => matches(r, url.searchParams)), url.searchParams.get('order'));
     const offset = Number(url.searchParams.get('offset') || 0);

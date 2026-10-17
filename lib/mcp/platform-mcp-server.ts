@@ -8,6 +8,7 @@ import * as profiles from '@/lib/services/profiles';
 import * as tasks from '@/lib/services/tasks';
 import * as board from '@/lib/services/board';
 import * as rooms from '@/lib/services/rooms';
+import * as orchestration from '@/lib/services/orchestration';
 import { deployedFunctionRows, functionIdsForProfiles, invokeFunction } from '@/lib/services/functions';
 import { connectorToolsFor, runConnectorTool } from '@/lib/services/connections';
 import { functionToolName } from '@/lib/functions/function-spec';
@@ -32,7 +33,7 @@ export const MCP_SERVER_INFO = { name: 'context-control-mcp-server', title: 'Con
 export const CHARACTER_LIMIT = 25_000;
 
 /** `teamId`/`runId` are set for agent runs so board claims belong to the team and the run. */
-type ToolCtx = Pick<AuthContext, 'tenantId' | 'userId' | 'authMode' | 'apiKeyId'> & { teamId?: string | null; runId?: string | null };
+type ToolCtx = Pick<AuthContext, 'tenantId' | 'userId' | 'authMode' | 'apiKeyId'> & Partial<Pick<AuthContext, 'scopes' | 'toolsWhitelist'>> & { teamId?: string | null; runId?: string | null };
 type Row = Record<string, any>;
 
 const TOOL_HANDLERS: Record<PlatformToolName, (ctx: ToolCtx, args: any) => Promise<Record<string, unknown>>> = {
@@ -63,6 +64,18 @@ const TOOL_HANDLERS: Record<PlatformToolName, (ctx: ToolCtx, args: any) => Promi
   contextcontrol_ask_team: rooms.askTeamTool,
   contextcontrol_team_answer: (ctx, args) => rooms.teamAnswerTool(ctx, args),
   contextcontrol_place_call: rooms.placeCallTool,
+  contextcontrol_list_agents: orchestration.listAgents,
+  contextcontrol_create_agent: orchestration.createAgent,
+  contextcontrol_archive_agent: orchestration.archiveAgent,
+  contextcontrol_run_agents: orchestration.runAgents,
+  contextcontrol_list_runs: orchestration.listRuns,
+  contextcontrol_get_run: orchestration.getRunDetail,
+  contextcontrol_get_run_output: orchestration.getRunOutput,
+  contextcontrol_wait_for_runs: (ctx, args) => orchestration.waitForRuns(ctx, args),
+  contextcontrol_message_run: orchestration.messageRunTool,
+  contextcontrol_cancel_run: orchestration.cancelRunTool,
+  contextcontrol_stop_all_runs: orchestration.stopAllRunsTool,
+  contextcontrol_resume_runs: (ctx) => orchestration.resumeRunsTool(ctx),
   contextcontrol_board_request_handover: board.requestBoardHandover,
   contextcontrol_board_handover: board.handoverBoardTask,
 };
@@ -281,7 +294,7 @@ export async function handlePlatformMcpRequest(req: Request): Promise<Response> 
   }
   if (!key) return jsonRpcAuthError(401, 'Invalid or revoked Platform API Key');
 
-  const ctx: ToolCtx = { tenantId: key.tenantId, userId: `key_${key.id}`, authMode: 'api_key', apiKeyId: key.id };
+  const ctx: ToolCtx = { tenantId: key.tenantId, userId: `key_${key.id}`, authMode: 'api_key', apiKeyId: key.id, scopes: key.scopes, toolsWhitelist: key.toolsWhitelist };
   const server = buildPlatformMcpServer(ctx, getAuthorizedPlatformTools(key.toolsWhitelist, key.scopes));
   if (hasScope(key.scopes, AGENT_SCOPES.functionsInvoke)) await registerFunctionTools(server, ctx, key.profileId);
   if (hasScope(key.scopes, AGENT_SCOPES.connectorsInvoke)) await registerConnectorTools(server, ctx, key.profileId);

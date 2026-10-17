@@ -43,6 +43,7 @@ interface AgentSession {
   mcp_profile_id: string | null;
   context_profile_id: string | null;
   voice_profile_id?: string | null;
+  instructions?: string | null;
   allowed_tools: string[];
   forked_from_checkpoint: string | null;
   created_at: string;
@@ -141,6 +142,7 @@ interface InstanceFormValues {
   mcp_profile_id: string;
   context_profile_id: string;
   allowed_tools: string[];
+  instructions: string;
 }
 
 const InstanceModal: React.FC<{
@@ -265,6 +267,18 @@ const InstanceModal: React.FC<{
               <p className="text-[11px] text-zinc-500 -mt-2">Provider and model are fixed once an instance exists. Fork it to change them.</p>
             )}
 
+            <label className="block space-y-1">
+              <span className="font-mono text-zinc-300">Instructions (optional)</span>
+              <textarea
+                value={values.instructions}
+                onChange={(e) => set('instructions', e.target.value)}
+                rows={3}
+                maxLength={8000}
+                placeholder="What this agent is for and how it should work."
+                className="w-full bg-[#090b0f] border border-zinc-700 rounded-lg px-3 py-2 text-white"
+              />
+            </label>
+
             <div className="grid grid-cols-2 gap-3">
               <label className="block space-y-1">
                 <span className="font-mono text-zinc-300">Context profile</span>
@@ -377,6 +391,25 @@ export const AgentSessionStudio: React.FC<AgentSessionStudioProps> = ({ initialT
   const [speakReplies, setSpeakReplies] = useState(true);
   /** User messages sent by voice in this view (marked with a mic). */
   const [spoken, setSpoken] = useState<Set<string>>(new Set());
+  /** Organization-wide kill switch for agent runs. */
+  const [runControl, setRunControl] = useState<{ paused_at: string | null; paused_by: string | null; stops_last_24h: Array<{ by: string; count: number }> } | null>(null);
+  const loadRunControl = useCallback(() => {
+    api<typeof runControl>('/api/v1/agent-runs/control').then(setRunControl).catch(() => undefined);
+  }, []);
+  useEffect(() => {
+    loadRunControl();
+    const t = setInterval(loadRunControl, 30_000);
+    return () => clearInterval(t);
+  }, [loadRunControl]);
+  const toggleRuns = async (action: 'stop' | 'resume') => {
+    if (action === 'stop' && !confirm('Stop ALL agent runs in this organization? Running agents stop before their next step and nothing new starts until someone resumes.')) return;
+    try {
+      const res = await api<{ status: typeof runControl }>('/api/v1/agent-runs/control', { method: 'POST', body: JSON.stringify({ action }) });
+      setRunControl(res.status);
+    } catch (err: any) {
+      setTurnError(err?.message || 'Could not change the run switch');
+    }
+  };
 
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -521,6 +554,7 @@ export const AgentSessionStudio: React.FC<AgentSessionStudioProps> = ({ initialT
           mcp_profile_id: s.mcp_profile_id || '',
           context_profile_id: s.context_profile_id || '',
           allowed_tools: s.allowed_tools,
+          instructions: s.instructions || '',
         }
       : {
           team_id: '',
@@ -530,6 +564,7 @@ export const AgentSessionStudio: React.FC<AgentSessionStudioProps> = ({ initialT
           mcp_profile_id: '',
           context_profile_id: '',
           allowed_tools: DEFAULT_TOOLS,
+          instructions: '',
         };
   };
 
@@ -538,6 +573,7 @@ export const AgentSessionStudio: React.FC<AgentSessionStudioProps> = ({ initialT
       mcp_profile_id: values.mcp_profile_id || null,
       context_profile_id: values.context_profile_id || null,
       allowed_tools: values.allowed_tools,
+      instructions: values.instructions.trim() || null,
     };
     if (modal === 'create' && values.team_id) {
       const { session } = await api<{ session: AgentSession }>(`/api/v1/agent-teams/${values.team_id}/sessions`, {
@@ -554,7 +590,7 @@ export const AgentSessionStudio: React.FC<AgentSessionStudioProps> = ({ initialT
     } else if (active) {
       await api(`/api/v1/agent-sessions/${active.id}`, {
         method: 'PATCH',
-        body: JSON.stringify(active.team_id ? { name: values.name.trim() } : { name: values.name.trim(), ...attachments }),
+        body: JSON.stringify(active.team_id ? { name: values.name.trim(), instructions: values.instructions.trim() || null } : { name: values.name.trim(), ...attachments }),
       });
       await loadSessions(active.id);
     }
@@ -658,6 +694,11 @@ export const AgentSessionStudio: React.FC<AgentSessionStudioProps> = ({ initialT
           </div>
 
           <div className="flex items-center gap-2 text-xs">
+            {runControl && !runControl.paused_at && (
+              <button onClick={() => toggleRuns('stop')} className="px-2 py-1.5 rounded-md border border-rose-900 text-rose-300 hover:bg-rose-950/40" title="Emergency stop for every agent run in the organization">
+                Stop all runs
+              </button>
+            )}
             {active && (
               <>
                 <button
@@ -685,6 +726,15 @@ export const AgentSessionStudio: React.FC<AgentSessionStudioProps> = ({ initialT
             </button>
           </div>
         </header>
+        {runControl?.paused_at && (
+          <div className="px-5 py-2 bg-rose-950/50 border-b border-rose-900 text-xs text-rose-200 flex flex-wrap items-center gap-2">
+            <span>
+              Agent runs are paused for this organization since {new Date(runControl.paused_at).toLocaleString()} (by {runControl.paused_by ?? 'unknown'}). Nothing runs until someone resumes.
+              {runControl.stops_last_24h.filter((x) => x.count > 1).map((x) => ` ${x.by} stopped runs ${x.count} times in 24 h; revoke that key in API Keys if this is unexpected.`).join('')}
+            </span>
+            <button onClick={() => toggleRuns('resume')} className="ml-auto px-3 py-1 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white font-semibold">Resume runs</button>
+          </div>
+        )}
 
         <div className="flex-1 overflow-y-auto p-6 space-y-4">
           {loadError && (

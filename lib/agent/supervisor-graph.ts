@@ -19,7 +19,7 @@ export interface RunEventPayload {
   tenant_id: string;
   step_name: string;
   status: 'running' | 'completed' | 'failed';
-  event_type: 'agent_start' | 'step_start' | 'tool_call' | 'tool_result' | 'agent_finish' | 'agent_error';
+  event_type: 'agent_start' | 'step_start' | 'tool_call' | 'tool_result' | 'agent_finish' | 'agent_error' | 'agent_stopped' | 'orchestrator_message' | 'runs_stopped' | 'runs_resumed';
   payload?: Record<string, any>;
 }
 

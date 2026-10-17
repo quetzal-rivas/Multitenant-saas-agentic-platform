@@ -91,6 +91,7 @@ async function buildSystemPrompt(ctx: Ctx, session: AgentSession): Promise<strin
   const sections = [
     `You are "${session.name}", an assistant operating inside a Context Control organization.`,
     GROUNDING,
+    session.instructions ? `## Instructions\n${session.instructions}` : null,
     await contextProfileSection(ctx, session.context_profile_id),
     await mcpProfileSection(ctx, session.mcp_profile_id),
   ];
@@ -178,6 +179,25 @@ export class RunPaused extends Error {
   }
 }
 
+/**
+ * Thrown when a run must stop before its next step (limit reached, organization paused).
+ * Carries the text produced so far so the caller can keep it.
+ */
+export class RunStopped extends Error {
+  partialText = '';
+  constructor(public reason: string) {
+    super(reason);
+    this.name = 'RunStopped';
+  }
+}
+
+export interface StepInfo {
+  usage: TurnResult['usage'];
+  /** Set for team workers' steps. */
+  worker?: string;
+  usageByWorker: Record<string, { steps: number; tokens: number }>;
+}
+
 /** Everything needed to continue a turn in a later invocation. */
 export interface SavedTurnState {
   messages: LLMMessage[];
@@ -190,6 +210,7 @@ export interface SavedTurnState {
   finalText: string;
   previousCheckpointId: string | null;
   previousStepIndex: number;
+  usageByWorker?: Record<string, { steps: number; tokens: number }>;
 }
 
 export interface TurnControl {
@@ -199,6 +220,13 @@ export interface TurnControl {
   /** Spoken turn: how to shape the reply (from the voice profile). Text turns leave it unset. */
   replyStyle?: string | null;
   save?: (state: SavedTurnState, progress: { step: number; last_tool: string | null }) => Promise<void>;
+  /**
+   * Called before every model call (supervisor and workers). Throw RunStopped to stop the
+   * run; return messages to add (only used on top-level steps).
+   */
+  beforeStep?: (info: StepInfo) => Promise<{ messages?: string[] } | void>;
+  /** Asked to end with JSON matching this schema (orchestration output_schema). */
+  outputSchema?: Record<string, unknown> | null;
 }
 
 async function runToolLoop(opts: {
@@ -220,6 +248,9 @@ async function runToolLoop(opts: {
   deadlineAt?: number;
   /** Called after each completed step (model reply + its tool results). */
   onStep?: (stepsDone: number, finalText: string) => Promise<void>;
+  /** Before each model call: may stop the run or return messages to add. */
+  beforeStep?: () => Promise<{ messages?: string[] } | void>;
+  onUsage?: (tokens: number) => void;
 }): Promise<string> {
   const defs = [...opts.tools.values()].map((t) => t.def);
   let finalText = opts.initialText ?? '';
@@ -227,6 +258,13 @@ async function runToolLoop(opts: {
   for (let step = first; step <= opts.maxSteps; step++) {
     // Pause only between steps, and only after making progress in this invocation.
     if (opts.deadlineAt && step > first && Date.now() >= opts.deadlineAt) throw new RunPaused();
+    try {
+      const injected = await opts.beforeStep?.();
+      for (const text of injected?.messages ?? []) opts.messages.push({ role: 'user', content: text });
+    } catch (err) {
+      if (err instanceof RunStopped) err.partialText = finalText;
+      throw err;
+    }
     opts.usage.steps += 1;
     let result;
     try {
@@ -244,6 +282,7 @@ async function runToolLoop(opts: {
     opts.usage.inputTokens += result.usage.inputTokens;
     opts.usage.outputTokens += result.usage.outputTokens;
     opts.usage.totalTokens += result.usage.totalTokens;
+    opts.onUsage?.(result.usage.totalTokens);
     if (result.model) opts.onModel(result.model);
 
     if (result.finishReason === 'refusal') {
@@ -273,6 +312,8 @@ async function runToolLoop(opts: {
         try {
           output = await tool.run(call.arguments);
         } catch (err) {
+          // A worker that hit a run limit stops the whole run, not just this tool call.
+          if (err instanceof RunStopped || err instanceof RunPaused || (err as Error)?.name === 'LeaseLost') throw err;
           isError = true;
           output = isServiceError(err) || err instanceof Error ? (err as Error).message : 'Tool execution failed.';
         }
@@ -351,7 +392,7 @@ export async function runTurn(
   const previousStepIndex = saved ? saved.previousStepIndex : previous?.stepIndex || 0;
   const state: LLMMessage[] = saved ? saved.messages : [...(previous?.state || []), { role: 'user', content: message }];
   const runId = control.runId;
-  const toolCtx = { tenantId: ctx.tenantId, userId: ctx.userId, authMode: ctx.authMode, apiKeyId: ctx.apiKeyId, teamId: team?.id ?? null, runId };
+  const toolCtx = { tenantId: ctx.tenantId, userId: ctx.userId, authMode: ctx.authMode, apiKeyId: ctx.apiKeyId, scopes: ctx.scopes, toolsWhitelist: ctx.toolsWhitelist, teamId: team?.id ?? null, runId };
   const emit = (event: Parameters<typeof emitRunEvent>[0]) => emitRunEvent(event).catch(() => undefined);
   if (!saved) {
     await emit({
@@ -366,6 +407,7 @@ export async function runTurn(
 
   const executions: ToolExecutionRecord[] = saved ? [...saved.executions] : [];
   const usage = saved ? { ...saved.usage } : { inputTokens: 0, outputTokens: 0, totalTokens: 0, steps: 0 };
+  const usageByWorker: Record<string, { steps: number; tokens: number }> = { ...(saved?.usageByWorker ?? {}) };
   const workersUsed = new Set<string>(saved?.workersUsed || []);
   let servedBy = saved?.servedBy || model;
   const snapshot = (steps: number, finalText: string): SavedTurnState => ({
@@ -378,6 +420,7 @@ export async function runTurn(
     finalText,
     previousCheckpointId,
     previousStepIndex,
+    usageByWorker,
   });
 
   const platformTools = (names: string[]): Map<string, LoopTool> =>
@@ -452,6 +495,19 @@ export async function runTurn(
       provider,
       apiKey,
       usage,
+      beforeStep: control.beforeStep
+        ? async () => {
+            const out = await control.beforeStep!({ usage, worker: opts.worker, usageByWorker });
+            // Messages from the orchestrator go to the top-level conversation only.
+            return opts.worker ? undefined : out;
+          }
+        : undefined,
+      onUsage: (tokens) => {
+        const key = opts.worker ?? (team ? 'supervisor' : 'agent');
+        const entry = (usageByWorker[key] ||= { steps: 0, tokens: 0 });
+        entry.steps += 1;
+        entry.tokens += tokens;
+      },
       onModel: (served) => {
         if (!opts.worker) servedBy = served;
       },
@@ -505,9 +561,13 @@ export async function runTurn(
         },
       });
     }
+    if (session.instructions) systemPrompt = `${systemPrompt}\n\n## Instructions for this instance\n${session.instructions}`;
   } else {
     systemPrompt = await buildSystemPrompt(ctx, session);
     tools = await withProfileTools(platformTools(session.allowed_tools), session.mcp_profile_id);
+  }
+  if (control.outputSchema) {
+    systemPrompt = `${systemPrompt}\n\n## Final answer format\nWhen you finish, reply with only a JSON object (no prose, no code fences) that matches this JSON Schema:\n${JSON.stringify(control.outputSchema).slice(0, 8000)}`;
   }
   if (control.replyStyle) {
     systemPrompt = `${systemPrompt}\n\n## This turn is a voice conversation\nThe user spoke this message and will hear your reply read aloud. ${control.replyStyle}`;
@@ -535,6 +595,11 @@ export async function runTurn(
     if (err instanceof RunPaused) {
       // State was saved after the last completed step; claims stay with this run.
       return 'paused';
+    }
+    if (err instanceof RunStopped) {
+      await parkRunClaims(ctx.tenantId, runId).catch(() => undefined);
+      await emit({ run_id: runId, tenant_id: ctx.tenantId, step_name: 'stopped', status: 'failed', event_type: 'agent_stopped', payload: { reason: err.reason, usage, usageByWorker } });
+      throw err;
     }
     await parkRunClaims(ctx.tenantId, runId).catch(() => undefined);
     await emit({

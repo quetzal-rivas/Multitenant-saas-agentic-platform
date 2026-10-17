@@ -237,14 +237,18 @@ async function generateOpenAI(options: LLMGenerateOptions): Promise<LLMGenerateR
     }));
   }
 
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${options.apiKey}` },
-    body: JSON.stringify(payload),
-    signal: attemptSignal(options.signal),
-  });
+  const res = await fetchWithRetry(() =>
+    fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${options.apiKey}` },
+      body: JSON.stringify(payload),
+      signal: attemptSignal(options.signal),
+    })
+  );
   if (!res.ok) {
-    throw new Error(`OpenAI API error (${res.status}): ${(await res.text()).slice(0, 300)}`);
+    const body = (await res.text()).slice(0, 300);
+    if (res.status === 429) throw new Error(`Rate limited by the provider (OpenAI 429): ${body}`);
+    throw new Error(`OpenAI API error (${res.status}): ${body}`);
   }
 
   const data = await res.json();
@@ -281,6 +285,24 @@ async function generateOpenAI(options: LLMGenerateOptions): Promise<LLMGenerateR
  * Verified 2026-10-04 to answer with tool calling on a standard Gemini API key
  * (Pro models were left out: they returned 429 quota errors on that plan).
  */
+/** Rate limits / overload: retry with exponential backoff and jitter, honouring Retry-After. */
+export const RETRY_STATUSES = new Set([429, 500, 502, 503, 504]);
+let retryBaseMs = 1000;
+export function setRetryBaseMsForTests(ms: number) {
+  retryBaseMs = ms;
+}
+export async function fetchWithRetry(send: () => Promise<Response>, tries = 3): Promise<Response> {
+  let res = await send();
+  for (let attempt = 1; attempt < tries && RETRY_STATUSES.has(res.status); attempt++) {
+    const after = Number(res.headers.get('retry-after'));
+    const wait = Number.isFinite(after) && after > 0 ? Math.min(after * 1000, 20_000) : retryBaseMs * 2 ** (attempt - 1) + Math.random() * retryBaseMs * 0.5;
+    await res.text().catch(() => undefined);
+    await new Promise((r) => setTimeout(r, wait));
+    res = await send();
+  }
+  return res;
+}
+
 export const GEMINI_FALLBACK_MODELS = [
   'gemini-3.8-flash',
   'gemini-3.7-flash',
@@ -389,15 +411,13 @@ async function generateGemini(options: LLMGenerateOptions): Promise<LLMGenerateR
 
     let res: Response;
     try {
-      res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': options.apiKey },
-          body: JSON.stringify(payload),
-          signal: attemptSignal(options.signal),
-        }
-      );
+      // Overload / rate limit: the model chain below moves on to the next model (no same-model wait).
+      res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': options.apiKey },
+        body: JSON.stringify(payload),
+        signal: attemptSignal(options.signal),
+      });
     } catch (err) {
       // The caller gave up: stop. This attempt hung: try the next model.
       if (options.signal?.aborted) throw err;

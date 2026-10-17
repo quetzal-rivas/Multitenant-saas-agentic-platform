@@ -27,6 +27,7 @@ export const createSessionBody = z.object({
   allowed_tools: z.array(z.enum(toolNames)).max(50).optional(),
   /** Run a team (supervisor + workers) instead of a single configured agent. */
   team_id: z.string().uuid().nullable().optional(),
+  instructions: z.string().trim().max(8000).nullable().optional(),
 }).strict();
 
 // Provider and model are fixed once a conversation exists: replaying one provider's
@@ -38,6 +39,7 @@ export const updateSessionBody = z.object({
   allowed_tools: z.array(z.enum(toolNames)).max(50).optional(),
   /** Voice profile for this instance; null = use the team's (or the platform default). */
   voice_profile_id: z.string().uuid().nullable().optional(),
+  instructions: z.string().trim().max(8000).nullable().optional(),
 }).strict();
 
 export const forkSessionBody = z.object({
@@ -46,7 +48,7 @@ export const forkSessionBody = z.object({
 }).strict();
 
 const SESSION_COLUMNS =
-  'id, name, agent_type, team_id, provider, model, mcp_profile_id, context_profile_id, voice_profile_id, allowed_tools, forked_from_checkpoint, created_at, last_active_at';
+  'id, name, agent_type, team_id, provider, model, mcp_profile_id, context_profile_id, voice_profile_id, instructions, created_by_key, allowed_tools, forked_from_checkpoint, created_at, last_active_at';
 const CHECKPOINT_SUMMARY_COLUMNS =
   'id, checkpoint_id, session_id, parent_id, step_index, user_message, assistant_message, tools_executed, usage, metadata, created_at';
 
@@ -56,6 +58,9 @@ export interface AgentSession {
   agent_type: 'single' | 'team';
   team_id: string | null;
   voice_profile_id?: string | null;
+  /** Per-agent instructions added to the system prompt. */
+  instructions?: string | null;
+  created_by_key?: string | null;
   provider: LLMProvider;
   model: string;
   mcp_profile_id: string | null;
@@ -135,6 +140,8 @@ export async function createSession(ctx: Ctx, raw: unknown, extra: { forkedFrom?
       mcp_profile_id: body.mcp_profile_id || null,
       context_profile_id: body.context_profile_id || null,
       allowed_tools: body.team_id ? [] : body.allowed_tools ?? DEFAULT_SESSION_TOOLS,
+      instructions: body.instructions || null,
+      created_by_key: ctx.authMode === 'api_key' ? ctx.apiKeyId ?? null : null,
       forked_from_checkpoint: extra.forkedFrom || null,
       created_by: ctx.authMode === 'session' ? ctx.userId : null,
     })

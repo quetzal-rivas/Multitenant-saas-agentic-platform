@@ -1,0 +1,103 @@
+// /docs sections that described the old mock Endpoints page (x-tenant-id header, live cURL builder)
+// and the mock 'Platform MCP Controller' (create_agent_profile, trigger_task_now, inspect_database_schema).
+// Replaced by components/docs/McpToolsReference.tsx, generated from the real tool catalog.
+
+function DocEndpointsApi({ copyToClipboard, copiedCode }: any) {
+  return (
+    <div className="space-y-8 text-zinc-300">
+      <div className="pb-6 border-b border-zinc-800/80">
+        <span className="text-xs font-mono text-emerald-400 font-semibold uppercase tracking-wider">
+          Developer API & Testing Tools · Section 10
+        </span>
+        <h1 className="text-3xl font-extrabold text-white mt-2">Endpoints API & Live cURL Generator</h1>
+        <p className="text-zinc-300 text-sm mt-2 leading-relaxed">
+          Interactive REST API endpoint reference (`/api/v1/*`) with pre-populated cURL request builders.
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        <div className="text-xs font-mono text-zinc-500 uppercase tracking-wider">UI Screenshot Preview</div>
+        <img
+          src="/docs/images/endpoints_api.png"
+          alt="Endpoints API UI Preview"
+          className="w-full rounded-xl border border-zinc-800/80 shadow-2xl"
+        />
+      </div>
+
+      <div className="space-y-6 text-sm text-zinc-300 leading-relaxed">
+        <h3 className="text-xl font-bold text-white font-mono border-b border-zinc-800 pb-2">1. Overview & Strategic Purpose</h3>
+        <p>
+          The <strong>Endpoints API</strong> enables seamless headless integration of the Context Control autonomous agent engine into external enterprise systems. By utilizing the platform's RESTful API (`/api/v1/*`), tenants can embed autonomous capabilities directly into their own custom mobile apps, React web frontends, Zapier webhooks, and legacy CRM backend triggers.
+        </p>
+
+        <h3 className="text-xl font-bold text-white font-mono border-b border-zinc-800 pb-2 mt-6">2. Key Capabilities & Architecture</h3>
+        <ul className="space-y-3 list-disc pl-5">
+          <li><strong>Tenant API Gateway (`/api/v1/*`):</strong> The core REST engine validates inbound requests using a strict multi-tenant authentication protocol. Every request must include the `x-tenant-id` header and a secure Bearer Authorization token signed by the tenant's BYOK vault.</li>
+          <li><strong>Core Exposed Routes:</strong> Include `POST /api/v1/chat`, `POST /api/v1/schedule_task`, `GET /api/v1/conversations`, and `POST /api/v1/context/resolve`.</li>
+          <li><strong>Interactive Snippet Hydration:</strong> The UI dynamically pre-populates authorization headers (`x-tenant-id`) and variables matching the currently logged-in user's workspace session, ensuring that copied snippets work instantly when pasted into a local terminal.</li>
+        </ul>
+
+        <h3 className="text-xl font-bold text-white font-mono border-b border-zinc-800 pb-2 mt-6">3. Step-by-Step UI How-To-Use Guide</h3>
+        <ol className="space-y-3 list-decimal pl-5">
+          <li>Click <strong>Endpoints</strong> in the sidebar navigation menu under the *Developer* section.</li>
+          <li>Use the left pane to select the target API route (e.g. `POST /api/v1/schedule_task`).</li>
+          <li>In the center form pane, adjust the request body parameters.</li>
+          <li>Observe the right pane <strong>Code Viewer</strong> updating in real-time.</li>
+          <li>Select your preferred programming language from the top tabs (cURL, JS, Python, Go) and click <strong>Copy Snippet</strong>.</li>
+        </ol>
+      </div>
+    </div>
+  );
+}
+
+function DocPlatformMcp({ copyToClipboard, copiedCode }: any) {
+  return (
+    <div className="space-y-8 text-zinc-300">
+      <div className="pb-6 border-b border-zinc-800/80">
+        <span className="text-xs font-mono text-emerald-400 font-semibold uppercase tracking-wider">
+          Developer API & Testing Tools · Section 12
+        </span>
+        <h1 className="text-3xl font-extrabold text-white mt-2">Platform MCP Controller (Stdio/SSE)</h1>
+        <p className="text-zinc-300 text-sm mt-2 leading-relaxed">
+          Connect external host applications (Claude Desktop, Cursor, local IDEs) to your tenant workspace via MCP.
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        <div className="text-xs font-mono text-zinc-500 uppercase tracking-wider">UI Screenshot Preview</div>
+        <img
+          src="/docs/images/platform_mcp.png"
+          alt="Platform MCP Controller UI Preview"
+          className="w-full rounded-xl border border-zinc-800/80 shadow-2xl"
+        />
+      </div>
+
+      <div className="space-y-6 text-sm text-zinc-300 leading-relaxed">
+        <h3 className="text-xl font-bold text-white font-mono border-b border-zinc-800 pb-2">1. Overview & Strategic Purpose</h3>
+        <p>
+          The <strong>Platform MCP Controller</strong> flips the standard Hub-and-Spoke model inside out. Rather than the platform connecting outward to third-party tools, the Platform MCP allows external developer environments—such as Claude Desktop, Cursor IDE, Windsurf IDE, and local CLI agents—to connect *inward* to the tenant workspace.
+        </p>
+        <p>
+          By exposing a standardized Model Context Protocol (MCP 2024-11-05 JSON-RPC 2.0) server endpoint (`/api/mcp/platform`), your local desktop AI assistants instantly gain administrative control over the cloud platform. They can schedule deferred jobs, manage multi-agent topologies, and query secure cloud databases directly from your local IDE prompt.
+        </p>
+
+        <h3 className="text-xl font-bold text-white font-mono border-b border-zinc-800 pb-2 mt-6">2. Key Capabilities & Architecture</h3>
+        <ul className="space-y-3 list-disc pl-5">
+          <li><strong>11 Direct Administrative Controllers:</strong> Exposes highly privileged tools including `create_agent_profile`, `contextcontrol_schedule_task`, `trigger_task_now`, and `inspect_database_schema`.</li>
+          <li><strong>Dual Transport Adapters:</strong> Connect over persistent HTTP streams (SSE) or a lightweight Stdio wrapper script for local desktop apps.</li>
+          <li><strong>Automated Client Configuration Generator:</strong> The UI automatically generates copy-and-paste JSON configurations tailored specifically for popular clients (Cursor, Claude Desktop), pre-injected with the tenant's workspace ID and API tokens.</li>
+        </ul>
+
+        <h3 className="text-xl font-bold text-white font-mono border-b border-zinc-800 pb-2 mt-6">3. Step-by-Step UI How-To-Use Guide</h3>
+        <ol className="space-y-3 list-decimal pl-5">
+          <li>Navigate to <strong>Platform MCP</strong> in the workspace sidebar under the *Developer* section.</li>
+          <li>Select your target client application tab (*Claude Desktop*, *Cursor*, *Windsurf*, or *cURL*).</li>
+          <li>Review the list of the 11 exposed direct controller tools.</li>
+          <li>Click <strong>Copy Config JSON</strong>.</li>
+          <li>Paste the generated configuration snippet into your local client's MCP configuration file (e.g., `.cursor/mcp.json` in your repository root).</li>
+          <li>Restart your client application and begin controlling the cloud platform from your IDE.</li>
+        </ol>
+      </div>
+    </div>
+  );
+}

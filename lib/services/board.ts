@@ -40,11 +40,23 @@ const LIST_CAP = 500;
 const PRIORITY_RANK: Record<string, number> = { urgent: 0, high: 1, normal: 2, low: 3 };
 
 const TASK_COLUMNS =
-  'id, title, description, priority, labels, status, assigned_team_id, posted_by, posted_by_team_id, claimed_by, claimed_by_team_id, claimed_at, lease_expires_at, attempts, result, result_data, failure_reason, due_at, completed_at, created_at, updated_at, claim_run_id, handoff_note, handover_requested_by, handover_requested_by_team_id, handover_requested_at, late_result, late_result_by';
+  'id, title, description, priority, labels, status, assigned_team_id, posted_by, posted_by_team_id, claimed_by, claimed_by_team_id, claimed_at, lease_expires_at, attempts, result, result_data, failure_reason, due_at, completed_at, created_at, updated_at, claim_run_id, handoff_note, handoff_note_kind, author_kind, handover_requested_by, handover_requested_by_team_id, handover_requested_at, late_result, late_result_by';
 
 type Row = Record<string, any>;
 
 /** Who is acting: the team in a team run, else the API key, else the signed-in user. */
+/**
+ * Who is writing Board text. Agent-written text (notes, results, posted tasks) is data
+ * for other agents, never instructions; people and orchestrators give instructions.
+ */
+export type AuthorKind = 'human' | 'orchestrator' | 'agent' | 'system';
+export function authorKind(ctx: BoardCtx): AuthorKind {
+  if (ctx.runId) return 'agent';
+  if (ctx.authMode === 'session') return 'human';
+  if (ctx.authMode === 'api_key') return 'orchestrator';
+  return 'system';
+}
+
 export function boardActor(ctx: BoardCtx): string {
   if (ctx.teamId) return `team:${ctx.teamId}`;
   if (ctx.authMode === 'api_key' && ctx.apiKeyId) return `api_key:${ctx.apiKeyId}`;
@@ -77,7 +89,7 @@ function minutesFromNow(minutes: number, now = new Date()): string {
 async function logEvent(ctx: BoardCtx, taskId: string, event: string, actor: string, note?: string | null) {
   await getSupabaseAdminClient()
     .from('board_task_events')
-    .insert({ task_id: taskId, tenant_id: ctx.tenantId, event, actor, note: note ?? null });
+    .insert({ task_id: taskId, tenant_id: ctx.tenantId, event, actor, actor_kind: authorKind(ctx), note: note ?? null });
 }
 
 async function loadTask(ctx: BoardCtx, taskId: string): Promise<Row> {
@@ -163,7 +175,7 @@ export async function getBoardTask(ctx: BoardCtx, args: z.infer<typeof boardGetA
   const task = await loadTask(ctx, args.task_id);
   const { data: events } = await getSupabaseAdminClient()
     .from('board_task_events')
-    .select('event, actor, note, created_at')
+    .select('event, actor, actor_kind, note, created_at')
     .eq('task_id', args.task_id)
     .eq('tenant_id', ctx.tenantId)
     .order('created_at', { ascending: true });
@@ -181,6 +193,7 @@ export async function postBoardTask(ctx: BoardCtx, args: z.infer<typeof boardPos
     .from('board_tasks')
     .insert({
       tenant_id: ctx.tenantId,
+      author_kind: authorKind(ctx),
       title: args.title,
       description: args.description ?? null,
       priority: args.priority ?? 'normal',
@@ -294,7 +307,7 @@ export async function renewBoardLease(ctx: BoardCtx, args: z.infer<typeof boardR
   const updated = await guardedUpdate(ctx, task.id, guard, {
     lease_expires_at: lease,
     claim_run_id: ctx.runId ?? null,
-    ...(args.note ? { handoff_note: args.note } : {}),
+    ...(args.note ? { handoff_note: args.note, handoff_note_kind: authorKind(ctx) } : {}),
   });
   if (!updated) throw new ServiceError(LOST, 'CONFLICT');
   await logEvent(ctx, task.id, 'renewed', actor, `lease until ${lease}`);
@@ -304,7 +317,7 @@ export async function renewBoardLease(ctx: BoardCtx, args: z.infer<typeof boardR
 
 export async function addBoardNote(ctx: BoardCtx, args: z.infer<typeof boardNoteArgs>) {
   const { task, actor, guard } = await holderOnly(ctx, args.task_id);
-  const updated = await guardedUpdate(ctx, task.id, guard, { handoff_note: args.note, claim_run_id: ctx.runId ?? null });
+  const updated = await guardedUpdate(ctx, task.id, guard, { handoff_note: args.note, handoff_note_kind: authorKind(ctx), claim_run_id: ctx.runId ?? null });
   if (!updated) throw new ServiceError(LOST, 'CONFLICT');
   await logEvent(ctx, task.id, 'note', actor, args.note);
   return { task: present(updated, new Date(), actor) };
@@ -382,7 +395,7 @@ export async function releaseBoardTask(ctx: BoardCtx, args: z.infer<typeof board
   const updated = await guardedUpdate(ctx, task.id, guard, {
     status: 'open',
     ...CLEAR_CLAIM,
-    ...(args.note ? { handoff_note: args.note } : {}),
+    ...(args.note ? { handoff_note: args.note, handoff_note_kind: authorKind(ctx) } : {}),
   });
   if (!updated) throw new ServiceError(LOST, 'CONFLICT');
   await logEvent(ctx, task.id, 'released', actor, args.note);
@@ -431,6 +444,7 @@ export async function handoverBoardTask(ctx: BoardCtx, args: z.infer<typeof boar
     claimed_at: now.toISOString(),
     lease_expires_at: minutesFromNow(DEFAULT_LEASE_MINUTES, now),
     handoff_note: args.summary,
+    handoff_note_kind: authorKind(ctx),
     ...CLEAR_HANDOVER,
   });
   if (!updated) throw new ServiceError(LOST, 'CONFLICT');

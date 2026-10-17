@@ -68,7 +68,16 @@ const SCOPE_LABELS: Record<string, string> = {
   'mcp:connectors:invoke': 'Call connected-app tools (Google, web search; limited to the key\'s profile if set)',
   'mcp:functions:invoke': 'Call deployed functions (fn_* tools; limited to the key\'s profile if set)',
   'agent:sessions:write': 'Create / edit Agent Studio instances',
+  'mcp:agents:read': 'Orchestration: list agents and runs, wait, read outputs',
+  'mcp:agents:write': 'Orchestration: create agents, run batches, message, cancel, stop runs',
+  'mcp:agents:admin': 'Orchestration: resume runs after an organization-wide stop',
+  'mcp:rooms:read': 'Live calls: read call context and transcripts',
+  'mcp:rooms:write': 'Live calls: notes, ask the team',
+  'mcp:calls:write': 'Place outbound phone calls',
 };
+
+/** An external orchestrator (e.g. an IDE agent) running teams of agents: no admin, no calls. */
+const ORCHESTRATOR_PRESET = ['mcp:agents:read', 'mcp:agents:write', 'mcp:board:read', 'mcp:board:write', 'mcp:tasks:read'];
 
 const SCOPE_CATEGORIES = Array.from(new Set(PLATFORM_MCP_SCOPES_CATALOG.map((t) => t.category)));
 
@@ -973,7 +982,21 @@ export const ApiKeysView: React.FC = () => {
 
               {/* Scopes */}
               <div>
-                <label className="text-xs font-mono text-zinc-300 block mb-1.5">Scopes</label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-xs font-mono text-zinc-300 block">Scopes</label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNewKeyScopes(ORCHESTRATOR_PRESET);
+                      setNewKeyExpiryDays(30);
+                      if (!newKeyName.trim()) setNewKeyName('Orchestrator');
+                    }}
+                    className="text-[11px] font-mono text-emerald-400 hover:text-emerald-300"
+                    title="Agents read/write + Board + tasks read; no resume, no calls; expires in 30 days"
+                  >
+                    Use Orchestrator preset
+                  </button>
+                </div>
                 <div className="space-y-1.5 p-2 rounded-lg bg-[#07090f] border border-zinc-800">
                   {PLATFORM_SCOPES.map((scope) => (
                     <label key={scope} className="flex items-center gap-2 text-xs font-mono text-zinc-300 cursor-pointer hover:text-white">

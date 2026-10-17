@@ -51,6 +51,16 @@ export async function startTaskRun(task: Row, opts: { manual?: boolean } = {}): 
     return run.id;
   } catch (err) {
     const message = isServiceError(err) ? err.message : (err as Error)?.message || 'Could not start the task.';
+    if (isServiceError(err) && err.code === 'CONFLICT' && /paused for this organization/.test(message)) {
+      // Runs are paused (kill switch): skip this occurrence; repeating tasks keep their schedule,
+      // one-off tasks try again shortly after (so they run once runs are resumed).
+      await updateTask(task.id, {
+        last_status: 'skipped_paused',
+        last_error: 'Skipped: agent runs are paused for this organization.',
+        ...(task.schedule || opts.manual ? {} : { status: 'scheduled', next_run_at: new Date(Date.now() + SKIP_RETRY_MS).toISOString() }),
+      });
+      return null;
+    }
     if (isServiceError(err) && err.code === 'CONFLICT' && /still working/.test(message)) {
       // The previous occurrence is still running: skip this one.
       await updateTask(task.id, {

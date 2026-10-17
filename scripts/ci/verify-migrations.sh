@@ -37,3 +37,11 @@ for file in "${files[@]}"; do
 done
 
 echo "All ${#files[@]} migrations applied cleanly."
+
+# SQL-level assertions for database functions (each file rolls itself back).
+for test in scripts/ci/sql-tests/*.sql; do
+  [ -e "$test" ] || continue
+  echo "sql test $test"
+  psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f "$test"
+done
+echo "SQL tests passed."

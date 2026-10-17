@@ -1,11 +1,11 @@
 import { getSupabaseAdminClient } from '@/lib/supabase';
 import type { AuthContext } from '@/lib/auth/require-auth';
 import { localParts, nextRun, type HeartbeatSchedule } from '@/lib/agent/heartbeat-schedule';
-import { runSessionTurn, type RunnerDeps } from '@/lib/agent/session-runner';
+import type { RunnerDeps } from '@/lib/agent/session-runner';
 import { ensureHeartbeatSession, getTeam, type AgentTeam } from './teams';
 import { ServiceError } from './errors';
 import { teamHasBoardWork } from './board';
-import { dispatchRun, startRun, workerConfigured } from './agent-runs';
+import { dispatchRun, driveInline, startRun, workerConfigured } from './agent-runs';
 
 /** Stop starting new runs after this long so the tick request returns in time. */
 const TICK_BUDGET_MS = 15_000;
@@ -74,8 +74,11 @@ export async function runTeamHeartbeat(
       await dispatchRun(run.id);
       outcome = { team_id: team.id, status: 'ok', detail: `Started run ${run.id}`, next_run_at: next };
     } else {
-      const turn = await runSessionTurn(runCtx, sessionId, team.heartbeat_goal, opts.deps);
-      outcome = { team_id: team.id, status: 'ok', checkpoint_id: turn.checkpoint_id, next_run_at: next };
+      // No worker (local development, tests): still a real run, so limits and the pause apply.
+      const run = await startRun(runCtx, sessionId, team.heartbeat_goal, { origin: 'heartbeat', teamId: team.id });
+      const slice = await driveInline(run.id, 25 * 60_000, opts.deps);
+      if (!slice || slice.status !== 'done') throw new Error(slice && 'error' in slice ? slice.error : `Heartbeat run ended: ${slice?.status ?? 'not started'}`);
+      outcome = { team_id: team.id, status: 'ok', checkpoint_id: slice.result.checkpoint_id, next_run_at: next };
     }
   } catch (err) {
     outcome = { team_id: team.id, status: 'error', detail: (err as Error).message?.slice(0, 500), next_run_at: next };

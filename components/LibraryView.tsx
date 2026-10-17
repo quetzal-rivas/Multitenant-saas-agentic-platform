@@ -32,12 +32,10 @@ import {
 import { SkillItem, SkillCategory, SkillSource } from '@/lib/demo/legacy_mocks/types';
 
 interface LibraryViewProps {
-  onOpenSimulatorWithSkill?: (skillPrompt: string) => void;
   onSkillCountChange?: (count: number) => void;
 }
 
 export const LibraryView: React.FC<LibraryViewProps> = ({
-  onOpenSimulatorWithSkill,
   onSkillCountChange,
 }) => {
   // State

@@ -5,12 +5,10 @@ import { Navbar } from '@/components/Navbar';
 import { Sidebar } from '@/components/Sidebar';
 import { ProfilesView } from '@/components/ProfilesView';
 import { ContextBuilder } from '@/components/ContextBuilder';
-import { SourcesView } from '@/components/SourcesView';
 import { InboundGatewayView } from '@/components/InboundGatewayView';
 import { ApiKeysView } from '@/components/ApiKeysView';
-import { LogsView } from '@/components/LogsView';
+import { ActivityLogView } from '@/components/ActivityLogView';
 import { SdkIntegrationsView } from '@/components/SdkIntegrationsView';
-import { SettingsView } from '@/components/SettingsView';
 import { McpHubView } from '@/components/McpHubView';
 import { LibraryView } from '@/components/LibraryView';
 import { AgentSessionStudio } from '@/components/AgentSessionStudio';
@@ -18,7 +16,6 @@ import { AgentTeamBuilder } from '@/components/AgentTeamBuilder';
 import { TaskCalendarView } from '@/components/TaskCalendarView';
 import { SupervisorBoardView } from '@/components/SupervisorBoardView';
 import { Conversations } from '@/components/Conversations';
-import { SimulatorView } from '@/components/SimulatorView';
 import { PlatformMcpServerView } from '@/components/PlatformMcpServerView';
 import { GeminiTestModal } from '@/components/GeminiTestModal';
 import { CreateProfileModal } from '@/components/CreateProfileModal';
@@ -28,15 +25,14 @@ import { LiveCallsView } from '@/components/LiveCallsView';
 import { LiveCallBanner } from '@/components/LiveCallBanner';
 import { FunctionStudio } from '@/components/FunctionStudio';
 import { DemoBanner } from '@/components/DemoBanner';
-import { INITIAL_PROFILES, INITIAL_SOURCES, isDemoMode } from '@/lib/demo';
-import { ContextProfile, ContextSource } from '@/lib/types';
+import { INITIAL_PROFILES, isDemoMode } from '@/lib/demo';
+import { ContextProfile } from '@/lib/types';
 
 // Sample workspace content is only shown in demo mode; real accounts start empty.
 const DEMO = isDemoMode();
 
 export default function DashboardPage() {
   const [profiles, setProfiles] = useState<ContextProfile[]>(DEMO ? INITIAL_PROFILES : []);
-  const [sources, setSources] = useState<ContextSource[]>(DEMO ? INITIAL_SOURCES : []);
   const [skillsCount, setSkillsCount] = useState<number>(5);
   const [activeTab, setActiveTab] = useState<string>('profiles');
   /** Phones: the sidebar opens as a drawer from the navbar menu button. */
@@ -116,11 +112,6 @@ export default function DashboardPage() {
     setActiveTab('builder');
   };
 
-  const handleQuickResolve = (profile: ContextProfile) => {
-    setSelectedProfile(profile);
-    setActiveTab('simulator');
-  };
-
   const handleTestLLM = (compiledMarkdown: string, queryText: string) => {
     setTestGeminiContext(compiledMarkdown);
     setTestGeminiQuery(queryText);
@@ -141,7 +132,6 @@ export default function DashboardPage() {
 
         activeTab={activeTab}
         setActiveTab={setActiveTab}
-        onOpenSimulator={() => setActiveTab('simulator')}
         onOpenNewProfile={activeTab === 'profiles' ? () => setIsCreateModalOpen(true) : undefined}
         onOpenMenu={() => setMenuOpen(true)}
       />
@@ -161,7 +151,6 @@ export default function DashboardPage() {
                 setMenuOpen(false);
               }}
               profilesCount={profiles.length}
-              sourcesCount={sources.length}
               skillsCount={skillsCount}
             />
           </div>
@@ -218,7 +207,6 @@ export default function DashboardPage() {
               profiles={profiles}
               onSelectProfile={handleSelectProfile}
               onOpenCreate={() => setIsCreateModalOpen(true)}
-              onQuickResolve={handleQuickResolve}
             />
           )}
 
@@ -239,19 +227,6 @@ export default function DashboardPage() {
           {activeTab === 'library' && (
             <LibraryView
               onSkillCountChange={(count) => setSkillsCount(count)}
-              onOpenSimulatorWithSkill={(skillPrompt) => {
-                setTestGeminiContext(skillPrompt);
-                setActiveTab('simulator');
-              }}
-            />
-          )}
-
-          {activeTab === 'simulator' && (
-            <SimulatorView
-              profiles={profiles}
-              initialProfile={selectedProfile || undefined}
-              onOpenTeamBuilder={() => setActiveTab('team-builder')}
-              onOpenCalendar={() => setActiveTab('calendar')}
             />
           )}
 
@@ -262,17 +237,14 @@ export default function DashboardPage() {
             />
           )}
 
-          {activeTab === 'sources' && <SourcesView sources={sources} />}
-
           {activeTab === 'endpoints' && <InboundGatewayView onNavigate={setActiveTab} />}
 
           {activeTab === 'api-keys' && <ApiKeysView />}
 
-          {activeTab === 'logs' && <LogsView />}
+          {activeTab === 'logs' && <ActivityLogView onNavigate={setActiveTab} />}
 
           {activeTab === 'sdk-docs' && <SdkIntegrationsView profiles={profiles} />}
 
-          {activeTab === 'settings' && <SettingsView />}
         </main>
       </div>
 

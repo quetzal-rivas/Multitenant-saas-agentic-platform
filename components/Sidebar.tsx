@@ -3,12 +3,9 @@
 import React from 'react';
 import {
   FileCode2,
-  Database,
   Globe2,
   KeyRound,
-  TerminalSquare,
   ScrollText,
-  SlidersHorizontal,
   Code2,
   Layers,
   Sparkles,
@@ -28,7 +25,6 @@ interface SidebarProps {
   activeTab: string;
   setActiveTab: (tab: string) => void;
   profilesCount: number;
-  sourcesCount: number;
   skillsCount?: number;
 }
 
@@ -36,7 +32,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   activeTab,
   setActiveTab,
   profilesCount,
-  sourcesCount,
   skillsCount,
 }) => {
   return (
@@ -202,23 +197,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </button>
 
             <button
-              onClick={() => setActiveTab('sources')}
-              className={`w-full flex items-center justify-between px-3 py-2 rounded-md text-xs font-medium transition-all ${
-                activeTab === 'sources'
-                  ? 'bg-zinc-800/90 text-white font-semibold border-l-2 border-emerald-500 pl-2.5'
-                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40'
-              }`}
-            >
-              <div className="flex items-center gap-2.5">
-                <Database className={`w-4 h-4 ${activeTab === 'sources' ? 'text-emerald-400' : 'text-zinc-400'}`} />
-                <span>Sources</span>
-              </div>
-              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400">
-                {sourcesCount}
-              </span>
-            </button>
-
-            <button
               onClick={() => setActiveTab('mcp-hub')}
               className={`w-full flex items-center justify-between px-3 py-2 rounded-md text-xs font-medium transition-all ${
                 activeTab === 'mcp-hub'
@@ -275,23 +253,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
             Developer
           </div>
           <nav className="space-y-1">
-            <button
-              onClick={() => setActiveTab('simulator')}
-              className={`w-full flex items-center justify-between px-3 py-2 rounded-md text-xs font-medium transition-all ${
-                activeTab === 'simulator'
-                  ? 'bg-zinc-800/90 text-white font-semibold border-l-2 border-emerald-500 pl-2.5'
-                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40'
-              }`}
-            >
-              <div className="flex items-center gap-2.5">
-                <TerminalSquare className={`w-4 h-4 ${activeTab === 'simulator' ? 'text-indigo-400' : 'text-zinc-400'}`} />
-                <span>Test Simulator</span>
-              </div>
-              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-800/50">
-                SANDBOX
-              </span>
-            </button>
-
             <button
               onClick={() => setActiveTab('platform-mcp')}
               className={`w-full flex items-center justify-between px-3 py-2 rounded-md text-xs font-medium transition-all ${
@@ -353,17 +314,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
             Configuration
           </div>
           <nav className="space-y-1">
-            <button
-              onClick={() => setActiveTab('settings')}
-              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-xs font-medium transition-all ${
-                activeTab === 'settings'
-                  ? 'bg-zinc-800/90 text-white font-semibold border-l-2 border-emerald-500 pl-2.5'
-                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40'
-              }`}
-            >
-              <SlidersHorizontal className={`w-4 h-4 ${activeTab === 'settings' ? 'text-emerald-400' : 'text-zinc-400'}`} />
-              <span>Compiler Policies</span>
-            </button>
             
             <button
               onClick={() => setActiveTab('account')}

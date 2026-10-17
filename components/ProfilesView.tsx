@@ -5,7 +5,6 @@ import { ContextProfile } from '@/lib/types';
 import {
   Plus,
   ArrowRight,
-  Terminal,
   Cpu,
   Layers,
   Sparkles,
@@ -22,14 +21,12 @@ interface ProfilesViewProps {
   profiles: ContextProfile[];
   onSelectProfile: (profile: ContextProfile) => void;
   onOpenCreate: () => void;
-  onQuickResolve: (profile: ContextProfile) => void;
 }
 
 export const ProfilesView: React.FC<ProfilesViewProps> = ({
   profiles,
   onSelectProfile,
   onOpenCreate,
-  onQuickResolve,
 }) => {
   const [copiedId, setCopiedId] = React.useState<string | null>(null);
 
@@ -188,17 +185,6 @@ export const ProfilesView: React.FC<ProfilesViewProps> = ({
                           <Copy className="w-3 h-3 text-zinc-500 ml-1" />
                         </>
                       )}
-                    </button>
-
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onQuickResolve(profile);
-                      }}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium transition-colors border border-zinc-700"
-                    >
-                      <Terminal className="w-3.5 h-3.5 text-emerald-400" />
-                      <span>Test Resolve</span>
                     </button>
 
                     <button

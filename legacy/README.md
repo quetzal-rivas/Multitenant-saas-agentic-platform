@@ -20,6 +20,10 @@ decide what to keep. Nothing in this folder is type-checked, linted, tested, bun
 | `snippets/docs-endpoints-and-platform-mcp-mock.tsx.txt` | `/docs` sections for the mock Endpoints page and the mock "Platform MCP Controller" (fake tools, `x-tenant-id` header) | Described tools that never existed; misled an external agent | `components/docs/McpToolsReference.tsx` (generated from the live tool catalog) |
 | `snippets/api-keys-client-token-minter.tsx.txt` | API Keys page "Mint Scoped Context Token" section with a TTL slider and fake tool chips | No API accepts client tokens yet; the tools listed did not exist | Nothing yet (backend `POST /api/v1/context/token` and `lib/auth/jwks.ts` kept for a future browser widget) |
 | `snippets/profiles-mock-latency-stats.tsx.txt` | Profiles page stat cards "Avg Compilation Latency 14.2 ms" and "Target Architecture" | Hard-coded numbers, no metric behind them | Nothing (the real counts stay) |
+| `components/LogsView.tsx` | "Logs & Tracing" page over fixed demo logs (`INITIAL_LOGS`) and an unused `ephemeral_context` table | Fake data | `components/ActivityLogView.tsx` + `GET /api/v1/activity`: real agent runs (step timeline from `run_events`), webhook deliveries and function calls |
+| `components/SimulatorView.tsx` | "Test Simulator" sandbox: a fake LangGraph / Redis / "Port 3000 Mock Egress" pipeline | Mock; nothing it showed ran | Agent Studio (real runs) and Logs & Tracing |
+| `components/SettingsView.tsx` | "Compiler Policies" page (token budget, cache TTL, output format) | Save did nothing; no setting was read anywhere | Nothing yet (run limits live in `organizations.agent_limits`) |
+| `components/SourcesView.tsx` | "Sources" page with config / test-ping dialogs | UI only: no API stored or tested sources | Context profiles' own source steps (Profile builder) |
 
 ## AWS resources from the old backend (not touched)
 Moving these files does not delete anything in AWS. Earlier experiments left resources such as a

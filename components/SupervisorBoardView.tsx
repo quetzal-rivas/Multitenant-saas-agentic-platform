@@ -246,12 +246,12 @@ export const SupervisorBoardView: React.FC = () => {
           </div>
         </div>
       ) : (
-        <div className="flex-1 overflow-x-auto p-6">
-          <div className="grid grid-cols-4 gap-4 min-w-[960px] h-full">
+        <div className="flex-1 overflow-x-auto p-4 sm:p-6 snap-x snap-mandatory sm:snap-none">
+          <div className="grid grid-cols-[repeat(4,85vw)] sm:grid-cols-4 gap-4 sm:min-w-[960px] h-full">
             {COLUMNS.map((col) => {
               const items = visible.filter(col.match);
               return (
-                <section key={col.id} className="flex flex-col bg-[#0d1017] border border-zinc-800 rounded-xl min-h-0">
+                <section key={col.id} className="snap-center flex flex-col bg-[#0d1017] border border-zinc-800 rounded-xl min-h-0">
                   <div className="px-4 py-3 border-b border-zinc-800 flex items-center justify-between text-sm">
                     <span className="font-semibold text-zinc-200">{col.title}</span>
                     <span className="text-xs text-zinc-500">{items.length}</span>

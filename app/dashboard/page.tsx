@@ -39,6 +39,8 @@ export default function DashboardPage() {
   const [sources, setSources] = useState<ContextSource[]>(DEMO ? INITIAL_SOURCES : []);
   const [skillsCount, setSkillsCount] = useState<number>(5);
   const [activeTab, setActiveTab] = useState<string>('profiles');
+  /** Phones: the sidebar opens as a drawer from the navbar menu button. */
+  const [menuOpen, setMenuOpen] = useState(false);
   const [selectedProfile, setSelectedProfile] = useState<ContextProfile | null>(profiles[0] ?? null);
   const [studioProfileId, setStudioProfileId] = useState<string | undefined>(undefined);
   const [studioThreadId, setStudioThreadId] = useState<string | undefined>(undefined);
@@ -140,21 +142,30 @@ export default function DashboardPage() {
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         onOpenSimulator={() => setActiveTab('simulator')}
-        onOpenNewProfile={() => setIsCreateModalOpen(true)}
+        onOpenNewProfile={activeTab === 'profiles' ? () => setIsCreateModalOpen(true) : undefined}
+        onOpenMenu={() => setMenuOpen(true)}
       />
 
       <LiveCallBanner onOpen={() => setActiveTab('calls')} hidden={activeTab === 'calls'} />
 
       {/* Main Layout Body */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Left Developer Sidebar */}
-        <Sidebar
-          activeTab={activeTab}
-          setActiveTab={(tab) => setActiveTab(tab)}
-          profilesCount={profiles.length}
-          sourcesCount={sources.length}
-          skillsCount={skillsCount}
-        />
+        {/* Left sidebar: always visible from md up; a slide-in drawer on phones. */}
+        <div className={`${menuOpen ? 'fixed inset-0 z-50 flex' : 'hidden'} md:static md:z-auto md:flex`}>
+          <div className="absolute inset-0 bg-black/60 md:hidden" onClick={() => setMenuOpen(false)} aria-hidden />
+          <div className="relative h-full overflow-y-auto md:h-auto md:overflow-visible">
+            <Sidebar
+              activeTab={activeTab}
+              setActiveTab={(tab) => {
+                setActiveTab(tab);
+                setMenuOpen(false);
+              }}
+              profilesCount={profiles.length}
+              sourcesCount={sources.length}
+              skillsCount={skillsCount}
+            />
+          </div>
+        </div>
 
         {/* Content Container */}
         <main className="flex-1 overflow-y-auto bg-[#090b10]">

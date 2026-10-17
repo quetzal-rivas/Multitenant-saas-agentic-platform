@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Layers, Terminal, Sparkles, Shield, Activity, ChevronRight, Key, Cpu, Server, Building2 } from 'lucide-react';
+import { Layers, Terminal, Sparkles, ChevronRight, Server, Building2, Menu } from 'lucide-react';
 
 /** Breadcrumb names for tabs whose id differs from their page name. */
 const TAB_LABELS: Record<string, string> = { endpoints: 'webhooks', 'session-studio': 'agent studio', 'function-studio': 'AI function studio', 'mcp-hub': 'MCP hub & tools', calendar: 'task calendar', board: 'supervisor board', calls: 'live calls' };
@@ -12,6 +12,8 @@ interface NavbarProps {
   setActiveTab?: (tab: string) => void;
   onOpenSimulator: () => void;
   onOpenNewProfile?: () => void;
+  /** Phones: open the sidebar drawer. */
+  onOpenMenu?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -19,6 +21,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   setActiveTab,
   onOpenSimulator,
   onOpenNewProfile,
+  onOpenMenu,
 }) => {
   const router = useRouter();
   const [activeOrgName, setActiveOrgName] = useState<string>('Loading...');
@@ -36,15 +39,20 @@ export const Navbar: React.FC<NavbarProps> = ({
           }
         }
       } catch (err) {
-        setActiveOrgName('Mock Organization (Dev)');
+        setActiveOrgName('Organization');
       }
     };
     fetchOrg();
   }, []);
   return (
-    <header className="h-14 border-b border-zinc-800 bg-[#0e1117] px-4 flex items-center justify-between sticky top-0 z-40">
+    <header className="h-14 border-b border-zinc-800 bg-[#0e1117] px-3 sm:px-4 flex items-center justify-between gap-2 sticky top-0 z-40">
       {/* Brand & Breadcrumbs */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+        {onOpenMenu && (
+          <button onClick={onOpenMenu} className="md:hidden p-1.5 -ml-1 rounded-md text-zinc-300 hover:bg-zinc-800" aria-label="Open menu">
+            <Menu className="w-5 h-5" />
+          </button>
+        )}
         <div 
           onClick={() => setActiveTab?.('profiles')}
           className="flex items-center gap-2 cursor-pointer group"
@@ -54,8 +62,8 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
           <div>
             <div className="flex items-center gap-1.5">
-              <span className="font-semibold tracking-tight text-white text-sm">Context Control</span>
-              <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-emerald-950/80 text-emerald-400 border border-emerald-800/60 font-medium">
+              <span className="font-semibold tracking-tight text-white text-sm whitespace-nowrap">Context Control</span>
+              <span className="hidden sm:inline text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-emerald-950/80 text-emerald-400 border border-emerald-800/60 font-medium">
                 MCP Gateway
               </span>
             </div>
@@ -85,7 +93,7 @@ export const Navbar: React.FC<NavbarProps> = ({
       </div>
 
       {/* Right Quick Actions */}
-      <div className="flex items-center gap-2.5">
+      <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
         <button
           onClick={() => setActiveTab?.('mcp-hub')}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors border ${
@@ -96,7 +104,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           title="Open Hosted MCP Hub & OAuth Subscriptions"
         >
           <Server className="w-3.5 h-3.5 text-emerald-400" />
-          <span>MCP Hub</span>
+          <span className="hidden sm:inline">MCP Hub</span>
         </button>
 
         <button
@@ -109,7 +117,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           title="Open Agent Team & Queue Simulator Sandbox"
         >
           <Terminal className="w-3.5 h-3.5 text-emerald-400" />
-          <span>Simulator Sandbox</span>
+          <span className="hidden sm:inline">Simulator Sandbox</span>
         </button>
 
         {onOpenNewProfile && (
@@ -118,7 +126,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium transition-colors shadow-sm shadow-emerald-950"
           >
             <Sparkles className="w-3.5 h-3.5" />
-            <span>+ New Profile</span>
+            <span className="hidden sm:inline">+ New Profile</span>
           </button>
         )}
       </div>

@@ -273,7 +273,7 @@ function EntryDetail({ entry, onNavigate }: { entry: ActivityEntry; onNavigate?:
         <Field label="When">{new Date(entry.at).toLocaleString()}</Field>
         <Field label="Duration">{fmtDuration(entry.duration_ms)}</Field>
         <Field label={entry.kind === 'run' ? 'Tokens' : 'ID'}>
-          {entry.kind === 'run' ? (detail?.run.tokens_used ?? entry.tokens ?? 0).toLocaleString() : <span className="font-mono text-xs">{entry.id.slice(0, 8)}</span>}
+          {entry.kind === 'run' ? (detail?.run.tokens_used || entry.tokens || null)?.toLocaleString() ?? '—' : <span className="font-mono text-xs">{entry.id.slice(0, 8)}</span>}
         </Field>
       </div>
 

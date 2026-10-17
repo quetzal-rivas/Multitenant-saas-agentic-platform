@@ -71,14 +71,14 @@ export const ProfilesView: React.FC<ProfilesViewProps> = ({
       </div>
 
       {/* High-Level Infrastructure Metrics */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 gap-4 max-w-xl">
         <div className="p-4 rounded-lg bg-[#11141c] border border-zinc-800/80">
           <div className="text-[11px] font-mono uppercase tracking-wider text-zinc-500 mb-1">
             Active Profiles
           </div>
           <div className="text-xl font-bold text-white font-mono flex items-baseline gap-1.5">
             {profiles.length}
-            <span className="text-xs text-emerald-400 font-normal">in production</span>
+            <span className="text-xs text-zinc-400 font-normal">profiles</span>
           </div>
         </div>
 
@@ -92,24 +92,6 @@ export const ProfilesView: React.FC<ProfilesViewProps> = ({
           </div>
         </div>
 
-        <div className="p-4 rounded-lg bg-[#11141c] border border-zinc-800/80">
-          <div className="text-[11px] font-mono uppercase tracking-wider text-zinc-500 mb-1">
-            Avg Compilation Latency
-          </div>
-          <div className="text-xl font-bold text-emerald-400 font-mono flex items-baseline gap-1.5">
-            14.2 ms
-            <span className="text-xs text-zinc-400 font-normal">p99 &lt; 35ms</span>
-          </div>
-        </div>
-
-        <div className="p-4 rounded-lg bg-[#11141c] border border-zinc-800/80">
-          <div className="text-[11px] font-mono uppercase tracking-wider text-zinc-500 mb-1">
-            Target Architecture
-          </div>
-          <div className="text-xl font-bold text-zinc-200 font-mono text-xs">
-            Model-Agnostic Context
-          </div>
-        </div>
       </div>
 
       {/* Context Profiles Section */}

@@ -40,7 +40,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   skillsCount,
 }) => {
   return (
-    <aside className="w-56 shrink-0 border-r border-zinc-800 bg-[#0d1016] flex flex-col justify-between py-4 select-none min-h-[calc(100vh-3.5rem)]">
+    <aside className="w-56 shrink-0 border-r border-zinc-800 bg-[#0d1016] flex flex-col justify-between py-4 select-none min-h-full md:min-h-[calc(100vh-3.5rem)]">
       <div className="space-y-6 px-3">
         {/* Workspace Group */}
         <div>

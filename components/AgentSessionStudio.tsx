@@ -420,6 +420,8 @@ export const AgentSessionStudio: React.FC<AgentSessionStudioProps> = ({ initialT
   const [turnError, setTurnError] = useState<string | null>(null);
   const [modal, setModal] = useState<'create' | 'edit' | null>(null);
   const [tab, setTab] = useState<'config' | 'checkpoints' | 'api'>('config');
+  /** Below lg the inspector is a full-screen sheet opened from the header. */
+  const [showInspector, setShowInspector] = useState(false);
   const [checkpointDetail, setCheckpointDetail] = useState<any | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
@@ -701,6 +703,9 @@ export const AgentSessionStudio: React.FC<AgentSessionStudioProps> = ({ initialT
             )}
             {active && (
               <>
+                <button onClick={() => setShowInspector(true)} className="lg:hidden p-1.5 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-white" title="Settings, checkpoints and API">
+                  <Settings2 className="w-3.5 h-3.5" />
+                </button>
                 <button
                   onClick={() => setModal('edit')}
                   className="p-1.5 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-white"
@@ -902,8 +907,11 @@ export const AgentSessionStudio: React.FC<AgentSessionStudioProps> = ({ initialT
       </div>
 
       {/* INSPECTOR */}
-      <div className="w-96 flex flex-col bg-[#0b0d13] shrink-0">
+      <div className={`${showInspector ? 'fixed inset-0 z-50 flex' : 'hidden'} lg:static lg:z-auto lg:flex w-full lg:w-96 flex-col bg-[#0b0d13] shrink-0`}>
         <div className="flex border-b border-zinc-800 text-xs font-mono bg-[#0e1118]">
+          <button onClick={() => setShowInspector(false)} className="lg:hidden px-3 text-zinc-400 hover:text-white" aria-label="Close settings">
+            <X className="w-4 h-4" />
+          </button>
           {(
             [
               ['config', 'Configuration', Settings2],

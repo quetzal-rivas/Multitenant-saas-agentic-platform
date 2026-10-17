@@ -151,7 +151,7 @@ export default function DashboardPage() {
       {/* Main Layout Body */}
       <div className="flex-1 flex overflow-hidden">
         {/* Left sidebar: always visible from md up; a slide-in drawer on phones. */}
-        <div className={`${menuOpen ? 'fixed inset-0 z-50 flex' : 'hidden'} md:static md:z-auto md:flex`}>
+        <div className={`${menuOpen ? 'fixed inset-0 z-50 flex overflow-x-hidden' : 'hidden'} md:static md:z-auto md:flex md:overflow-visible`}>
           <div className="absolute inset-0 bg-black/60 md:hidden" onClick={() => setMenuOpen(false)} aria-hidden />
           <div className="relative h-full overflow-y-auto md:h-auto md:overflow-visible">
             <Sidebar

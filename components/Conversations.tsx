@@ -133,6 +133,8 @@ export const Conversations: React.FC<{ onOpenInStudio?: (sessionId: string) => v
   const [selected, setSelected] = useState<string | null>(null);
   const [detail, setDetail] = useState<{ conversation: Conversation; transcript: TranscriptItem[]; runs: Run[]; inbound: InboundMessage[] | null } | null>(null);
   const [tab, setTab] = useState<'transcript' | 'runs' | 'messages'>('transcript');
+  /** Phones show either the inbox or one conversation. */
+  const [mobileDetail, setMobileDetail] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const voice = useVoice({ session_id: selected ?? undefined });
@@ -209,7 +211,7 @@ export const Conversations: React.FC<{ onOpenInStudio?: (sessionId: string) => v
   return (
     <div className="h-[calc(100vh-3.5rem)] flex bg-[#090b10] text-zinc-100 overflow-hidden">
       {/* Inbox */}
-      <aside className="w-80 shrink-0 border-r border-zinc-800 flex flex-col">
+      <aside className={`${mobileDetail ? 'hidden' : 'flex'} md:flex w-full md:w-80 shrink-0 border-r border-zinc-800 flex-col`}>
         <div className="p-4 border-b border-zinc-800 space-y-3 bg-[#0d1017]">
           <div className="flex items-center justify-between">
             <h1 className="text-base font-semibold text-white flex items-center gap-2"><MessageSquare className="w-4 h-4 text-emerald-400" /> Conversations</h1>
@@ -259,7 +261,10 @@ export const Conversations: React.FC<{ onOpenInStudio?: (sessionId: string) => v
             return (
               <button
                 key={conv.id}
-                onClick={() => setSelected(conv.id)}
+                onClick={() => {
+                  setSelected(conv.id);
+                  setMobileDetail(true);
+                }}
                 className={`w-full text-left px-4 py-3 border-b border-zinc-800/70 space-y-1 ${selected === conv.id ? 'bg-zinc-800/60' : 'hover:bg-zinc-900/60'}`}
               >
                 <div className="flex items-center justify-between gap-2">
@@ -281,7 +286,7 @@ export const Conversations: React.FC<{ onOpenInStudio?: (sessionId: string) => v
       </aside>
 
       {/* Detail */}
-      <section className="flex-1 min-w-0 flex flex-col">
+      <section className={`${mobileDetail ? 'flex' : 'hidden'} md:flex flex-1 min-w-0 flex-col`}>
         {error && (
           <div className="m-4 p-3 rounded-lg bg-rose-950/40 border border-rose-900/60 text-xs text-rose-300 flex items-center gap-2">
             <AlertTriangle className="w-3.5 h-3.5" /> {error}
@@ -291,8 +296,9 @@ export const Conversations: React.FC<{ onOpenInStudio?: (sessionId: string) => v
         {selected && !detail && <div className="flex-1 flex items-center justify-center text-sm text-zinc-500 gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading…</div>}
         {c && detail && (
           <>
-            <header className="px-6 py-4 border-b border-zinc-800 bg-[#0d1017] flex flex-wrap items-center justify-between gap-3">
+            <header className="px-4 sm:px-6 py-4 border-b border-zinc-800 bg-[#0d1017] flex flex-wrap items-center justify-between gap-3">
               <div className="min-w-0">
+                <button onClick={() => setMobileDetail(false)} className="md:hidden text-xs text-emerald-400 mb-1">← All conversations</button>
                 <h2 className="text-base font-semibold text-white truncate">{c.name}</h2>
                 <p className="text-xs text-zinc-400">
                   {KIND_META[c.kind].label}
@@ -326,7 +332,7 @@ export const Conversations: React.FC<{ onOpenInStudio?: (sessionId: string) => v
               {voice.error && <span className="ml-auto self-center pr-4 text-rose-400">{voice.error}</span>}
             </div>
 
-            <div className="flex-1 overflow-y-auto p-6 space-y-4">
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4">
               {tab === 'transcript' && detail.transcript.length === 0 && <p className="text-sm text-zinc-500">No messages yet.</p>}
               {tab === 'transcript' &&
                 detail.transcript.map((item, i) => {

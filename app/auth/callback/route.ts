@@ -1,9 +1,12 @@
 export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/utils/supabase/server';
+import { publicOrigin } from '@/lib/http/public-origin';
 
 export async function GET(request: NextRequest) {
-  const { searchParams, origin } = new URL(request.url);
+  const { searchParams } = new URL(request.url);
+  // Behind Amplify, request.url is the internal server (https://localhost:3000); redirect to the public site.
+  const origin = publicOrigin(request);
   const code = searchParams.get('code');
   // Only allow same-origin relative paths as the post-login destination.
   const requestedNext = searchParams.get('next') ?? '/onboarding';

@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { ProprietaryMcpServer } from '@/lib/demo/legacy_mocks/mcp-server';
 import { createClient } from '@/utils/supabase/server';
 import crypto from 'crypto';
+import { publicOrigin } from '@/lib/http/public-origin';
 import { isDemoMode } from '@/lib/demo';
 import { POST as platformPOST } from './platform/route';
 
@@ -64,15 +65,14 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
-  const url = new URL(req?.url || 'http://localhost');
-  
+
   return NextResponse.json({
     status: 'online',
     protocol: 'model-context-protocol',
     version: '2024-11-05',
     server: 'context-control-mcp-server',
     capabilities: ['tools/list', 'tools/call', 'prompts/list', 'prompts/get', 'resources/list', 'resources/read'],
-    endpoint: `${url.origin}/api/mcp`,
+    endpoint: `${publicOrigin(req)}/api/mcp/platform`,
     auth_required: true
   });
 }

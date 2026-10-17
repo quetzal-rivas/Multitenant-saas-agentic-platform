@@ -133,6 +133,8 @@ const codeCls = 'w-full bg-[#06080b] border border-zinc-800 rounded-lg p-3 font-
 export function FunctionStudio() {
   const [functions, setFunctions] = useState<Fn[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  /** Phones show either the list or one function. */
+  const [mobileDetail, setMobileDetail] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState<null | 'choose' | 'ai' | 'blank' | 'router'>(null);
@@ -166,7 +168,7 @@ export function FunctionStudio() {
 
   return (
     <div className="h-full flex bg-[#090b10] text-zinc-100 overflow-hidden">
-      <aside className="w-64 shrink-0 border-r border-zinc-800 bg-[#0d1017] flex flex-col">
+      <aside className={`${mobileDetail ? 'hidden' : 'flex'} md:flex w-full md:w-64 shrink-0 border-r border-zinc-800 bg-[#0d1017] flex-col`}>
         <div className="px-4 py-4 border-b border-zinc-800 flex items-center justify-between">
           <div>
             <h1 className="text-sm font-semibold text-white flex items-center gap-1.5"><Code2 className="w-4 h-4 text-emerald-400" /> AI Function Studio</h1>
@@ -183,7 +185,10 @@ export function FunctionStudio() {
             return (
               <button
                 key={fn.id}
-                onClick={() => setSelectedId(fn.id)}
+                onClick={() => {
+                  setSelectedId(fn.id);
+                  setMobileDetail(true);
+                }}
                 className={`w-full text-left px-3 py-2.5 rounded-lg border ${fn.id === selectedId ? 'bg-zinc-800/70 border-zinc-600' : 'border-transparent hover:bg-zinc-900'}`}
               >
                 <div className="text-sm text-white truncate">{fn.name}</div>
@@ -197,7 +202,8 @@ export function FunctionStudio() {
         </div>
       </aside>
 
-      <main className="flex-1 min-w-0 overflow-y-auto">
+      <main className={`${mobileDetail ? 'block' : 'hidden'} md:block flex-1 min-w-0 overflow-y-auto`}>
+        <div className="md:hidden px-4 pt-3"><button onClick={() => setMobileDetail(false)} className="text-xs text-emerald-400">← All functions</button></div>
         {error && (
           <div className="m-6 p-3 rounded-lg bg-rose-950/40 border border-rose-900/60 text-xs text-rose-300 flex items-center gap-2">
             <AlertTriangle className="w-3.5 h-3.5" /> {error}
@@ -228,6 +234,7 @@ export function FunctionStudio() {
           setMode={setCreating}
           onCreated={(id) => {
             setCreating(null);
+            setMobileDetail(true);
             load(id);
           }}
         />
@@ -304,7 +311,7 @@ const NewFunctionModal: React.FC<{
         </div>
 
         {mode === 'choose' && (
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <button onClick={() => setMode('ai')} className="p-4 rounded-xl border border-emerald-800 bg-emerald-950/20 text-left hover:border-emerald-600">
               <Sparkles className="w-5 h-5 text-emerald-400 mb-2" />
               <div className="text-sm font-semibold text-white">Describe it (AI)</div>

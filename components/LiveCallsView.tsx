@@ -399,6 +399,12 @@ const emptyAgent = (teamId = ''): Omit<VoiceAgent, 'id' | 'elevenlabs'> & { elev
   elevenlabs_voice_id: null,
 });
 
+/** Fields of a voice agent the API accepts (mirrors voiceAgentSchema). */
+const EDITABLE_FIELDS = [
+  'name', 'mode', 'team_id', 'context_profile_id', 'mcp_profile_id', 'voice_profile_id', 'language', 'instructions', 'greeting',
+  'consent_message', 'listener_team_id', 'triggers', 'calling_hours', 'max_minutes', 'elevenlabs_voice_id',
+];
+
 function AgentsTab({ onNotice, onNavigate }: { onNotice: (n: { ok: boolean; text: string } | null) => void; onNavigate?: (tab: string) => void }) {
   const [agents, setAgents] = useState<VoiceAgent[]>([]);
   const [teams, setTeams] = useState<Named[]>([]);
@@ -455,7 +461,9 @@ function AgentsTab({ onNotice, onNavigate }: { onNotice: (n: { ok: boolean; text
     try {
       const kw = keywords.split(',').map((k) => k.trim()).filter(Boolean);
       const triggers = [...draft.triggers.filter((t) => t.type !== 'keyword'), ...(kw.length ? [{ type: 'keyword', any: kw, role: 'customer' }] : [])];
-      const body = JSON.stringify({ ...draft, triggers, instructions: draft.instructions || null, greeting: draft.greeting || null, consent_message: draft.consent_message || null });
+      // Only the editable fields: the API rejects row columns (ids, timestamps, endpoint links).
+      const fields = Object.fromEntries(Object.entries(draft).filter(([k]) => EDITABLE_FIELDS.includes(k)));
+      const body = JSON.stringify({ ...fields, triggers, instructions: draft.instructions || null, greeting: draft.greeting || null, consent_message: draft.consent_message || null });
       const { voice_agent } = selectedId
         ? await api<{ voice_agent: VoiceAgent }>(`/api/v1/voice-agents/${selectedId}`, { method: 'PATCH', body })
         : await api<{ voice_agent: VoiceAgent }>('/api/v1/voice-agents', { method: 'POST', body });

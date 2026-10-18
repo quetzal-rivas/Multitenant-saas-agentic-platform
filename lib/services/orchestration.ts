@@ -95,7 +95,7 @@ export async function createAgent(ctx: Ctx, args: z.infer<typeof createAgentArgs
   for (const t of requested) {
     if (t === WEB_SEARCH_TOOL) {
       if (!canUseWebSearch(ctx)) refused.push(`${t} (the key needs the ${AGENT_SCOPES.webSearch} scope)`);
-      else if (!(await webSearchProvider(ctx.tenantId))) refused.push(`${t} (no Gemini, Anthropic or OpenAI key is stored for this organization)`);
+      else if (!(await webSearchProvider(ctx.tenantId))) refused.push(`${t} (no Gemini, Claude, OpenAI or xAI key is stored for this organization)`);
     } else if (!allowed.has(t)) {
       const def = PLATFORM_TOOL_DEFINITIONS.find((d) => d.name === t);
       refused.push(def ? `${t} (the key needs the ${def.requiredScope} scope)` : `${t} (unknown tool; see tools/list, plus web_search)`);

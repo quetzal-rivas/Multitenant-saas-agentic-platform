@@ -1,13 +1,13 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
 import { DEFAULT_MODELS, geminiModelChain, type LLMProvider } from '@/lib/agent/providers/llm-adapter';
-import { getTenantSecret } from '@/lib/secrets/secrets-service';
-import { configuredProviders } from '@/lib/services/agent-sessions';
+import { getTenantSecret, listTenantSecrets } from '@/lib/secrets/secrets-service';
 import { ServiceError } from '@/lib/services/errors';
 
 /**
- * `web_search` runs through the organization's own LLM key, preferring Gemini (Google
- * Search grounding), then Claude (web_search server tool), then OpenAI (web_search tool).
+ * `web_search` runs through the organization's own keys, trying in order Gemini (Google
+ * Search grounding), Claude (web_search server tool), OpenAI and xAI Grok (web_search tool
+ * of the Responses API). A provider that fails (quota, billing, outage) hands over to the next.
  */
 
 export const WEB_SEARCH_DEADLINE_MS = 25_000;
@@ -16,15 +16,22 @@ export const webSearchArgs = z.object({ query: z.string().trim().min(2).max(500)
 export interface WebSearchResult {
   answer: string;
   sources: Array<{ title: string; url: string }>;
-  provider: LLMProvider;
+  provider: SearchProvider;
 }
 
-const PREFERENCE: LLMProvider[] = ['gemini', 'anthropic', 'openai'];
+export type SearchProvider = LLMProvider | 'xai';
+const PREFERENCE: SearchProvider[] = ['gemini', 'anthropic', 'openai', 'xai'];
+const XAI_SEARCH_MODEL = 'grok-4.7';
 const INSTRUCTION = 'Search the web and answer concisely with the key facts. Mention dates when relevant.';
 
-export async function webSearchProvider(tenantId: string): Promise<LLMProvider | null> {
-  const available = await configuredProviders(tenantId);
-  return PREFERENCE.find((p) => available.includes(p)) ?? null;
+/** Providers with a stored key, in the order web search tries them. */
+export async function webSearchProviders(tenantId: string): Promise<SearchProvider[]> {
+  const secrets = await listTenantSecrets(tenantId);
+  return PREFERENCE.filter((p) => secrets.some((s) => s.provider === p));
+}
+
+export async function webSearchProvider(tenantId: string): Promise<SearchProvider | null> {
+  return (await webSearchProviders(tenantId))[0] ?? null;
 }
 
 function dedupe(sources: Array<{ title: string; url: string }>) {
@@ -62,7 +69,7 @@ async function viaGemini(apiKey: string, query: string, signal: AbortSignal): Pr
   }
   if (quota) {
     throw new ServiceError(
-      "Web search is not available on this organization's Gemini key: Google reports the quota is exceeded (Google Search grounding usually needs billing enabled on the key's Google AI project). Enable billing there, or add a Claude or OpenAI key.",
+      "Web search is not available on this organization's Gemini key: Google reports the quota is exceeded (Google Search grounding usually needs billing enabled on the key's Google AI project). Enable billing there, or add a Claude, OpenAI or xAI (Grok) key.",
       'CONFLICT'
     );
   }
@@ -97,38 +104,76 @@ async function viaClaude(apiKey: string, query: string, signal: AbortSignal): Pr
   return { answer, sources: dedupe(sources) };
 }
 
-async function viaOpenAI(apiKey: string, query: string, signal: AbortSignal): Promise<Omit<WebSearchResult, 'provider'>> {
-  const res = await fetch('https://api.openai.com/v1/responses', {
+/** OpenAI and xAI share the Responses API shape (web_search tool, url_citation annotations). */
+async function viaResponsesApi(
+  vendor: 'OpenAI' | 'xAI',
+  url: string,
+  body: Record<string, unknown>,
+  apiKey: string,
+  signal: AbortSignal
+): Promise<Omit<WebSearchResult, 'provider'>> {
+  const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({ model: DEFAULT_MODELS.openai, instructions: INSTRUCTION, input: query, tools: [{ type: 'web_search' }], reasoning: { effort: 'low' } }),
+    body: JSON.stringify(body),
     signal,
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new ServiceError(`Web search failed: OpenAI (${res.status}) ${data?.error?.message || ''}`.trim(), 'CONFLICT');
+  if (!res.ok) {
+    const msg = typeof data?.error === 'string' ? data.error : data?.error?.message || data?.message || '';
+    throw new ServiceError(`Web search failed: ${vendor} (${res.status}) ${msg}`.trim().slice(0, 300), 'CONFLICT');
+  }
   const parts = (data.output || []).filter((o: any) => o.type === 'message').flatMap((o: any) => o.content || []);
   const answer = parts.filter((p: any) => p.type === 'output_text').map((p: any) => p.text).join('').trim();
   const sources = parts
     .flatMap((p: any) => p.annotations || [])
     .filter((a: any) => a.type === 'url_citation')
     .map((a: any) => ({ title: a.title || a.url, url: a.url }));
+  // xAI also lists cited URLs at the top level.
+  for (const c of Array.isArray(data.citations) ? data.citations : []) {
+    const url = typeof c === 'string' ? c : c?.url;
+    if (url) sources.push({ title: c?.title || url, url });
+  }
   return { answer, sources: dedupe(sources) };
 }
 
+const viaOpenAI = (apiKey: string, query: string, signal: AbortSignal) =>
+  viaResponsesApi('OpenAI', 'https://api.openai.com/v1/responses', { model: DEFAULT_MODELS.openai, instructions: INSTRUCTION, input: query, tools: [{ type: 'web_search' }], reasoning: { effort: 'low' } }, apiKey, signal);
+
+const viaXai = (apiKey: string, query: string, signal: AbortSignal) =>
+  viaResponsesApi(
+    'xAI',
+    'https://api.x.ai/v1/responses',
+    { model: XAI_SEARCH_MODEL, input: [{ role: 'system', content: INSTRUCTION }, { role: 'user', content: query }], tools: [{ type: 'web_search' }] },
+    apiKey,
+    signal
+  );
+
+const RUNNERS: Record<SearchProvider, (apiKey: string, query: string, signal: AbortSignal) => Promise<Omit<WebSearchResult, 'provider'>>> = {
+  gemini: viaGemini,
+  anthropic: viaClaude,
+  openai: viaOpenAI,
+  xai: viaXai,
+};
+
 export async function webSearch(tenantId: string, args: unknown): Promise<WebSearchResult> {
   const { query } = webSearchArgs.parse(args ?? {});
-  const provider = await webSearchProvider(tenantId);
-  if (!provider) throw new ServiceError('Web search needs an LLM key (Gemini, Claude or OpenAI). Add one in Account & Billing → LLM keys.', 'CONFLICT');
-  const apiKey = await getTenantSecret(tenantId, provider);
-  if (!apiKey) throw new ServiceError(`No ${provider} key is stored.`, 'CONFLICT');
+  const providers = await webSearchProviders(tenantId);
+  if (!providers.length) throw new ServiceError('Web search needs a Gemini, Claude, OpenAI or xAI (Grok) key. Add one in Account & Billing → LLM keys.', 'CONFLICT');
   const signal = AbortSignal.timeout(WEB_SEARCH_DEADLINE_MS);
-  try {
-    const run = provider === 'gemini' ? viaGemini : provider === 'anthropic' ? viaClaude : viaOpenAI;
-    return { ...(await run(apiKey, query, signal)), provider };
-  } catch (err) {
-    if ((err as Error)?.name === 'TimeoutError' || (err as Error)?.name === 'AbortError') {
-      throw new ServiceError('Web search took too long (over 25 s). Try a narrower query.', 'CONFLICT');
+  const failures: string[] = [];
+  for (const provider of providers) {
+    const apiKey = await getTenantSecret(tenantId, provider);
+    if (!apiKey) continue;
+    try {
+      return { ...(await RUNNERS[provider](apiKey, query, signal)), provider };
+    } catch (err) {
+      if ((err as Error)?.name === 'TimeoutError' || (err as Error)?.name === 'AbortError') {
+        throw new ServiceError('Web search took too long (over 25 s). Try a narrower query.', 'CONFLICT');
+      }
+      // Quota, billing or outage on this provider: try the next one.
+      failures.push((err as Error)?.message || String(err));
     }
-    throw err;
   }
+  throw new ServiceError(failures.join(' | ').slice(0, 1200) || 'Web search failed.', 'CONFLICT');
 }

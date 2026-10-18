@@ -17,6 +17,7 @@ import { GET as callback } from '../app/api/oauth/callback/route';
 import { NextRequest } from 'next/server';
 import type { LLMGenerateResult } from '../lib/agent/providers/llm-adapter';
 
+let geminiQuota = false;
 const TENANT = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const user = { tenantId: TENANT, userId: crypto.randomUUID(), authMode: 'session' as const, scopes: ['*'] };
 const GMAIL_SCOPES = 'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/gmail.modify';
@@ -58,6 +59,7 @@ async function fakeGoogle(input: RequestInfo | URL, init?: RequestInit): Promise
     return Response.json({ items: [{ id: 'e1', summary: 'Standup', start: { dateTime: '2026-10-07T09:00:00-06:00' }, end: { dateTime: '2026-10-07T09:15:00-06:00' }, attendees: [{ email: 'a@acme.mx' }] }] });
   }
   if (url.hostname === 'generativelanguage.googleapis.com') {
+    if (geminiQuota) return Response.json({ error: { message: 'Quota exceeded' } }, { status: 429 });
     const body = JSON.parse(String(init?.body));
     assert.deepEqual(body.tools, [{ google_search: {} }]);
     return Response.json({
@@ -65,6 +67,15 @@ async function fakeGoogle(input: RequestInfo | URL, init?: RequestInit): Promise
         content: { parts: [{ text: 'The rate is about 18.2 MXN per USD.' }] },
         groundingMetadata: { groundingChunks: [{ web: { uri: 'https://banxico.org.mx', title: 'Banxico' } }, { web: { uri: 'https://banxico.org.mx', title: 'dup' } }] },
       }],
+    });
+  }
+  if (url.hostname === 'api.x.ai' && url.pathname === '/v1/responses') {
+    const body = JSON.parse(String(init?.body));
+    assert.deepEqual(body.tools, [{ type: 'web_search' }]);
+    assert.equal(new Headers(init?.headers).get('authorization'), 'Bearer xai-key');
+    return Response.json({
+      output: [{ type: 'message', content: [{ type: 'output_text', text: 'Grok says 18.3 MXN per USD.', annotations: [{ type: 'url_citation', url: 'https://banxico.org.mx', title: 'Banxico' }] }] }],
+      citations: ['https://banxico.org.mx', 'https://www.xe.com'],
     });
   }
   return fakePostgrest(input, init);
@@ -211,6 +222,20 @@ describe('MCP Hub connections (fake Google + in-process remote MCP server)', () 
     const res: any = await runConnectorTool(user, tool, { query: 'MXN USD rate today' });
     assert.match(res.answer, /18\.2/);
     assert.deepEqual(res.sources, [{ title: 'Banxico', url: 'https://banxico.org.mx' }]);
+  });
+
+  test('web_search falls back to the next provider (xAI Grok) when Gemini is out of quota', async () => {
+    tables.encrypted_secrets.push({ tenant_id: TENANT, provider: 'xai', updated_at: '2026-10-01', encrypted_payload: await envelopeEncryptSecret('xai-key', TENANT, 'xai') });
+    geminiQuota = true;
+    try {
+      const tool = (await connectorToolsFor(TENANT, null, true)).find((t) => t.name === 'web_search')!;
+      const res: any = await runConnectorTool(user, tool, { query: 'MXN USD rate today' });
+      assert.equal(res.provider, 'xai');
+      assert.match(res.answer, /18\.3/);
+      assert.deepEqual(res.sources.map((x: any) => x.url), ['https://banxico.org.mx', 'https://www.xe.com']);
+    } finally {
+      geminiQuota = false;
+    }
   });
 
   test('profiles select app tools: agent runs and profile-bound MCP keys only get the selection', async () => {

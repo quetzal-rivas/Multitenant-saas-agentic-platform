@@ -4,7 +4,9 @@ import { getSupabaseAdminClient } from '@/lib/supabase';
 import type { AuthContext } from '@/lib/auth/require-auth';
 import { getTenantSecret } from '@/lib/secrets/secrets-service';
 import { executePlatformTool } from '@/lib/mcp/platform-mcp-server';
-import { AGENT_SCOPES, PLATFORM_TOOL_DEFINITIONS, canonicalToolName, getAuthorizedPlatformTools, hasScope, toolInputJsonSchema } from '@/lib/mcp/tool-catalog';
+import { AGENT_SCOPES, PLATFORM_TOOL_DEFINITIONS, canUseWebSearch, canonicalToolName, getAuthorizedPlatformTools, hasScope, toolInputJsonSchema } from '@/lib/mcp/tool-catalog';
+import { WEB_SEARCH_TOOL } from '@/lib/connectors/registry';
+import { webSearchProvider } from '@/lib/connectors/web-search';
 import { getSession, latestCheckpoint, toTranscript, type AgentSession } from '@/lib/services/agent-sessions';
 import { contextProfileInstructions, getContextProfile } from '@/lib/services/context-profiles';
 import { getProfile } from '@/lib/services/profiles';
@@ -13,7 +15,7 @@ import { ServiceError, isServiceError } from '@/lib/services/errors';
 import { parkRunClaims } from '@/lib/services/board';
 import { deployedFunctionRows, functionIdsForProfiles, invokeFunction } from '@/lib/services/functions';
 import { functionToolName } from '@/lib/functions/function-spec';
-import { connectorToolsFor, runConnectorTool } from '@/lib/services/connections';
+import { connectorToolsFor, runConnectorTool, webSearchDef } from '@/lib/services/connections';
 import { emitRunEvent } from './supervisor-graph';
 import { generateLLMResponse, type LLMMessage, type LLMToolDefinition } from './providers/llm-adapter';
 
@@ -461,8 +463,11 @@ export async function runTurn(
   /** Connected-app tools (Google, web search) selected in the given MCP profile. */
   const connectorTools = async (profileId: string | null | undefined): Promise<Array<[string, LoopTool]>> => {
     if (!profileId) return [];
-    if (ctx.authMode === 'api_key' && !hasScope(ctx.scopes, AGENT_SCOPES.connectorsInvoke)) return [];
-    const defs = await connectorToolsFor(ctx.tenantId, profileId);
+    let defs = await connectorToolsFor(ctx.tenantId, profileId);
+    // Without the connectors scope a key keeps at most web search (its own scope).
+    if (ctx.authMode === 'api_key' && !hasScope(ctx.scopes, AGENT_SCOPES.connectorsInvoke)) {
+      defs = canUseWebSearch(ctx) ? defs.filter((d) => d.name === WEB_SEARCH_TOOL) : [];
+    }
     return defs.map((def) => [
       def.name,
       {
@@ -474,6 +479,18 @@ export async function runTurn(
   /** Everything an MCP profile adds on top of platform tools: functions and connected-app tools. */
   const withProfileTools = async (tools: Map<string, LoopTool>, profileId: string | null | undefined) => {
     for (const [name, tool] of [...(await functionTools(profileId)), ...(await connectorTools(profileId))]) tools.set(name, tool);
+    return tools;
+  };
+  /** Platform tools by name, plus web_search when it is in the list (no profile needed). */
+  const namedTools = async (names: string[]): Promise<Map<string, LoopTool>> => {
+    const tools = platformTools(names);
+    if (names.includes(WEB_SEARCH_TOOL) && canUseWebSearch(ctx) && (await webSearchProvider(ctx.tenantId))) {
+      const def = webSearchDef();
+      tools.set(def.name, {
+        def: { name: def.name, description: def.description, parameters: { type: 'object', properties: {}, ...def.inputSchema } },
+        run: (args: Record<string, any>) => runConnectorTool(toolCtx, def, args),
+      });
+    }
     return tools;
   };
 
@@ -528,7 +545,7 @@ export async function runTurn(
   let tools: Map<string, LoopTool>;
   if (team) {
     systemPrompt = await buildSupervisorPrompt(ctx, team);
-    tools = await withProfileTools(platformTools(team.supervisor_tools), team.supervisor_mcp_profile_id);
+    tools = await withProfileTools(await namedTools(team.supervisor_tools), team.supervisor_mcp_profile_id);
     for (const worker of team.workers) {
       const name = delegateToolName(worker);
       tools.set(name, {
@@ -552,7 +569,7 @@ export async function runTurn(
           const answer = await loop({
             systemPrompt: await buildWorkerPrompt(ctx, team, worker),
             messages: [{ role: 'user', content: brief }],
-            tools: await withProfileTools(platformTools(worker.tools), worker.mcp_profile_id),
+            tools: await withProfileTools(await namedTools(worker.tools), worker.mcp_profile_id),
             model: worker.model || team.model,
             maxSteps: MAX_WORKER_STEPS,
             worker: worker.name,
@@ -564,7 +581,7 @@ export async function runTurn(
     if (session.instructions) systemPrompt = `${systemPrompt}\n\n## Instructions for this instance\n${session.instructions}`;
   } else {
     systemPrompt = await buildSystemPrompt(ctx, session);
-    tools = await withProfileTools(platformTools(session.allowed_tools), session.mcp_profile_id);
+    tools = await withProfileTools(await namedTools(session.allowed_tools), session.mcp_profile_id);
   }
   if (control.outputSchema) {
     systemPrompt = `${systemPrompt}\n\n## Final answer format\nWhen you finish, reply with only a JSON object (no prose, no code fences) that matches this JSON Schema:\n${JSON.stringify(control.outputSchema).slice(0, 8000)}`;

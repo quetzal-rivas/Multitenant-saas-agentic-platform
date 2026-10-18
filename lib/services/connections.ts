@@ -208,7 +208,7 @@ export async function listConnections(ctx: Ctx) {
 // Tools for agents and the MCP server
 // ---------------------------------------------------------------------------
 
-const webSearchDef = (): ConnectorToolDef => {
+export const webSearchDef = (): ConnectorToolDef => {
   const { $schema: _s, ...schema } = z.toJSONSchema(webSearchArgs) as Record<string, unknown>;
   return {
     name: WEB_SEARCH_TOOL,

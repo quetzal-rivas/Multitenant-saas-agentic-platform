@@ -22,10 +22,12 @@ let tokensPerStep = 10;
 let holdAll = false;
 const held: string[] = [];
 const seenInputs: string[][] = [];
+const seenTools: string[][] = [];
 const timeline: Array<{ id: string; start: number; end: number }> = [];
 
 async function generate(o: LLMGenerateOptions): Promise<LLMGenerateResult> {
   seenInputs.push(o.messages.map((m) => String(m.content)));
+  seenTools.push((o.tools ?? []).map((t) => t.name));
   const usage = { inputTokens: tokensPerStep / 2, outputTokens: tokensPerStep / 2, totalTokens: tokensPerStep };
   await new Promise((r) => setTimeout(r, 120));
   if (/LOOP/.test(o.systemPrompt || '')) {
@@ -77,9 +79,13 @@ describe('Orchestration over MCP: agents, batch runs, limits, stop/resume', () =
   };
 
   test('create agents, run a labelled idempotent batch in parallel, wait, read structured output', async () => {
-    const a = await call('contextcontrol_create_agent', { name: 'SEO', instructions: 'Review copy. Answer in JSON.', tools: ['contextcontrol_board_claim_task', 'contextcontrol_place_call', 'contextcontrol_list_api_keys'] });
+    // Tools the key may not use are refused with the reason, never dropped silently.
+    await assert.rejects(
+      () => call('contextcontrol_create_agent', { name: 'SEO', tools: ['contextcontrol_board_claim_task', 'contextcontrol_place_call', 'contextcontrol_list_api_keys', 'nope_tool'] }),
+      (err: any) => /contextcontrol_place_call \(the key needs the mcp:calls:write scope\)/.test(err.message) && /contextcontrol_list_api_keys/.test(err.message) && /nope_tool \(unknown tool/.test(err.message),
+    );
+    const a = await call('contextcontrol_create_agent', { name: 'SEO', instructions: 'Review copy. Answer in JSON.', tools: ['contextcontrol_board_claim_task'] });
     assert.deepEqual(a.agent.tools, ['contextcontrol_board_claim_task']);
-    assert.deepEqual(a.agent.dropped_tools.sort(), ['contextcontrol_list_api_keys', 'contextcontrol_place_call']);
     const b = await call('contextcontrol_create_agent', { name: 'Competitors', instructions: 'Compare competitors.' });
     const c = await call('contextcontrol_create_agent', { name: 'Pricing', instructions: 'Review pricing.' });
     const schema = { type: 'object', properties: { section: { type: 'string' }, issues: { type: 'array', items: { type: 'string' } }, suggestions: { type: 'array', items: { type: 'string' } } }, required: ['section', 'issues', 'suggestions'] };
@@ -122,6 +128,17 @@ describe('Orchestration over MCP: agents, batch runs, limits, stop/resume', () =
     const detail = await call('contextcontrol_get_run', { run_id: ids[0] });
     assert.equal(detail.run.labels.component, 'seo');
     assert.ok(detail.run.tokens_used > 0);
+  });
+
+  test('web_search: refused without the search scope, given to the agent with it', async () => {
+    await assert.rejects(() => call('contextcontrol_create_agent', { name: 'Researcher', tools: ['web_search'] }), /web_search \(the key needs the mcp:search:invoke scope\)/);
+    const searchKey = keyCtx([...ORCH_SCOPES, 'mcp:search:invoke'], 'key-search');
+    const agent = await call('contextcontrol_create_agent', { name: 'Researcher', tools: ['web_search'] }, searchKey);
+    assert.deepEqual(agent.agent.tools, ['web_search']);
+    seenTools.length = 0;
+    const started = await call('contextcontrol_run_agents', { runs: [{ agent_id: agent.agent.agent_id, message: 'Research the landing page' }] }, searchKey);
+    await waitAll([started.runs[0].run_id]);
+    assert.ok(seenTools.some((names) => names.includes('web_search')), 'the model is offered web_search');
   });
 
   test('limits: concurrency cap, token budget, step limit, daily cap; queue timeout', async () => {

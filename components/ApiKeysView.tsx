@@ -66,6 +66,7 @@ const SCOPE_LABELS: Record<string, string> = {
   'mcp:board:write': 'Post / claim / complete board tasks',
   'agent:run': 'Chat with Agent Studio instances',
   'mcp:connectors:invoke': 'Call connected-app tools (Google, web search; limited to the key\'s profile if set)',
+  'mcp:search:invoke': 'Agents may search the web (web_search, billed to your LLM key)',
   'mcp:functions:invoke': 'Call deployed functions (fn_* tools; limited to the key\'s profile if set)',
   'agent:sessions:write': 'Create / edit Agent Studio instances',
   'mcp:agents:read': 'Orchestration: list agents and runs, wait, read outputs',
@@ -77,7 +78,7 @@ const SCOPE_LABELS: Record<string, string> = {
 };
 
 /** An external orchestrator (e.g. an IDE agent) running teams of agents: no admin, no calls. */
-const ORCHESTRATOR_PRESET = ['mcp:agents:read', 'mcp:agents:write', 'mcp:board:read', 'mcp:board:write', 'mcp:tasks:read'];
+const ORCHESTRATOR_PRESET = ['mcp:agents:read', 'mcp:agents:write', 'mcp:board:read', 'mcp:board:write', 'mcp:tasks:read', 'mcp:search:invoke'];
 
 const SCOPE_CATEGORIES = Array.from(new Set(PLATFORM_MCP_SCOPES_CATALOG.map((t) => t.category)));
 

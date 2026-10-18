@@ -258,7 +258,7 @@ export const createAgentArgs = z
     provider: z.enum(['anthropic', 'openai', 'gemini']).optional().describe('LLM provider (the organization\'s own key). Defaults to the first one with a stored key.'),
     model: z.string().trim().min(1).max(120).optional(),
     instructions: z.string().trim().max(8000).optional().describe('What this agent is for and how it should work.'),
-    tools: z.array(z.string().min(1).max(80)).max(50).optional().describe('Platform tools it may use, e.g. contextcontrol_board_claim_task. Tools your key may not use are dropped.'),
+    tools: z.array(z.string().min(1).max(80)).max(50).optional().describe('Tools it may use: platform tools (e.g. contextcontrol_board_claim_task) and web_search. A tool your key may not use makes the call fail with the reason.'),
     mcp_profile_id: z.string().uuid().optional().describe('MCP profile: adds its AI Function Studio functions and connected-app tools (e.g. web_search).'),
     context_profile_id: z.string().uuid().optional(),
   })
@@ -734,7 +734,14 @@ export const AGENT_SCOPES = {
   functionsInvoke: 'mcp:functions:invoke',
   /** Call connected-app tools (Google, web search) as tools. */
   connectorsInvoke: 'mcp:connectors:invoke',
+  /** Agents may search the web (web_search, through the organization's own LLM key). */
+  webSearch: 'mcp:search:invoke',
 } as const;
+
+/** Web search is allowed for humans, and for keys with the search or connectors scope. */
+export function canUseWebSearch(ctx: { authMode: string; scopes?: string[] | null }): boolean {
+  return ctx.authMode !== 'api_key' || hasScope(ctx.scopes, AGENT_SCOPES.webSearch) || hasScope(ctx.scopes, AGENT_SCOPES.connectorsInvoke);
+}
 
 /** Every scope a key can be granted: one per catalog tool scope, plus agent scopes. */
 export const PLATFORM_SCOPES: string[] = Array.from(

@@ -2,7 +2,9 @@ import crypto from 'crypto';
 import { z } from 'zod';
 import { getSupabaseAdminClient } from '@/lib/supabase';
 import type { AuthContext } from '@/lib/auth/require-auth';
-import { getAuthorizedPlatformTools, type createAgentArgs, type runAgentsArgs } from '@/lib/mcp/tool-catalog';
+import { AGENT_SCOPES, PLATFORM_TOOL_DEFINITIONS, canUseWebSearch, getAuthorizedPlatformTools, type createAgentArgs, type runAgentsArgs } from '@/lib/mcp/tool-catalog';
+import { WEB_SEARCH_TOOL } from '@/lib/connectors/registry';
+import { webSearchProvider } from '@/lib/connectors/web-search';
 import { DEFAULT_MODELS } from '@/lib/agent/providers/llm-adapter';
 import { archiveSession, configuredProviders, createSession, latestCheckpoint, listSessions, toTranscript, updateSession } from './agent-sessions';
 import { createTeamSession, getTeam, listTeams } from './teams';
@@ -82,14 +84,25 @@ export async function createAgent(ctx: Ctx, args: z.infer<typeof createAgentArgs
     await getTeam(ctx, args.team_id);
     const session = await createTeamSession(ctx, args.team_id, args.name);
     if (args.instructions) await updateSession(ctx, session.id, { instructions: args.instructions });
-    return { agent: { agent_id: session.id, name: session.name, kind: 'team_instance', team_id: args.team_id, tools: [], dropped_tools: [] } };
+    return { agent: { agent_id: session.id, name: session.name, kind: 'team_instance', team_id: args.team_id, tools: [] } };
   }
   // Tools are fixed at creation to what the creating key may use, so a later run started
   // by someone else cannot exceed it.
   const allowed = new Set<string>((ctx.authMode === 'session' && !ctx.scopes ? getAuthorizedPlatformTools(['*'], ['*']) : getAuthorizedPlatformTools(ctx.toolsWhitelist, ctx.scopes)).map((t) => t.name));
-  const requested = args.tools ?? [];
-  const tools = requested.filter((t) => allowed.has(t));
-  const dropped = requested.filter((t) => !allowed.has(t));
+  const requested = [...new Set(args.tools ?? [])];
+  // Refuse instead of silently dropping: an agent told to use a tool it lacks makes things up.
+  const refused: string[] = [];
+  for (const t of requested) {
+    if (t === WEB_SEARCH_TOOL) {
+      if (!canUseWebSearch(ctx)) refused.push(`${t} (the key needs the ${AGENT_SCOPES.webSearch} scope)`);
+      else if (!(await webSearchProvider(ctx.tenantId))) refused.push(`${t} (no Gemini, Anthropic or OpenAI key is stored for this organization)`);
+    } else if (!allowed.has(t)) {
+      const def = PLATFORM_TOOL_DEFINITIONS.find((d) => d.name === t);
+      refused.push(def ? `${t} (the key needs the ${def.requiredScope} scope)` : `${t} (unknown tool; see tools/list, plus web_search)`);
+    }
+  }
+  if (refused.length) throw new ServiceError(`These tools cannot be given to the agent: ${refused.join('; ')}.`, 'INVALID');
+  const tools = requested;
   const provider = args.provider ?? (await configuredProviders(ctx.tenantId))[0];
   if (!provider) throw new ServiceError('No LLM key is stored for this organization. Add one in Account & Billing → LLM keys.', 'CONFLICT');
   const session = await createSession(ctx, {
@@ -101,7 +114,7 @@ export async function createAgent(ctx: Ctx, args: z.infer<typeof createAgentArgs
     mcp_profile_id: args.mcp_profile_id ?? null,
     context_profile_id: args.context_profile_id ?? null,
   });
-  return { agent: { agent_id: session.id, name: session.name, kind: 'agent', provider, model: session.model, tools, dropped_tools: dropped } };
+  return { agent: { agent_id: session.id, name: session.name, kind: 'agent', provider, model: session.model, tools } };
 }
 
 export async function archiveAgent(ctx: Ctx, args: { agent_id: string }) {

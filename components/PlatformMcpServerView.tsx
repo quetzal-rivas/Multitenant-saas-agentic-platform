@@ -93,7 +93,7 @@ export const PlatformMcpServerView: React.FC<PlatformMcpServerViewProps> = ({ on
   // Keys only live in this component's memory; the snippet shows a placeholder unless one is pasted.
   const snippets = useMemo(() => generateClientConfigSnippets(trimmedKey, origin), [trimmedKey, origin]);
   const maskedSnippets = useMemo(
-    () => generateClientConfigSnippets(trimmedKey && !showKey ? `${trimmedKey.slice(0, 16)}…` : trimmedKey, origin),
+    () => generateClientConfigSnippets(trimmedKey && !showKey ? `${trimmedKey.slice(0, 16)}********` : trimmedKey, origin),
     [trimmedKey, showKey, origin]
   );
 
@@ -287,9 +287,19 @@ export const PlatformMcpServerView: React.FC<PlatformMcpServerViewProps> = ({ on
               <span>{isCopied === 'snippet' ? 'Copied' : 'Copy'}</span>
             </button>
           </div>
-          <pre className="text-[11px] text-zinc-300 bg-black/50 p-3 rounded-lg border border-zinc-800 overflow-x-auto whitespace-pre-wrap break-all">
+          <pre
+            // Selecting and copying the masked text by hand copies the real config, key included.
+            onCopy={(e) => {
+              e.preventDefault();
+              e.clipboardData.setData('text/plain', snippetText(snippets));
+            }}
+            className="text-[11px] text-zinc-300 bg-black/50 p-3 rounded-lg border border-zinc-800 overflow-x-auto whitespace-pre-wrap break-all"
+          >
             {snippetText(maskedSnippets)}
           </pre>
+          {trimmedKey && !showKey && (
+            <p className="text-[11px] font-mono text-zinc-500 mt-2">The key is hidden on screen; Copy puts the full key in the config.</p>
+          )}
           {!trimmedKey && (
             <p className="text-[11px] font-mono text-amber-400/90 mt-2">
               Replace <code>{API_KEY_PLACEHOLDER}</code> with your key, or paste it above so Copy includes it.

@@ -21,6 +21,22 @@ export class ElevenLabsError extends Error {
   }
 }
 
+/**
+ * A readable error without echoing the request: validation errors from ElevenLabs carry
+ * the submitted `input` (which can hold our MCP key), so only locations and messages are kept,
+ * and anything shaped like a Context Control key is masked.
+ */
+export function errorDetail(data: any): string {
+  let detail: string;
+  if (typeof data?.detail === 'string') detail = data.detail;
+  else if (Array.isArray(data?.detail)) detail = data.detail.map((d: any) => `${(d?.loc ?? []).join('.')}: ${d?.msg ?? 'invalid'}`).join('; ');
+  else detail = data?.detail?.message || data?.message || 'request failed';
+  return detail.replace(/ctx_(live|test)_[A-Za-z0-9]+/g, 'ctx_***').slice(0, 300);
+}
+
+/** ElevenLabs secret names: letters, digits, dashes and underscores. */
+const secretName = (name: string) => `context-control-${name}`.replace(/[^A-Za-z0-9_-]+/g, '-').replace(/-+/g, '-').slice(0, 60);
+
 async function el<T = any>(key: string, method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<T> {
   const res = await fetch(`${API}${path}`, {
     method,
@@ -31,8 +47,7 @@ async function el<T = any>(key: string, method: 'GET' | 'POST' | 'PATCH' | 'DELE
   if (res.status === 204) return undefined as T;
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const detail = typeof data?.detail === 'string' ? data.detail : data?.detail?.message || data?.message || JSON.stringify(data).slice(0, 200);
-    throw new ElevenLabsError(res.status, `ElevenLabs ${res.status}: ${detail}`);
+    throw new ElevenLabsError(res.status, `ElevenLabs ${res.status}: ${errorDetail(data)}`);
   }
   return data as T;
 }
@@ -71,13 +86,13 @@ export async function syncElevenLabsAgent(key: string, spec: ElevenLabsAgentSpec
 
   // 1. The platform key, as a workspace secret (rotated on each sync).
   if (next.secret_id) {
-    await el(key, 'PATCH', `/v1/convai/secrets/${next.secret_id}`, { name: `context-control-${spec.name}`.slice(0, 80), value: spec.mcpKey }).catch(async (err) => {
+    await el(key, 'PATCH', `/v1/convai/secrets/${next.secret_id}`, { type: 'update', name: secretName(spec.name), value: spec.mcpKey }).catch(async (err) => {
       if (err instanceof ElevenLabsError && err.status === 404) next.secret_id = undefined;
       else throw err;
     });
   }
   if (!next.secret_id) {
-    const secret = await el<{ secret_id: string }>(key, 'POST', '/v1/convai/secrets', { name: `context-control-${spec.name}-${Date.now()}`.slice(0, 80), value: spec.mcpKey });
+    const secret = await el<{ secret_id: string }>(key, 'POST', '/v1/convai/secrets', { type: 'new', name: `${secretName(spec.name)}-${Date.now()}`, value: spec.mcpKey });
     next.secret_id = secret.secret_id;
   }
 

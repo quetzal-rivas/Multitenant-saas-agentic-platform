@@ -59,6 +59,10 @@ async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
   if (url.hostname === 'api.elevenlabs.io') {
     const body = init?.body ? JSON.parse(String(init.body)) : null;
     elCalls.push({ method, path: url.pathname, body });
+    if (url.pathname === '/v1/convai/secrets' && !body?.type) {
+      // Like the real API: validation errors echo the submitted input.
+      return Response.json({ detail: [{ type: 'missing', loc: ['body', 'type'], msg: 'Field required', input: body }] }, { status: 422 });
+    }
     if (url.pathname === '/v1/convai/secrets') return Response.json({ type: 'stored', secret_id: 'sec_1', name: body.name });
     if (url.pathname === '/v1/convai/mcp-servers') return Response.json({ id: 'mcp_1' });
     if (url.pathname === '/v1/convai/agents/create') return Response.json({ agent_id: 'agent_1' });
@@ -193,6 +197,8 @@ describe('Live Rooms: Twilio rooms, Ear, Voice Front, outbound, turn-based', () 
     assert.equal(agent.elevenlabs!.ready, true);
     const secret = elCalls.find((c) => c.path === '/v1/convai/secrets')!;
     assert.match(secret.body.value, /^ctx_live_[0-9a-f]{48}$/);
+    assert.equal(secret.body.type, 'new');
+    assert.match(secret.body.name, /^[A-Za-z0-9_-]+$/);
     const key = tables.mcp_api_keys.at(-1)!;
     assert.equal(key.profile_id, mcpProfile);
     assert.deepEqual(key.scopes, ['mcp:rooms:read', 'mcp:rooms:write', 'mcp:functions:invoke', 'mcp:connectors:invoke']);
@@ -215,6 +221,13 @@ describe('Live Rooms: Twilio rooms, Ear, Voice Front, outbound, turn-based', () 
     assert.equal(elCalls.filter((c) => c.path === '/v1/convai/agents/create').length, 1);
     assert.ok(elCalls.some((c) => c.method === 'PATCH' && c.path === '/v1/convai/agents/agent_1'));
     assert.ok(tables.mcp_api_keys[0].revoked_at, 'previous key revoked');
+  });
+
+  test('ElevenLabs errors never echo the submitted key', async () => {
+    const { errorDetail } = await import('../lib/rooms/elevenlabs');
+    const detail = errorDetail({ detail: [{ loc: ['body', 'type'], msg: 'Field required', input: { value: 'ctx_live_' + 'a'.repeat(48) } }] });
+    assert.equal(detail, 'body.type: Field required');
+    assert.equal(errorDetail({ message: 'bad key ctx_live_abc123' }), 'bad key ctx_***');
   });
 
   test('inbound call: signature, consent, conference + Ear, agent dialed in over SIP when the caller joins', async () => {

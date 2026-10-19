@@ -480,7 +480,7 @@ export const ApiKeysView: React.FC = () => {
       {/* ==================================================================== */}
       {editingKey && (
         <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-start justify-center overflow-y-auto p-4">
-          <div className="my-auto w-full max-w-2xl bg-[#0e131e] border border-zinc-700 rounded-2xl p-6 space-y-5 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+          <div className="my-auto w-full max-w-2xl bg-[#0e131e] border border-zinc-700 rounded-2xl p-6 space-y-5 shadow-2xl overflow-y-auto flex flex-col max-h-[90vh]">
             {/* Dialog Header */}
             <div className="flex items-start justify-between border-b border-zinc-800 pb-4">
               <div>

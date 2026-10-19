@@ -191,15 +191,21 @@ describe('Agent Studio end-to-end (fake PostgREST, scripted model)', () => {
       /No anthropic API key/
     );
 
-    const looping = scriptedModel(
-      Array.from({ length: MAX_AGENT_STEPS }, (_, i) => () => ({
-        finishReason: 'tool_calls' as const,
-        toolCalls: [{ id: `loop_${i}`, name: 'contextcontrol_list_profiles', arguments: {} }],
-      }))
-    );
+    const loopSteps = Array.from({ length: MAX_AGENT_STEPS }, (_, i) => () => ({
+      finishReason: 'tool_calls' as const,
+      toolCalls: [{ id: `loop_${i}`, name: 'contextcontrol_list_profiles', arguments: {} }],
+    }));
+    // Out of tool steps: one last call asks for the final answer, and the agent gives it.
+    const looping = scriptedModel([...loopSteps, () => ({ text: 'Final answer from what I found.', finishReason: 'stop' as const })]);
     const result = await runSessionTurn(ctxA, sessionId, 'loop', { generate: looping.generate, getSecret });
-    assert.equal(looping.calls.length, MAX_AGENT_STEPS);
-    assert.match(result.message, /Stopped after/);
+    assert.equal(looping.calls.length, MAX_AGENT_STEPS + 1);
+    assert.equal(result.message, 'Final answer from what I found.');
     assert.equal(result.tool_executions.length, MAX_AGENT_STEPS);
+    assert.match(String(looping.calls.at(-1)!.messages.at(-1)!.content), /used all \d+ tool steps/);
+
+    // If the wrap-up call yields nothing, the turn still ends with the step-limit note.
+    const silent = scriptedModel([...loopSteps, () => ({ text: '', finishReason: 'stop' as const })]);
+    const ended = await runSessionTurn(ctxA, sessionId, 'loop again', { generate: silent.generate, getSecret });
+    assert.match(ended.message, /Stopped after/);
   });
 });

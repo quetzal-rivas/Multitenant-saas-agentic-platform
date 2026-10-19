@@ -463,10 +463,17 @@ export async function parkRunClaims(tenantId: string, runId: string): Promise<vo
 }
 
 /** Free check (no LLM): does this team have anything to do on the board? */
-export async function teamHasBoardWork(tenantId: string, teamId: string): Promise<boolean> {
+/**
+ * Is there board work for the team? With `since` (the team's last heartbeat run), only work
+ * that appeared after it counts: a task the team already looked at and left (e.g. meant for
+ * someone else) does not wake it again until the task changes.
+ */
+export async function teamHasBoardWork(tenantId: string, teamId: string, since?: string | null): Promise<boolean> {
   const ctx: BoardCtx = { tenantId, userId: 'system', authMode: 'session', teamId };
-  const { total_count } = await listBoardTasks(ctx, { status: 'claimable', limit: 1 });
-  if (total_count > 0) return true;
+  const { tasks } = await listBoardTasks(ctx, { status: 'claimable', limit: 100 });
+  // When a task became claimable: when its lease ran out, or when it was last changed.
+  const availableSince = (t: Row) => (t.status === 'claimed' && t.lease_expired && t.lease_expires_at > (t.updated_at ?? '') ? t.lease_expires_at : t.updated_at ?? t.created_at);
+  if (tasks.some((t: Row) => !since || availableSince(t) > since)) return true;
   // Tasks the team holds where someone is waiting for a handover.
   const { data } = await getSupabaseAdminClient()
     .from('board_tasks')

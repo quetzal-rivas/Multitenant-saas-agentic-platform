@@ -24,6 +24,19 @@ function systemCtx(tenantId: string): AuthContext {
   return { tenantId, userId: 'heartbeat', role: 'system', scopes: ['*'], authMode: 'webhook_signature' };
 }
 
+/** When the team's last heartbeat run (an actual LLM run, not an idle check) started. */
+async function lastHeartbeatRunAt(tenantId: string, teamId: string): Promise<string | null> {
+  const { data } = await getSupabaseAdminClient()
+    .from('agent_runs')
+    .select('created_at')
+    .eq('tenant_id', tenantId)
+    .eq('team_id', teamId)
+    .eq('origin', 'heartbeat')
+    .order('created_at', { ascending: false })
+    .limit(1);
+  return data?.[0]?.created_at ?? null;
+}
+
 /**
  * Run one heartbeat for a team now. Counts toward the daily cap (in the team's time
  * zone); when the cap is reached the run is recorded as skipped.
@@ -54,7 +67,7 @@ export async function runTeamHeartbeat(
 
   // Free pre-check: no LLM call when the board has nothing for this team. Idle
   // wake-ups do not count toward the daily cap. Manual runs always run.
-  if (!opts.manual && team.heartbeat_wake_when === 'board_has_work' && !(await teamHasBoardWork(ctx.tenantId, team.id))) {
+  if (!opts.manual && team.heartbeat_wake_when === 'board_has_work' && !(await teamHasBoardWork(ctx.tenantId, team.id, await lastHeartbeatRunAt(ctx.tenantId, team.id)))) {
     const detail = 'Nothing on the board for this team; no LLM call made.';
     await db.from('agent_teams').update({
       heartbeat_last_run_at: now.toISOString(),

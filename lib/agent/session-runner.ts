@@ -19,7 +19,7 @@ import { connectorToolsFor, runConnectorTool, webSearchDef } from '@/lib/service
 import { emitRunEvent } from './supervisor-graph';
 import { generateLLMResponse, type LLMMessage, type LLMToolDefinition } from './providers/llm-adapter';
 
-export const MAX_AGENT_STEPS = 8;
+export const MAX_AGENT_STEPS = 15;
 /** Steps a worker may take per delegated task (workers cannot delegate further). */
 export const MAX_WORKER_STEPS = 6;
 const MAX_TOOL_RESULT_CHARS = 20_000;
@@ -351,6 +351,33 @@ async function runToolLoop(opts: {
       });
     }
     await opts.onStep?.(step, finalText);
+  }
+  // Out of tool steps: one last call without tools so the agent still answers with what it has.
+  try {
+    await opts.beforeStep?.();
+  } catch (err) {
+    if (err instanceof RunStopped) err.partialText = finalText;
+    throw err;
+  }
+  // The wrap-up request is sent once and not kept in the transcript. Tools stay declared
+  // (some providers reject tool history without them); any tool call it still makes is ignored.
+  const wrapUp: LLMMessage = {
+    role: 'user',
+    content: `You have used all ${opts.maxSteps} tool steps for this turn. Do not call tools. Reply now with your final answer based on what you found, and say briefly what is still unverified.`,
+  };
+  try {
+    opts.usage.steps += 1;
+    const wrap = await opts.generate({ provider: opts.provider, model: opts.model, apiKey: opts.apiKey, systemPrompt: opts.systemPrompt, messages: [...opts.messages, wrapUp], tools: defs });
+    opts.usage.inputTokens += wrap.usage.inputTokens;
+    opts.usage.outputTokens += wrap.usage.outputTokens;
+    opts.usage.totalTokens += wrap.usage.totalTokens;
+    opts.onUsage?.(wrap.usage.totalTokens);
+    if (wrap.text?.trim()) {
+      opts.messages.push({ role: 'assistant', content: wrap.text });
+      return wrap.text;
+    }
+  } catch {
+    // Fall through to the step-limit note.
   }
   finalText = `${finalText ? `${finalText}\n\n` : ''}(Stopped after ${opts.maxSteps} tool steps.)`;
   opts.messages.push({ role: 'assistant', content: finalText });

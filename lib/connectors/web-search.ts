@@ -21,7 +21,16 @@ export interface WebSearchResult {
 
 export type SearchProvider = LLMProvider | 'xai';
 const PREFERENCE: SearchProvider[] = ['gemini', 'anthropic', 'openai', 'xai'];
-const XAI_SEARCH_MODEL = 'grok-4.7';
+// Non-reasoning: a search answer does not need long thinking, and speed matters inside agent runs.
+const XAI_SEARCH_MODEL = 'grok-4.20-0309-non-reasoning';
+
+/** Providers that failed on quota or billing recently are skipped for a while (per warm instance). */
+const QUOTA_COOLDOWN_MS = 15 * 60_000;
+const cooledDown = new Map<string, number>();
+const isQuotaError = (msg: string) => /quota|billing|rate limit|\(429\)|\(402\)|insufficient|credit/i.test(msg);
+export function resetWebSearchCooldownForTests() {
+  cooledDown.clear();
+}
 const INSTRUCTION = 'Search the web and answer concisely with the key facts. Mention dates when relevant.';
 
 /** Providers with a stored key, in the order web search tries them. */
@@ -162,7 +171,10 @@ export async function webSearch(tenantId: string, args: unknown): Promise<WebSea
   if (!providers.length) throw new ServiceError('Web search needs a Gemini, Claude, OpenAI or xAI (Grok) key. Add one in Account & Billing → LLM keys.', 'CONFLICT');
   const signal = AbortSignal.timeout(WEB_SEARCH_DEADLINE_MS);
   const failures: string[] = [];
-  for (const provider of providers) {
+  const now = Date.now();
+  // Skip providers in cooldown, unless every provider is (then try them all again).
+  const ready = providers.filter((p) => (cooledDown.get(`${tenantId}:${p}`) ?? 0) <= now);
+  for (const provider of ready.length ? ready : providers) {
     const apiKey = await getTenantSecret(tenantId, provider);
     if (!apiKey) continue;
     try {
@@ -172,7 +184,9 @@ export async function webSearch(tenantId: string, args: unknown): Promise<WebSea
         throw new ServiceError('Web search took too long (over 25 s). Try a narrower query.', 'CONFLICT');
       }
       // Quota, billing or outage on this provider: try the next one.
-      failures.push((err as Error)?.message || String(err));
+      const message = (err as Error)?.message || String(err);
+      if (isQuotaError(message)) cooledDown.set(`${tenantId}:${provider}`, Date.now() + QUOTA_COOLDOWN_MS);
+      failures.push(message);
     }
   }
   throw new ServiceError(failures.join(' | ').slice(0, 1200) || 'Web search failed.', 'CONFLICT');

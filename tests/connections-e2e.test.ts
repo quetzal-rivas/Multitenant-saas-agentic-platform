@@ -8,6 +8,7 @@ import { fakePostgrest, resetTables, tables } from './helpers/fake-postgrest';
 import {
   completeGoogleConnect, connectorToolsFor, disconnectGoogle, googleAccessToken, listConnections, runConnectorTool, startGoogleConnect,
 } from '../lib/services/connections';
+import { resetWebSearchCooldownForTests } from '../lib/connectors/web-search';
 import { setRemoteMcpFetchForTests } from '../lib/connectors/remote-mcp';
 import { envelopeEncryptSecret } from '../lib/secrets/envelope-encryption';
 import { registerFunctionTools, registerConnectorTools } from '../lib/mcp/platform-mcp-server';
@@ -18,6 +19,7 @@ import { NextRequest } from 'next/server';
 import type { LLMGenerateResult } from '../lib/agent/providers/llm-adapter';
 
 let geminiQuota = false;
+let geminiHits = 0;
 const TENANT = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const user = { tenantId: TENANT, userId: crypto.randomUUID(), authMode: 'session' as const, scopes: ['*'] };
 const GMAIL_SCOPES = 'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/gmail.modify';
@@ -59,6 +61,7 @@ async function fakeGoogle(input: RequestInfo | URL, init?: RequestInit): Promise
     return Response.json({ items: [{ id: 'e1', summary: 'Standup', start: { dateTime: '2026-10-07T09:00:00-06:00' }, end: { dateTime: '2026-10-07T09:15:00-06:00' }, attendees: [{ email: 'a@acme.mx' }] }] });
   }
   if (url.hostname === 'generativelanguage.googleapis.com') {
+    geminiHits++;
     if (geminiQuota) return Response.json({ error: { message: 'Quota exceeded' } }, { status: 429 });
     const body = JSON.parse(String(init?.body));
     assert.deepEqual(body.tools, [{ google_search: {} }]);
@@ -233,8 +236,13 @@ describe('MCP Hub connections (fake Google + in-process remote MCP server)', () 
       assert.equal(res.provider, 'xai');
       assert.match(res.answer, /18\.3/);
       assert.deepEqual(res.sources.map((x: any) => x.url), ['https://banxico.org.mx', 'https://www.xe.com']);
+      // Gemini is now cooling down: the next search goes straight to Grok.
+      geminiHits = 0;
+      await runConnectorTool(user, tool, { query: 'again' });
+      assert.equal(geminiHits, 0);
     } finally {
       geminiQuota = false;
+      resetWebSearchCooldownForTests();
     }
   });
 

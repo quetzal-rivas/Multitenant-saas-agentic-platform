@@ -42,6 +42,19 @@ describe('Board handover, notes, late results and run-level holders', () => {
     await assert.rejects(renewBoardLease(run(teamA, 'run_2'), { task_id: task.id }), /Another run of your team/);
   });
 
+  test('heartbeat pre-check: work the team already saw does not wake it again', async () => {
+    const { task } = await postBoardTask(user, { title: 'Not for us' });
+    const row = tables.board_tasks.find((t) => t.id === task.id)!;
+    row.updated_at = '2026-10-18T10:00:00.000Z';
+    assert.equal(await teamHasBoardWork(TENANT, teamA, null), true, 'no previous run: any claimable work counts');
+    assert.equal(await teamHasBoardWork(TENANT, teamA, '2026-10-18T09:00:00.000Z'), true, 'appeared after the last run');
+    assert.equal(await teamHasBoardWork(TENANT, teamA, '2026-10-18T11:00:00.000Z'), false, 'already seen at the last run');
+    // An abandoned claim counts from when its lease ran out.
+    Object.assign(row, { status: 'claimed', claimed_by: 'api_key:k1', lease_expires_at: '2026-10-18T12:00:00.000Z' });
+    assert.equal(await teamHasBoardWork(TENANT, teamA, '2026-10-18T11:00:00.000Z'), true);
+    assert.equal(await teamHasBoardWork(TENANT, teamA, '2026-10-18T12:30:00.000Z'), false);
+  });
+
   test('a parked claim is resumed by the next run, with the progress note', async () => {
     const { task } = await postBoardTask(user, { title: 'Long job' });
     await claimBoardTask(run(teamA, 'run_a1'), { task_id: task.id });

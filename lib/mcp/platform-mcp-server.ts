@@ -234,11 +234,13 @@ export async function registerFunctionTools(server: McpServer, ctx: ToolCtx, pro
 }
 
 /**
- * Register connected-app tools (Google, web search). A key bound to an MCP profile only
- * gets that profile's selection; an unbound key with the scope gets every available one.
+ * Register connected-app tools (Google, web search, fetch_url). A key bound to an MCP profile
+ * only gets that profile's selection; an unbound key with the scope gets every available one.
+ * A non-empty tool whitelist narrows these too, as it does platform tools.
  */
 export async function registerConnectorTools(server: McpServer, ctx: ToolCtx, profileId: string | null): Promise<string[]> {
-  const defs = await connectorToolsFor(ctx.tenantId, profileId, true);
+  const whitelist = new Set((ctx.toolsWhitelist || []).map(canonicalToolName));
+  const defs = (await connectorToolsFor(ctx.tenantId, profileId, true)).filter((d) => whitelist.size === 0 || whitelist.has('*') || whitelist.has(d.name));
   for (const def of defs) {
     let inputSchema: z.ZodType;
     try {

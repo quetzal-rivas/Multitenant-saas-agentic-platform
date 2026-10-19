@@ -5,6 +5,7 @@ import type { AuthContext } from '@/lib/auth/require-auth';
 import { AGENT_SCOPES, PLATFORM_TOOL_DEFINITIONS, canUseWebSearch, getAuthorizedPlatformTools, type createAgentArgs, type runAgentsArgs } from '@/lib/mcp/tool-catalog';
 import { WEB_SEARCH_TOOL } from '@/lib/connectors/registry';
 import { webSearchProvider } from '@/lib/connectors/web-search';
+import { FETCH_URL_TOOL } from '@/lib/connectors/fetch-url';
 import { DEFAULT_MODELS } from '@/lib/agent/providers/llm-adapter';
 import { archiveSession, configuredProviders, createSession, latestCheckpoint, listSessions, toTranscript, updateSession } from './agent-sessions';
 import { createTeamSession, getTeam, listTeams } from './teams';
@@ -93,7 +94,9 @@ export async function createAgent(ctx: Ctx, args: z.infer<typeof createAgentArgs
   // Refuse instead of silently dropping: an agent told to use a tool it lacks makes things up.
   const refused: string[] = [];
   for (const t of requested) {
-    if (t === WEB_SEARCH_TOOL) {
+    if (t === FETCH_URL_TOOL) {
+      if (!canUseWebSearch(ctx)) refused.push(`${t} (the key needs the ${AGENT_SCOPES.webSearch} scope)`);
+    } else if (t === WEB_SEARCH_TOOL) {
       if (!canUseWebSearch(ctx)) refused.push(`${t} (the key needs the ${AGENT_SCOPES.webSearch} scope)`);
       else if (!(await webSearchProvider(ctx.tenantId))) refused.push(`${t} (no Gemini, Claude, OpenAI or xAI key is stored for this organization)`);
     } else if (!allowed.has(t)) {

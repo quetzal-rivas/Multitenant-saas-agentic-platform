@@ -15,7 +15,8 @@ import { ServiceError, isServiceError } from '@/lib/services/errors';
 import { parkRunClaims } from '@/lib/services/board';
 import { deployedFunctionRows, functionIdsForProfiles, invokeFunction } from '@/lib/services/functions';
 import { functionToolName } from '@/lib/functions/function-spec';
-import { connectorToolsFor, runConnectorTool, webSearchDef } from '@/lib/services/connections';
+import { connectorToolsFor, fetchUrlDef, runConnectorTool, webSearchDef } from '@/lib/services/connections';
+import { FETCH_URL_TOOL } from '@/lib/connectors/fetch-url';
 import { emitRunEvent } from './supervisor-graph';
 import { generateLLMResponse, type LLMMessage, type LLMToolDefinition } from './providers/llm-adapter';
 
@@ -506,7 +507,7 @@ export async function runTurn(
     let defs = await connectorToolsFor(ctx.tenantId, profileId);
     // Without the connectors scope a key keeps at most web search (its own scope).
     if (ctx.authMode === 'api_key' && !hasScope(ctx.scopes, AGENT_SCOPES.connectorsInvoke)) {
-      defs = canUseWebSearch(ctx) ? defs.filter((d) => d.name === WEB_SEARCH_TOOL) : [];
+      defs = canUseWebSearch(ctx) ? defs.filter((d) => d.name === WEB_SEARCH_TOOL || d.name === FETCH_URL_TOOL) : [];
     }
     return defs.map((def) => [
       def.name,
@@ -521,16 +522,17 @@ export async function runTurn(
     for (const [name, tool] of [...(await functionTools(profileId)), ...(await connectorTools(profileId))]) tools.set(name, tool);
     return tools;
   };
-  /** Platform tools by name, plus web_search when it is in the list (no profile needed). */
+  /** Platform tools by name, plus the web tools (web_search, fetch_url) when listed (no profile needed). */
   const namedTools = async (names: string[]): Promise<Map<string, LoopTool>> => {
     const tools = platformTools(names);
-    if (names.includes(WEB_SEARCH_TOOL) && canUseWebSearch(ctx) && (await webSearchProvider(ctx.tenantId))) {
-      const def = webSearchDef();
+    const add = (def: ReturnType<typeof webSearchDef>) =>
       tools.set(def.name, {
         def: { name: def.name, description: def.description, parameters: { type: 'object', properties: {}, ...def.inputSchema } },
         run: (args: Record<string, any>) => runConnectorTool(toolCtx, def, args),
       });
-    }
+    if (!canUseWebSearch(ctx)) return tools;
+    if (names.includes(WEB_SEARCH_TOOL) && (await webSearchProvider(ctx.tenantId))) add(webSearchDef());
+    if (names.includes(FETCH_URL_TOOL)) add(fetchUrlDef());
     return tools;
   };
 

@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { WEB_SEARCH_TOOL } from '@/lib/connectors/registry';
+import { FETCH_URL_TOOL } from '@/lib/connectors/fetch-url';
 import { z } from 'zod';
 import { getSupabaseAdminClient } from '@/lib/supabase';
 import type { AuthContext } from '@/lib/auth/require-auth';
@@ -14,8 +15,8 @@ import { ServiceError } from './errors';
 type Ctx = Pick<AuthContext, 'tenantId' | 'userId' | 'authMode' | 'apiKeyId'>;
 
 export const LLM_PROVIDERS = ['anthropic', 'openai', 'gemini'] as const;
-// Platform tools, plus web_search (served through the organization's own LLM key).
-const toolNames: [string, ...string[]] = [WEB_SEARCH_TOOL, ...PLATFORM_TOOL_DEFINITIONS.map((t) => t.name)];
+// Platform tools, plus the web tools: web_search (through the organization's own LLM key) and fetch_url.
+const toolNames: [string, ...string[]] = [WEB_SEARCH_TOOL, FETCH_URL_TOOL, ...PLATFORM_TOOL_DEFINITIONS.map((t) => t.name)];
 
 /** Read-only tools an instance gets when none are chosen explicitly. */
 export const DEFAULT_SESSION_TOOLS = PLATFORM_TOOL_DEFINITIONS.filter((t) => t.sideEffect === 'read').map((t) => t.name);

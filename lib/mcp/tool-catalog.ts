@@ -258,7 +258,7 @@ export const createAgentArgs = z
     provider: z.enum(['anthropic', 'openai', 'gemini']).optional().describe('LLM provider (the organization\'s own key). Defaults to the first one with a stored key.'),
     model: z.string().trim().min(1).max(120).optional(),
     instructions: z.string().trim().max(8000).optional().describe('What this agent is for and how it should work.'),
-    tools: z.array(z.string().min(1).max(80)).max(50).optional().describe('Tools it may use: platform tools (e.g. contextcontrol_board_claim_task) and web_search. A tool your key may not use makes the call fail with the reason.'),
+    tools: z.array(z.string().min(1).max(80)).max(50).optional().describe('Tools it may use: platform tools (e.g. contextcontrol_board_claim_task), web_search and fetch_url (reads a page). A tool your key may not use makes the call fail with the reason.'),
     mcp_profile_id: z.string().uuid().optional().describe('MCP profile: adds its AI Function Studio functions and connected-app tools (e.g. web_search).'),
     context_profile_id: z.string().uuid().optional(),
   })
@@ -734,7 +734,7 @@ export const AGENT_SCOPES = {
   functionsInvoke: 'mcp:functions:invoke',
   /** Call connected-app tools (Google, web search) as tools. */
   connectorsInvoke: 'mcp:connectors:invoke',
-  /** Agents may search the web (web_search, through the organization's own LLM key). */
+  /** Agents may search and read the web (web_search through the organization's own LLM key; fetch_url). */
   webSearch: 'mcp:search:invoke',
 } as const;
 

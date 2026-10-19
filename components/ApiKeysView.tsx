@@ -66,7 +66,7 @@ const SCOPE_LABELS: Record<string, string> = {
   'mcp:board:write': 'Post / claim / complete board tasks',
   'agent:run': 'Chat with Agent Studio instances',
   'mcp:connectors:invoke': 'Call connected-app tools (Google, web search; limited to the key\'s profile if set)',
-  'mcp:search:invoke': 'Agents may search the web (web_search, billed to your LLM key)',
+  'mcp:search:invoke': 'Agents may search and read the web (web_search billed to your LLM key; fetch_url)',
   'mcp:functions:invoke': 'Call deployed functions (fn_* tools; limited to the key\'s profile if set)',
   'agent:sessions:write': 'Create / edit Agent Studio instances',
   'mcp:agents:read': 'Orchestration: list agents and runs, wait, read outputs',

@@ -13,6 +13,7 @@ import { REMOTE_CONNECTORS, WEB_SEARCH_TOOL, remoteToolName, type ConnectorMode,
 import { callRemoteTool, listRemoteTools } from '@/lib/connectors/remote-mcp';
 import { DIRECT_TOOLS, directToolsFor, runDirectTool } from '@/lib/connectors/google-direct';
 import { webSearch, webSearchArgs, webSearchProvider } from '@/lib/connectors/web-search';
+import { FETCH_URL_TOOL, fetchUrl, fetchUrlArgs } from '@/lib/connectors/fetch-url';
 import { PLATFORM_TOOL_DEFINITIONS } from '@/lib/mcp/tool-catalog';
 import { z } from 'zod';
 import { ServiceError } from './errors';
@@ -208,6 +209,18 @@ export async function listConnections(ctx: Ctx) {
 // Tools for agents and the MCP server
 // ---------------------------------------------------------------------------
 
+/** Read one public web page (no key needed). */
+export const fetchUrlDef = (): ConnectorToolDef => {
+  const { $schema: _s, ...schema } = z.toJSONSchema(fetchUrlArgs) as Record<string, unknown>;
+  return {
+    name: FETCH_URL_TOOL,
+    connectorId: 'web_search',
+    description: 'Read a public web page: title, meta description, headings and readable text. Use it to check what a site actually says.',
+    inputSchema: schema,
+    readOnly: true,
+  };
+};
+
 export const webSearchDef = (): ConnectorToolDef => {
   const { $schema: _s, ...schema } = z.toJSONSchema(webSearchArgs) as Record<string, unknown>;
   return {
@@ -227,6 +240,7 @@ export async function availableConnectorTools(tenantId: string): Promise<Connect
     for (const s of await connectorStates(tenantId, conn.id)) tools.push(...((s.tools as ConnectorToolDef[]) || []));
   }
   if (await webSearchProvider(tenantId)) tools.push(webSearchDef());
+  tools.push(fetchUrlDef());
   return tools;
 }
 
@@ -252,6 +266,7 @@ export async function connectorToolsFor(tenantId: string, profileId: string | nu
 
 export async function runConnectorTool(ctx: Ctx, tool: ConnectorToolDef, args: Record<string, unknown>): Promise<unknown> {
   if (tool.name === WEB_SEARCH_TOOL) return webSearch(ctx.tenantId, args);
+  if (tool.name === FETCH_URL_TOOL) return fetchUrl(args);
   const { token, conn } = await googleAccessToken(ctx.tenantId);
   void getSupabaseAdminClient().from('connections').update({ last_used_at: new Date().toISOString() }).eq('id', conn.id).then(() => undefined, () => undefined);
   if (tool.remoteName) {

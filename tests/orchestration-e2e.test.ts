@@ -142,12 +142,13 @@ describe('Orchestration over MCP: agents, batch runs, limits, stop/resume', () =
   test('web_search: refused without the search scope, given to the agent with it', async () => {
     await assert.rejects(() => call('contextcontrol_create_agent', { name: 'Researcher', tools: ['web_search'] }), /web_search \(the key needs the mcp:search:invoke scope\)/);
     const searchKey = keyCtx([...ORCH_SCOPES, 'mcp:search:invoke'], 'key-search');
-    const agent = await call('contextcontrol_create_agent', { name: 'Researcher', tools: ['web_search'] }, searchKey);
-    assert.deepEqual(agent.agent.tools, ['web_search']);
+    await assert.rejects(() => call('contextcontrol_create_agent', { name: 'Reader', tools: ['fetch_url'] }), /fetch_url \(the key needs the mcp:search:invoke scope\)/);
+    const agent = await call('contextcontrol_create_agent', { name: 'Researcher', tools: ['web_search', 'fetch_url'] }, searchKey);
+    assert.deepEqual(agent.agent.tools, ['web_search', 'fetch_url']);
     seenTools.length = 0;
     const started = await call('contextcontrol_run_agents', { runs: [{ agent_id: agent.agent.agent_id, message: 'Research the landing page' }] }, searchKey);
     await waitAll([started.runs[0].run_id]);
-    assert.ok(seenTools.some((names) => names.includes('web_search')), 'the model is offered web_search');
+    assert.ok(seenTools.some((names) => names.includes('web_search') && names.includes('fetch_url')), 'the model is offered web_search and fetch_url');
   });
 
   test('a stopped run does not run the tools of a model reply that arrives late', async () => {

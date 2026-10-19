@@ -291,7 +291,7 @@ describe('MCP Hub connections (fake Google + in-process remote MCP server)', () 
     assert.equal(tables.connections.length, 0);
     assert.equal(tables.connector_states.length, 0);
     const tools = await connectorToolsFor(TENANT, null, true);
-    assert.deepEqual(tools.map((t) => t.name), ['web_search']);
+    assert.deepEqual(tools.map((t) => t.name), ['web_search', 'fetch_url'], 'Google tools are gone; the web tools do not depend on Google');
     const view = await listConnections(user);
     assert.equal(view.google.connected, false);
   });

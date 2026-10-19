@@ -81,8 +81,24 @@ export function newSipCredentials() {
   return { username: `cc${crypto.randomBytes(6).toString('hex')}`, password: crypto.randomBytes(24).toString('base64url') };
 }
 
+/** A failed sync, with the ids created before the failure (so the next sync reuses them). */
+export class ElevenLabsSyncError extends Error {
+  constructor(message: string, public partialState: ElevenLabsState) {
+    super(message);
+    this.name = 'ElevenLabsSyncError';
+  }
+}
+
 export async function syncElevenLabsAgent(key: string, spec: ElevenLabsAgentSpec, state: ElevenLabsState): Promise<ElevenLabsState> {
   const next: ElevenLabsState = { ...state };
+  try {
+    return await syncSteps(key, spec, next);
+  } catch (err) {
+    throw new ElevenLabsSyncError((err as Error)?.message || 'ElevenLabs sync failed.', next);
+  }
+}
+
+async function syncSteps(key: string, spec: ElevenLabsAgentSpec, next: ElevenLabsState): Promise<ElevenLabsState> {
 
   // 1. The platform key, as a workspace secret (rotated on each sync).
   if (next.secret_id) {

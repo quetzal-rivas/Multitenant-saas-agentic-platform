@@ -64,6 +64,7 @@ async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
       return Response.json({ detail: [{ type: 'missing', loc: ['body', 'type'], msg: 'Field required', input: body }] }, { status: 422 });
     }
     if (url.pathname === '/v1/convai/secrets') return Response.json({ type: 'stored', secret_id: 'sec_1', name: body.name });
+    if (url.pathname === '/v1/convai/mcp-servers' && elMcpDenied) return Response.json({ detail: { status: 'mcp_not_allowed', message: 'User does not have access to MCP servers.' } }, { status: 400 });
     if (url.pathname === '/v1/convai/mcp-servers') return Response.json({ id: 'mcp_1' });
     if (url.pathname === '/v1/convai/agents/create') return Response.json({ agent_id: 'agent_1' });
     if (url.pathname === '/v1/convai/phone-numbers') return Response.json({ phone_number_id: 'pn_el_1' });
@@ -80,6 +81,7 @@ function twilioSign(url: string, params: Record<string, string>, token = TOKEN) 
   return crypto.createHmac('sha1', token).update(Buffer.from(data, 'utf8')).digest('base64');
 }
 
+let elMcpDenied = false;
 async function hook(connId: string, action: string, params: Record<string, string>, query: Record<string, string> = {}, token = TOKEN) {
   const qs = new URLSearchParams(query).toString();
   const url = `${ORIGIN}/api/voice/twilio/${connId}/${action}${qs ? `?${qs}` : ''}`;
@@ -371,6 +373,32 @@ describe('Live Rooms: Twilio rooms, Ear, Voice Front, outbound, turn-based', () 
     holdRuns = true;
     const slow = await hook(conn.id, 'turn', { CallSid: 'CAt', SpeechResult: 'Otra pregunta' }, { room: room.id });
     assert.match(slow.text, /<Say[^>]*>Un momento, por favor\.<\/Say><Redirect method="POST">[^<]*turn\?room=[^<]*poll=/);
+  });
+
+  test('a Voice Front that failed to sync is not "ready", keeps its old key, and calls fall back to turn-based', async () => {
+    const stored = new Map<string, unknown>();
+    setAudioCacheForTests({ get: async (k) => (stored.get(k) as any) ?? null, put: async (k, v) => void stored.set(k, v) });
+    const conn = await connect();
+    elMcpDenied = true;
+    try {
+      const keysBefore = tables.mcp_api_keys.length;
+      const agent = await voiceFront();
+      assert.equal(agent.elevenlabs!.ready, false);
+      assert.match(agent.elevenlabs!.error!, /does not have access to MCP servers/);
+      const row = tables.voice_agents.find((v) => v.id === agent.id)!;
+      assert.equal(row.provider_state.elevenlabs.secret_id, 'sec_1', 'ids created before the failure are kept for the next attempt');
+      const minted = tables.mcp_api_keys.slice(keysBefore);
+      assert.ok(minted.length === 1 && minted[0].revoked_at, 'the key minted for the failed sync is revoked');
+
+      await configureNumber(ctx, tables.phone_numbers[0].id, { voice_agent_id: agent.id });
+      const res = await hook(conn.id, 'incoming', { CallSid: 'CAfb', From: '+5215500001111', To: '+15550001111' });
+      const room = tables.rooms.at(-1)!;
+      assert.equal(room.mode, 'turn_based');
+      assert.match(res.text, /<Gather[^>]*input="speech"/, 'the caller hears the platform voice, not silence');
+      assert.ok(tables.room_notes.some((n) => n.room_id === room.id && /not ready[\s\S]*turn-based/.test(n.text)));
+    } finally {
+      elMcpDenied = false;
+    }
   });
 
   test('the sweeper closes calls that never connected and fires silence triggers', async () => {

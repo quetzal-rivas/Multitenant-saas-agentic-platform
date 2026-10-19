@@ -93,12 +93,12 @@ async function createRoom(p: { tenantId: string; kind: 'phone_in' | 'phone_out' 
       kind: p.kind,
       status: 'ringing',
       voice_agent_id: p.agent.id,
-      mode: p.agent.mode,
+      mode: callMode(p.agent),
       session_id: session.id,
       customer_number: p.customerNumber,
       agent_number: p.agentNumber,
       purpose: p.purpose ?? null,
-      capabilities: p.agent.mode === 'turn_based' ? TURN_BASED_CAPABILITIES : TWILIO_CONFERENCE_CAPABILITIES,
+      capabilities: callMode(p.agent) === 'turn_based' ? TURN_BASED_CAPABILITIES : TWILIO_CONFERENCE_CAPABILITIES,
       trigger_state: {},
       created_at: now,
       updated_at: now,
@@ -106,7 +106,18 @@ async function createRoom(p: { tenantId: string; kind: 'phone_in' | 'phone_out' 
     .select(ROOM_COLUMNS)
     .single();
   if (error || !data) throw new Error(`Could not create the room: ${error?.message}`);
+  if (p.agent.mode === 'elevenlabs' && data.mode === 'turn_based') {
+    const why = p.agent.provider_state?.elevenlabs?.error || 'it is not set up yet';
+    await addNote(data as Row, { text: `The ElevenLabs agent is not ready (${String(why).slice(0, 200)}); this call uses the platform's turn-based voice instead.`, level: 'warn', author: 'Calls' }).catch(() => undefined);
+  }
   return data as Row;
+}
+
+/** How a call is handled: an ElevenLabs agent that is not synced falls back to turn-based, so the caller is never left in silence. */
+export function callMode(agent: Row): 'elevenlabs' | 'turn_based' {
+  if (agent.mode !== 'elevenlabs') return 'turn_based';
+  const el = agent.provider_state?.elevenlabs ?? {};
+  return el.sip_identifier && el.agent_id && !el.error ? 'elevenlabs' : 'turn_based';
 }
 
 async function addParticipantRow(room: Row, p: { role: string; call_sid?: string | null; label?: string; address?: string | null; muted?: boolean; status?: string }) {
@@ -262,7 +273,7 @@ export async function handleIncoming(conn: Row, p: Record<string, string>): Prom
   }
   const room = await createRoom({ tenantId: conn.tenant_id, kind: 'phone_in', agent, customerNumber: p.From || null, agentNumber: p.To || null });
   await addParticipantRow(room, { role: 'customer', call_sid: p.CallSid, label: p.From || 'Caller', address: p.From, status: 'answered' });
-  if (agent.mode === 'turn_based') {
+  if (room.mode === 'turn_based') {
     await updateRoom(room.id, { status: 'live', started_at: new Date().toISOString() });
     return turnStart(conn, room, agent);
   }
@@ -279,7 +290,7 @@ export async function handleOutboundAnswered(conn: Row, roomId: string, p: Recor
     await finishRoom(room, 'voicemail');
     return response('<Hangup/>');
   }
-  if (agent.mode === 'turn_based') {
+  if (room.mode === 'turn_based') {
     await updateRoom(room.id, { status: 'live', started_at: new Date().toISOString() });
     return turnStart(conn, room, agent);
   }
@@ -322,7 +333,7 @@ export async function handleConferenceEvent(conn: Row, roomId: string, p: Record
     if (part?.role === 'customer' && room.status === 'ringing') {
       await updateRoom(room.id, { status: 'live', started_at: new Date().toISOString() });
       const agent = await loadVoiceAgent(room.tenant_id, room.voice_agent_id).catch(() => null);
-      if (agent?.mode === 'elevenlabs') await addVoiceFront(conn, { ...room, provider_room_sid: p.ConferenceSid ?? room.provider_room_sid }, agent);
+      if (agent && room.mode === 'elevenlabs') await addVoiceFront(conn, { ...room, provider_room_sid: p.ConferenceSid ?? room.provider_room_sid }, agent);
     }
   } else if (event === 'participant-leave') {
     const part = p.CallSid ? await participantByCall(room.id, p.CallSid) : null;

@@ -4,7 +4,7 @@ import type { AuthContext } from '@/lib/auth/require-auth';
 import { envelopeDecryptSecret, envelopeEncryptSecret, type EncryptedSecretPayload } from '@/lib/secrets/envelope-encryption';
 import { getTenantSecret } from '@/lib/secrets/secrets-service';
 import { createPlatformApiKey, revokePlatformApiKey } from '@/lib/auth/api-keys';
-import { deleteElevenLabsAgent, newSipCredentials, syncElevenLabsAgent, voiceFrontPrompt, type ElevenLabsState } from '@/lib/rooms/elevenlabs';
+import { ElevenLabsSyncError, deleteElevenLabsAgent, newSipCredentials, syncElevenLabsAgent, voiceFrontPrompt, type ElevenLabsState } from '@/lib/rooms/elevenlabs';
 import { ROOM_TOOL_NAMES, ROOM_SCOPES } from '@/lib/mcp/tool-catalog';
 import { getTeam } from './teams';
 import { getContextProfile } from './context-profiles';
@@ -74,7 +74,7 @@ export function presentVoiceAgent(row: Row): Row & { id: string; name: string; m
     id: row.id,
     name: row.name,
     mode: row.mode,
-    elevenlabs: row.mode === 'elevenlabs' ? { agent_id: el.agent_id ?? null, synced_at: el.synced_at ?? null, error: el.error ?? null, voice_id: el.voice_id ?? null, ready: !!(el.agent_id && el.sip_identifier) } : null,
+    elevenlabs: row.mode === 'elevenlabs' ? { agent_id: el.agent_id ?? null, synced_at: el.synced_at ?? null, error: el.error ?? null, voice_id: el.voice_id ?? null, ready: !!(el.agent_id && el.sip_identifier && !el.error) } : null,
     post_call_endpoint_id: provider_state?.post_call_endpoint_id ?? null,
   };
 }
@@ -174,11 +174,11 @@ export async function syncVoiceFront(ctx: Ctx, row: Row, publicOrigin: string): 
   };
   if (!elKey) return saveState({ ...state, elevenlabs: { ...elState, error: 'Add an ElevenLabs key in Settings → keys, then save again.' } });
 
+  let key: Awaited<ReturnType<typeof createPlatformApiKey>> | null = null;
   try {
     const team = await getTeam(ctx, row.team_id);
-    // Rotate the MCP key: revoke the previous one, mint a new one.
-    if (state.mcp_key_id) await revokePlatformApiKey(ctx.tenantId, state.mcp_key_id).catch(() => undefined);
-    const key = await createPlatformApiKey(ctx.tenantId, {
+    // Rotate the MCP key: mint a new one now, revoke the previous one only once the sync worked.
+    key = await createPlatformApiKey(ctx.tenantId, {
       name: `Voice agent · ${row.name}`.slice(0, 80),
       scopes: [...ROOM_SCOPES, ...(row.mcp_profile_id ? ['mcp:functions:invoke', 'mcp:connectors:invoke'] : [])],
       toolsWhitelist: [...ROOM_TOOL_NAMES],
@@ -207,10 +207,15 @@ export async function syncVoiceFront(ctx: Ctx, row: Row, publicOrigin: string): 
       sip_username: await envelopeEncryptSecret(sip.username, ctx.tenantId, secretContext(row.id, 'sip_username')),
       sip_password: await envelopeEncryptSecret(sip.password, ctx.tenantId, secretContext(row.id, 'sip_password')),
     };
+    if (state.mcp_key_id) await revokePlatformApiKey(ctx.tenantId, state.mcp_key_id).catch(() => undefined);
     return saveState({ ...state, mcp_key_id: key.id, elevenlabs: { ...synced, voice_id: elState.voice_id ?? null } }, secrets);
   } catch (err) {
     const message = (err as Error)?.message || 'ElevenLabs sync failed.';
-    return saveState({ ...state, elevenlabs: { ...elState, error: message.slice(0, 500) } });
+    // The new key never went live: revoke it and keep the previous one.
+    if (key) await revokePlatformApiKey(ctx.tenantId, key.id).catch(() => undefined);
+    // Keep ids created before the failure so the next attempt reuses them instead of duplicating.
+    const partial = err instanceof ElevenLabsSyncError ? err.partialState : elState;
+    return saveState({ ...state, elevenlabs: { ...elState, ...partial, voice_id: elState.voice_id ?? null, error: message.slice(0, 500) } });
   }
 }
 

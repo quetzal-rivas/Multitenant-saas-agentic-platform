@@ -227,6 +227,11 @@ export interface TurnControl {
    * run; return messages to add (only used on top-level steps).
    */
   beforeStep?: (info: StepInfo) => Promise<{ messages?: string[] } | void>;
+  /**
+   * Called before every tool call. A model reply can arrive after the run was stopped
+   * (slow model); this keeps a stopped run from acting on it.
+   */
+  beforeTool?: () => Promise<void>;
   /** Asked to end with JSON matching this schema (orchestration output_schema). */
   outputSchema?: Record<string, unknown> | null;
 }
@@ -252,6 +257,8 @@ async function runToolLoop(opts: {
   onStep?: (stepsDone: number, finalText: string) => Promise<void>;
   /** Before each model call: may stop the run or return messages to add. */
   beforeStep?: () => Promise<{ messages?: string[] } | void>;
+  /** Before each tool call: may stop the run. */
+  beforeTool?: () => Promise<void>;
   onUsage?: (tokens: number) => void;
 }): Promise<string> {
   const defs = [...opts.tools.values()].map((t) => t.def);
@@ -311,6 +318,12 @@ async function runToolLoop(opts: {
         output = `Tool '${call.name}' is not enabled here.`;
         isError = true;
       } else {
+        try {
+          await opts.beforeTool?.();
+        } catch (err) {
+          if (err instanceof RunStopped) err.partialText = finalText;
+          throw err;
+        }
         try {
           output = await tool.run(call.arguments);
         } catch (err) {
@@ -512,6 +525,7 @@ export async function runTurn(
       provider,
       apiKey,
       usage,
+      beforeTool: control.beforeTool,
       beforeStep: control.beforeStep
         ? async () => {
             const out = await control.beforeStep!({ usage, worker: opts.worker, usageByWorker });

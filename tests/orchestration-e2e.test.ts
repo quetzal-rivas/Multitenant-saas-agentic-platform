@@ -23,6 +23,9 @@ let holdAll = false;
 const held: string[] = [];
 const seenInputs: string[][] = [];
 const seenTools: string[][] = [];
+let slowStarted = false;
+let openSlowGate: () => void = () => undefined;
+let slowGate: Promise<void> = Promise.resolve();
 const timeline: Array<{ id: string; start: number; end: number }> = [];
 
 async function generate(o: LLMGenerateOptions): Promise<LLMGenerateResult> {
@@ -30,6 +33,12 @@ async function generate(o: LLMGenerateOptions): Promise<LLMGenerateResult> {
   seenTools.push((o.tools ?? []).map((t) => t.name));
   const usage = { inputTokens: tokensPerStep / 2, outputTokens: tokensPerStep / 2, totalTokens: tokensPerStep };
   await new Promise((r) => setTimeout(r, 120));
+  if (/SLOWTOOL/.test(o.systemPrompt || '')) {
+    // A slow model: the reply (asking for a tool) arrives only after the gate opens.
+    slowStarted = true;
+    await slowGate;
+    return { text: 'posting', usage, finishReason: 'tool_calls', toolCalls: [{ id: crypto.randomUUID(), name: 'contextcontrol_board_post_task', arguments: { title: 'Posted after stop', description: 'x' } }] } as LLMGenerateResult;
+  }
   if (/LOOP/.test(o.systemPrompt || '')) {
     return { text: 'working', usage, finishReason: 'tool_calls', toolCalls: [{ id: crypto.randomUUID(), name: 'contextcontrol_board_list_tasks', arguments: {} }] } as LLMGenerateResult;
   }
@@ -139,6 +148,22 @@ describe('Orchestration over MCP: agents, batch runs, limits, stop/resume', () =
     const started = await call('contextcontrol_run_agents', { runs: [{ agent_id: agent.agent.agent_id, message: 'Research the landing page' }] }, searchKey);
     await waitAll([started.runs[0].run_id]);
     assert.ok(seenTools.some((names) => names.includes('web_search')), 'the model is offered web_search');
+  });
+
+  test('a stopped run does not run the tools of a model reply that arrives late', async () => {
+    slowStarted = false;
+    slowGate = new Promise((r) => (openSlowGate = r));
+    const agent = await call('contextcontrol_create_agent', { name: 'Slow', instructions: 'SLOWTOOL', tools: ['contextcontrol_board_post_task'] });
+    const started = await call('contextcontrol_run_agents', { runs: [{ agent_id: agent.agent.agent_id, message: 'Post a task' }] });
+    const runId = started.runs[0].run_id;
+    for (let i = 0; i < 50 && !slowStarted; i++) await new Promise((r) => setTimeout(r, 20));
+    assert.ok(slowStarted, 'the model call is in flight');
+    await call('contextcontrol_stop_all_runs', {});
+    openSlowGate();
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(tables.board_tasks.filter((t) => t.title === 'Posted after stop').length, 0, 'no side effect after the stop');
+    assert.equal(tables.run_events.filter((e) => e.run_id === runId && e.event_type === 'tool_result').length, 0);
+    assert.equal(tables.agent_runs.find((r) => r.id === runId)!.status, 'cancelled');
   });
 
   test('limits: concurrency cap, token budget, step limit, daily cap; queue timeout', async () => {

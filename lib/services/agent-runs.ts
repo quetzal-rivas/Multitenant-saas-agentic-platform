@@ -300,6 +300,16 @@ function makeBeforeStep(run: Row, owner: string) {
   };
 }
 
+/** Before every tool call: a run that was cancelled or stopped must not act any more. */
+function makeBeforeTool(run: Row, owner: string) {
+  const db = getSupabaseAdminClient();
+  return async () => {
+    const { data } = await db.from('agent_runs').select('status, lease_owner').eq('id', run.id).maybeSingle();
+    if (!data || data.status !== 'running' || data.lease_owner !== owner) throw new LeaseLost();
+    if ((await orgAgentState(run.tenant_id)).paused_at) throw new RunStopped('Agent runs were stopped for this organization.');
+  };
+}
+
 export type SliceOutcome =
   | { status: 'done'; result: TurnResult }
   | { status: 'paused' }
@@ -336,6 +346,7 @@ export async function executeRun(runId: string, opts: { owner: string; deadlineA
       deadlineAt: opts.deadlineAt,
       save,
       beforeStep: makeBeforeStep(run, opts.owner),
+      beforeTool: makeBeforeTool(run, opts.owner),
       outputSchema: run.output_schema ?? null,
     });
     if (outcome === 'paused') {

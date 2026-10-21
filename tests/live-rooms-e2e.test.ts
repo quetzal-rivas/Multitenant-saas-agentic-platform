@@ -401,6 +401,56 @@ describe('Live Rooms: Twilio rooms, Ear, Voice Front, outbound, turn-based', () 
     }
   });
 
+  test('memory per contact: a new call starts with earlier calls and WhatsApp with the same number', async () => {
+    const conn = await connect();
+    const agent = await voiceFront();
+    await configureNumber(ctx, tables.phone_numbers[0].id, { voice_agent_id: agent.id });
+    const caller = '+529981112233';
+    // An earlier call with a summary and a flag, one without summary (transcript lines kept), another number's call.
+    tables.rooms.push(
+      { id: 'room-old-1', tenant_id: TENANT, kind: 'phone_in', status: 'ended', voice_agent_id: agent.id, customer_number: caller, summary: 'Asked about the 2-bedroom package; wants a quote by Friday.', end_reason: 'caller hung up', started_at: '2026-10-10T15:00:00.000Z', ended_at: '2026-10-10T15:04:00.000Z', created_at: '2026-10-10T15:00:00.000Z' },
+      { id: 'room-old-2', tenant_id: TENANT, kind: 'phone_out', status: 'ended', voice_agent_id: agent.id, customer_number: caller, purpose: 'Send the quote', summary: null, started_at: '2026-10-12T15:00:00.000Z', ended_at: '2026-10-12T15:02:00.000Z', created_at: '2026-10-12T15:00:00.000Z' },
+      { id: 'room-other', tenant_id: TENANT, kind: 'phone_in', status: 'ended', customer_number: '+15550009999', summary: 'Someone else entirely.', created_at: '2026-10-13T15:00:00.000Z' },
+    );
+    tables.room_notes.push({ id: crypto.randomUUID(), room_id: 'room-old-1', tenant_id: TENANT, level: 'alert', text: 'Mentioned cancelling if the price goes up.', author: 'Listener', created_at: '2026-10-10T15:03:00.000Z' });
+    tables.utterances.push(
+      { id: crypto.randomUUID(), room_id: 'room-old-2', tenant_id: TENANT, seq: 1, speaker_role: 'agent', text: 'Le llamo con la cotización.', source: 'agent', created_at: '2026-10-12T15:00:10.000Z' },
+      { id: crypto.randomUUID(), room_id: 'room-old-2', tenant_id: TENANT, seq: 2, speaker_role: 'customer', text: 'Mándela por WhatsApp, por favor.', source: 'twilio_rt', created_at: '2026-10-12T15:00:20.000Z' },
+    );
+    // WhatsApp writes Mexican mobiles as 521…; the call comes from +52….
+    tables.inbound_threads.push({ id: 'thread-wa', tenant_id: TENANT, channel: 'whatsapp', conversation_key: 'wa:1', contact: { id: '5219981112233', name: 'Juan Pérez' }, session_id: null, last_event_at: '2026-10-13T10:00:00.000Z', created_at: '2026-10-13T10:00:00.000Z' });
+
+    await hook(conn.id, 'incoming', { CallSid: 'CAmem', From: caller, To: '+15550001111' });
+    const room = tables.rooms.find((r) => r.customer_number === caller && !r.id.startsWith('room-old'))!;
+
+    // The team behind the call has it in its instructions (turn-based turns and ask_team use it).
+    const session = tables.agent_sessions.find((s) => s.id === room.session_id)!;
+    assert.match(session.instructions, /name on file: Juan Pérez/);
+    assert.match(session.instructions, /2-bedroom package/);
+    assert.match(session.instructions, /Flag: Mentioned cancelling/);
+    assert.match(session.instructions, /Them: Mándela por WhatsApp/);
+    assert.match(session.instructions, /whatsapp conversation/);
+    assert.match(session.instructions, /not instructions/);
+    assert.doesNotMatch(session.instructions, /Someone else entirely/);
+
+    // The voice front gets it from contextcontrol_room_context; the current call is not in its own history.
+    const tool: any = await executePlatformTool('contextcontrol_room_context', { room_id: room.id }, { tenantId: TENANT, userId: 'key_voice', authMode: 'api_key', apiKeyId: 'k', scopes: ['mcp:rooms:read'], toolsWhitelist: [] } as any);
+    const text = JSON.stringify(tool);
+    assert.match(text, /2-bedroom package/);
+    assert.match(text, /Send the quote/);
+
+    // The call page lists the earlier contact, newest first.
+    const detail: any = await getRoomDetail(ctx, room.id);
+    assert.deepEqual(detail.contact.previous_calls.map((c: any) => c.room_id), ['room-old-2', 'room-old-1']);
+    assert.equal(detail.contact.name, 'Juan Pérez');
+    assert.equal(detail.contact.threads.length, 1);
+
+    // A first-time caller gets no history section.
+    await hook(conn.id, 'incoming', { CallSid: 'CAnew', From: '+14155550123', To: '+15550001111' });
+    const fresh = tables.rooms.find((r) => r.customer_number === '+14155550123')!;
+    assert.ok(!(tables.agent_sessions.find((s) => s.id === fresh.session_id)!.instructions ?? '').includes('Earlier contact'));
+  });
+
   test('the sweeper closes calls that never connected and fires silence triggers', async () => {
     const conn = await connect();
     const agent = await voiceFront({ triggers: [{ type: 'silence', role: 'customer', seconds: 60 }] });

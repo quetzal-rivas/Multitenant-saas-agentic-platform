@@ -16,6 +16,7 @@ import { claimRun, dispatchRun, executeRun, getRun, startRun, waitForRun, worker
 import { credsFor, hasCallCompliance, requireConnection, twilioHookUrl, connectionSecrets } from './telephony';
 import { loadVoiceAgent, voiceAgentSecrets, withinCallingHours } from './voice-agents';
 import { ServiceError, isServiceError } from './errors';
+import { contactHistory, contactHistoryText } from './contact-history';
 
 /**
  * Live Rooms: one room per live conversation on the org's own Twilio account.
@@ -81,7 +82,11 @@ async function createRoom(p: { tenantId: string; kind: 'phone_in' | 'phone_out' 
   const id = crypto.randomUUID();
   const label = p.customerNumber ? `Call · ${p.customerNumber}` : 'Call';
   const session = await createTeamSession(ctx, p.agent.team_id, label.slice(0, 120));
-  if (p.agent.voice_profile_id) await updateSession(ctx, session.id, { voice_profile_id: p.agent.voice_profile_id }).catch(() => undefined);
+  // The team behind the call knows why it happens and what was said before with this number.
+  const history = contactHistoryText(await contactHistory(p.tenantId, p.customerNumber).catch(() => null));
+  const instructions = [p.purpose ? `Purpose of this call: ${p.purpose}` : '', history].filter(Boolean).join('\n\n').slice(0, 8000);
+  const sessionPatch = { ...(p.agent.voice_profile_id ? { voice_profile_id: p.agent.voice_profile_id } : {}), ...(instructions ? { instructions } : {}) };
+  if (Object.keys(sessionPatch).length) await updateSession(ctx, session.id, sessionPatch).catch(() => undefined);
   const now = new Date().toISOString();
   const { data, error } = await db()
     .from('rooms')
@@ -200,8 +205,10 @@ export async function getRoomDetail(ctx: Pick<Ctx, 'tenantId'>, id: string) {
   ]);
   let agent: Row | null = null;
   if (room.voice_agent_id) agent = await loadVoiceAgent(room.tenant_id, room.voice_agent_id).catch(() => null);
+  const history = await contactHistory(room.tenant_id, room.customer_number, { excludeRoomId: room.id }).catch(() => null);
   return {
     room: presentRoom(room),
+    contact: history ? { number: history.number, name: history.name, previous_calls: history.calls, threads: history.threads.map(({ lines: _l, ...t }) => t) } : null,
     voice_agent: agent ? { id: agent.id, name: agent.name, mode: agent.mode } : null,
     participants: (participants.data || []).map(({ tenant_id: _t, ...p }: Row) => p),
     utterances: utterances.data || [],
@@ -589,11 +596,13 @@ export async function roomContextTool(ctx: Ctx, args: { room_id?: string }) {
     }
   }
   const { data: notes } = await db().from('room_notes').select('level, text').eq('room_id', room.id).order('created_at', { ascending: false }).limit(5);
+  const history = contactHistoryText(await contactHistory(room.tenant_id, room.customer_number, { excludeRoomId: room.id }).catch(() => null));
   const context = [
     room.kind === 'phone_out' ? `You called ${room.customer_number}.` : `${room.customer_number ? `Caller: ${room.customer_number}.` : 'Caller number unknown.'}`,
     room.purpose ? `Purpose of the call: ${room.purpose}` : '',
     profileText ? `What you should know:\n${profileText}` : '',
     notes?.length ? `Notes so far:\n${notes.map((n) => `- [${n.level}] ${n.text}`).join('\n')}` : '',
+    history,
   ]
     .filter(Boolean)
     .join('\n\n')

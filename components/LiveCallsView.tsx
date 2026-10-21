@@ -213,7 +213,7 @@ function CallsTab({ onNotice, onNavigate }: { onNotice: (n: { ok: boolean; text:
           </button>
         ))}
       </aside>
-      <main className="min-w-0">{selected ? <RoomPanel roomId={selected} onNotice={onNotice} onNavigate={onNavigate} /> : null}</main>
+      <main className="min-w-0">{selected ? <RoomPanel roomId={selected} onNotice={onNotice} onNavigate={onNavigate} onOpenRoom={setSelected} /> : null}</main>
     </div>
   );
 }
@@ -224,8 +224,15 @@ function StatusPill({ status }: { status: Room['status'] }) {
   return <span className={`px-1.5 py-0.5 rounded text-[10px] ${cls}`}>{status}</span>;
 }
 
-function RoomPanel({ roomId, onNotice, onNavigate }: { roomId: string; onNotice: (n: { ok: boolean; text: string } | null) => void; onNavigate?: (tab: string) => void }) {
-  const [detail, setDetail] = useState<{ room: Room; utterances: Utterance[]; notes: Note[]; participants: any[]; voice_agent: { name: string; mode: string } | null } | null>(null);
+interface ContactRecap {
+  number: string;
+  name: string | null;
+  previous_calls: Array<{ room_id: string; at: string; direction: string; duration_s: number | null; voice_agent: string | null; purpose: string | null; outcome: string | null; summary: string | null; alerts: string[] }>;
+  threads: Array<{ thread_id: string; channel: string; last_at: string }>;
+}
+
+function RoomPanel({ roomId, onNotice, onNavigate, onOpenRoom }: { roomId: string; onNotice: (n: { ok: boolean; text: string } | null) => void; onNavigate?: (tab: string) => void; onOpenRoom?: (id: string) => void }) {
+  const [detail, setDetail] = useState<{ room: Room; utterances: Utterance[]; notes: Note[]; participants: any[]; voice_agent: { name: string; mode: string } | null; contact: ContactRecap | null } | null>(null);
   const [listening, setListening] = useState<'off' | 'connecting' | 'on'>('off');
   const deviceRef = useRef<any>(null);
   const callRef = useRef<any>(null);
@@ -371,8 +378,47 @@ function RoomPanel({ roomId, onNotice, onNavigate }: { roomId: string; onNotice:
               {n.text}
             </div>
           ))}
+          <ContactHistoryPanel contact={detail.contact} onOpenRoom={onOpenRoom} onNavigate={onNavigate} />
         </section>
       </div>
+    </div>
+  );
+}
+
+/** Earlier calls and WhatsApp / SMS threads with the same number (the agent gets this too). */
+function ContactHistoryPanel({ contact, onOpenRoom, onNavigate }: { contact: ContactRecap | null; onOpenRoom?: (id: string) => void; onNavigate?: (tab: string) => void }) {
+  if (!contact) return null;
+  const empty = !contact.previous_calls.length && !contact.threads.length;
+  return (
+    <div className="pt-2 space-y-2">
+      <h2 className="text-sm font-semibold text-white">Earlier with this number{contact.name ? ` · ${contact.name}` : ''}</h2>
+      {empty && <p className="text-xs text-zinc-500">First contact. Later calls from this number will start with what was said here.</p>}
+      {contact.previous_calls.map((c) => (
+        <button
+          key={c.room_id}
+          onClick={() => onOpenRoom?.(c.room_id)}
+          className="w-full text-left p-2.5 rounded-lg border border-zinc-800 hover:border-zinc-600 bg-zinc-900/40 text-xs"
+        >
+          <div className="text-zinc-300">
+            {new Date(c.at).toLocaleDateString()} · {c.direction === 'outbound' ? 'Outbound' : 'Inbound'}
+            {c.duration_s !== null ? ` · ${Math.max(1, Math.round(c.duration_s / 60))} min` : ''}
+            {c.voice_agent ? ` · ${c.voice_agent}` : ''}
+          </div>
+          {c.summary ? <div className="text-zinc-400 mt-1 line-clamp-3">{c.summary}</div> : c.outcome ? <div className="text-zinc-500 mt-1">Ended: {c.outcome}</div> : null}
+          {c.alerts.map((a, i) => (
+            <div key={i} className="text-amber-300 mt-1 line-clamp-2">⚑ {a}</div>
+          ))}
+        </button>
+      ))}
+      {contact.threads.map((t) => (
+        <button
+          key={t.thread_id}
+          onClick={() => onNavigate?.('conversations')}
+          className="w-full text-left p-2.5 rounded-lg border border-zinc-800 hover:border-zinc-600 bg-zinc-900/40 text-xs text-zinc-300"
+        >
+          {t.channel} conversation · last message {new Date(t.last_at).toLocaleDateString()}
+        </button>
+      ))}
     </div>
   );
 }

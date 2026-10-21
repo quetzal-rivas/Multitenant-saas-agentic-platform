@@ -64,6 +64,9 @@ async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
       return Response.json({ detail: [{ type: 'missing', loc: ['body', 'type'], msg: 'Field required', input: body }] }, { status: 422 });
     }
     if (url.pathname === '/v1/convai/secrets') return Response.json({ type: 'stored', secret_id: 'sec_1', name: body.name });
+    if (url.pathname.startsWith('/v1/voices/') && method === 'GET') {
+      return url.pathname.endsWith('/voice-from-old-account') ? Response.json({ detail: { message: 'voice not found' } }, { status: 404 }) : Response.json({ voice_id: url.pathname.split('/').pop() });
+    }
     if (url.pathname.endsWith('/tool-configs') && method === 'POST') {
       if (toolConfigs.has(url.pathname + body.tool_name)) return Response.json({ detail: { message: 'already exists' } }, { status: 409 });
       toolConfigs.add(url.pathname + body.tool_name);
@@ -467,6 +470,19 @@ describe('Live Rooms: Twilio rooms, Ear, Voice Front, outbound, turn-based', () 
     assert.equal(after.end_reason, 'caller hung up');
     assert.equal(after.summary, 'Quetzal called to say his name; nothing pending.');
     assert.match(prompts.at(-1)!.last, /The call has ended/);
+  });
+
+  test('a voice that is not in the current ElevenLabs account: synced with the default voice and flagged', async () => {
+    const gone = await voiceFront({ elevenlabs_voice_id: 'voice-from-old-account' });
+    assert.equal(gone.elevenlabs!.ready, true, 'the agent still works');
+    assert.match(gone.elevenlabs!.voice_warning!, /isn't in the ElevenLabs account/);
+    assert.equal(gone.elevenlabs!.voice_id, 'voice-from-old-account', 'the choice is kept for when the account has it again');
+    const body = elCalls.filter((c) => c.path === '/v1/convai/agents/create').at(-1)!.body;
+    assert.equal(body.conversation_config.tts, undefined, 'no missing voice sent to ElevenLabs');
+
+    const ok = await voiceFront({ name: 'Second', elevenlabs_voice_id: 'EXAVITQu4vr4xnSDxMaL' });
+    assert.equal(ok.elevenlabs!.voice_warning, null);
+    assert.equal(elCalls.filter((c) => c.path === '/v1/convai/agents/create').at(-1)!.body.conversation_config.tts.voice_id, 'EXAVITQu4vr4xnSDxMaL');
   });
 
   test('a SIP identifier taken in another ElevenLabs workspace is replaced by a new one', async () => {

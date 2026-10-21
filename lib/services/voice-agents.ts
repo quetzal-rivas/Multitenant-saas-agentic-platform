@@ -4,7 +4,7 @@ import type { AuthContext } from '@/lib/auth/require-auth';
 import { envelopeDecryptSecret, envelopeEncryptSecret, type EncryptedSecretPayload } from '@/lib/secrets/envelope-encryption';
 import { getTenantSecret } from '@/lib/secrets/secrets-service';
 import { createPlatformApiKey, revokePlatformApiKey } from '@/lib/auth/api-keys';
-import { ElevenLabsSyncError, enableElevenLabsMcpServers, deleteElevenLabsAgent, newSipCredentials, syncElevenLabsAgent, voiceFrontPrompt, type ElevenLabsState } from '@/lib/rooms/elevenlabs';
+import { ElevenLabsSyncError, enableElevenLabsMcpServers, voiceAvailable, deleteElevenLabsAgent, newSipCredentials, syncElevenLabsAgent, voiceFrontPrompt, type ElevenLabsState } from '@/lib/rooms/elevenlabs';
 import { ROOM_TOOL_NAMES, ROOM_SCOPES } from '@/lib/mcp/tool-catalog';
 import { getTeam } from './teams';
 import { getContextProfile } from './context-profiles';
@@ -66,7 +66,7 @@ export const voiceAgentSchema = z
 
 export type VoiceAgentInput = z.infer<typeof voiceAgentSchema>;
 
-export function presentVoiceAgent(row: Row): Row & { id: string; name: string; mode: 'elevenlabs' | 'turn_based'; elevenlabs: { agent_id: string | null; synced_at: string | null; error: string | null; voice_id: string | null; ready: boolean } | null } {
+export function presentVoiceAgent(row: Row): Row & { id: string; name: string; mode: 'elevenlabs' | 'turn_based'; elevenlabs: { agent_id: string | null; synced_at: string | null; error: string | null; voice_id: string | null; voice_warning: string | null; ready: boolean } | null } {
   const { secrets: _s, tenant_id: _t, provider_state, ...rest } = row;
   const el = (provider_state?.elevenlabs ?? {}) as ElevenLabsState & { voice_id?: string | null };
   return {
@@ -74,7 +74,7 @@ export function presentVoiceAgent(row: Row): Row & { id: string; name: string; m
     id: row.id,
     name: row.name,
     mode: row.mode,
-    elevenlabs: row.mode === 'elevenlabs' ? { agent_id: el.agent_id ?? null, synced_at: el.synced_at ?? null, error: el.error ?? null, voice_id: el.voice_id ?? null, ready: !!(el.agent_id && el.sip_identifier && !el.error) } : null,
+    elevenlabs: row.mode === 'elevenlabs' ? { agent_id: el.agent_id ?? null, synced_at: el.synced_at ?? null, error: el.error ?? null, voice_id: el.voice_id ?? null, voice_warning: (el as Row).voice_warning ?? null, ready: !!(el.agent_id && el.sip_identifier && !el.error) } : null,
     post_call_endpoint_id: provider_state?.post_call_endpoint_id ?? null,
   };
 }
@@ -199,6 +199,9 @@ export async function syncVoiceFront(ctx: Ctx, row: Row, publicOrigin: string): 
       profileId: row.mcp_profile_id,
       createdBy: ctx.authMode === 'session' ? ctx.userId : null,
     });
+    // A voice from another ElevenLabs account: sync with the default voice and say so (the choice is kept).
+    const chosenVoice: string | null = elState.voice_id ?? null;
+    const voiceMissing = !!chosenVoice && !(await voiceAvailable(elKey, chosenVoice));
     const existingSecrets = await voiceAgentSecrets(row).catch(() => ({} as Record<string, string>));
     const sip = existingSecrets.sip_username && existingSecrets.sip_password ? { username: existingSecrets.sip_username, password: existingSecrets.sip_password } : newSipCredentials();
     const synced = await syncElevenLabsAgent(
@@ -209,7 +212,7 @@ export async function syncVoiceFront(ctx: Ctx, row: Row, publicOrigin: string): 
         firstMessage: row.greeting,
         language: row.language,
         maxSeconds: row.max_minutes * 60,
-        voiceId: elState.voice_id ?? null,
+        voiceId: voiceMissing ? null : chosenVoice,
         mcpUrl: `${publicOrigin}/api/mcp/platform`,
         mcpKey: key.rawKey,
         sipUsername: sip.username,
@@ -222,7 +225,10 @@ export async function syncVoiceFront(ctx: Ctx, row: Row, publicOrigin: string): 
       sip_password: await envelopeEncryptSecret(sip.password, ctx.tenantId, secretContext(row.id, 'sip_password')),
     };
     if (state.mcp_key_id) await revokePlatformApiKey(ctx.tenantId, state.mcp_key_id).catch(() => undefined);
-    return saveState({ ...state, mcp_key_id: key.id, elevenlabs: { ...synced, voice_id: elState.voice_id ?? null } }, secrets);
+    const voice_warning = voiceMissing
+      ? "The chosen voice isn't in the ElevenLabs account of your current key (custom voices belong to one account). Calls use the agent's default voice until you pick another one."
+      : null;
+    return saveState({ ...state, mcp_key_id: key.id, elevenlabs: { ...synced, voice_id: chosenVoice, voice_warning } }, secrets);
   } catch (err) {
     const message = (err as Error)?.message || 'ElevenLabs sync failed.';
     // The new key never went live: revoke it and keep the previous one.

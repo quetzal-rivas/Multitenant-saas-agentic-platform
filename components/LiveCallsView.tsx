@@ -74,7 +74,7 @@ interface VoiceAgent {
   triggers: any[];
   calling_hours: { timezone: string; days: number[]; start: string; end: string } | null;
   max_minutes: number;
-  elevenlabs: { agent_id: string | null; synced_at: string | null; error: string | null; voice_id: string | null; ready: boolean } | null;
+  elevenlabs: { agent_id: string | null; synced_at: string | null; error: string | null; voice_id: string | null; voice_warning?: string | null; ready: boolean } | null;
 }
 interface PhoneNumberRow {
   id: string;
@@ -641,7 +641,11 @@ function AgentsTab({ onNotice, onNavigate }: { onNotice: (n: { ok: boolean; text
                   <select className={inputCls} value={draft.elevenlabs_voice_id ?? ''} onChange={(e) => set({ elevenlabs_voice_id: e.target.value || null })}>
                     <option value="">Agent default</option>
                     {elVoices.map((v) => <option key={v.id} value={v.id}>{v.name}{v.custom ? ' (custom)' : ''}</option>)}
+                    {draft.elevenlabs_voice_id && elVoices.length > 0 && !elVoices.some((v) => v.id === draft.elevenlabs_voice_id) && (
+                      <option value={draft.elevenlabs_voice_id}>Voice not in this ElevenLabs account</option>
+                    )}
                   </select>
+                  {selected?.elevenlabs?.voice_warning && <p className="text-[11px] text-amber-400 mt-1">{selected.elevenlabs.voice_warning}</p>}
                 </div>
               </>
             ) : (

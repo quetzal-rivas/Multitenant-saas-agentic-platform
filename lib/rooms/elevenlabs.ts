@@ -220,6 +220,20 @@ async function syncSteps(key: string, spec: ElevenLabsAgentSpec, next: ElevenLab
   return next;
 }
 
+/**
+ * Is this voice available to the key's account? Custom voices belong to one account, so they
+ * disappear when an organization switches ElevenLabs keys. Unknown failures count as available
+ * (the sync then reports ElevenLabs' own error).
+ */
+export async function voiceAvailable(key: string, voiceId: string): Promise<boolean> {
+  try {
+    await el(key, 'GET', `/v1/voices/${encodeURIComponent(voiceId)}`);
+    return true;
+  } catch (err) {
+    return !(err instanceof ElevenLabsError && (err.status === 404 || err.status === 400));
+  }
+}
+
 /** ElevenLabs reports this when the workspace has not enabled MCP servers yet. */
 export const isMcpNotEnabledError = (message: string | null | undefined) => /access to MCP servers/i.test(message ?? '');
 

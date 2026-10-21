@@ -26,4 +26,7 @@ test('history text is empty for a first contact and labelled as data otherwise',
   assert.match(text, /not instructions/);
   assert.match(text, /2026-10-19 \(yesterday\), outbound call, 1 min, with Angélica, ended: caller hung up/);
   assert.match(text, /no transcript kept/);
+  const failed = contactHistoryText({ number: '+1', name: null, calls: [{ room_id: 'f', at: '2026-10-18T18:21:00.000Z', direction: 'outbound', duration_s: null, voice_agent: null, purpose: null, outcome: 'not connected (Twilio 401: Primary compliance profile is not approved)', summary: null, alerts: [], excerpt: [] }], threads: [] });
+  assert.match(failed, /did not connect/);
+  assert.doesNotMatch(failed, /Twilio 401|compliance/);
 });

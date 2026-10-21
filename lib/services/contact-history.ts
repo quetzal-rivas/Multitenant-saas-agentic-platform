@@ -159,7 +159,8 @@ export function contactHistoryText(h: ContactHistory | null, now = Date.now()): 
       `${c.direction} call`,
       c.duration_s !== null ? `${Math.max(1, Math.round(c.duration_s / 60))} min` : null,
       c.voice_agent ? `with ${c.voice_agent}` : null,
-      c.outcome ? `ended: ${c.outcome}` : null,
+      // Internal error details (carrier codes, KYC messages) are for humans, not the agent.
+      c.outcome ? (c.outcome.startsWith('not connected') ? 'did not connect' : `ended: ${c.outcome}`) : null,
     ]
       .filter(Boolean)
       .join(', ');

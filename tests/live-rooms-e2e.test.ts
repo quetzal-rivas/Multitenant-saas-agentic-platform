@@ -64,6 +64,12 @@ async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
       return Response.json({ detail: [{ type: 'missing', loc: ['body', 'type'], msg: 'Field required', input: body }] }, { status: 422 });
     }
     if (url.pathname === '/v1/convai/secrets') return Response.json({ type: 'stored', secret_id: 'sec_1', name: body.name });
+    if (url.pathname === '/v1/convai/conversations' && method === 'GET') {
+      const room = (url.searchParams.get('dynamic_variable_params') || '').replace('sip_room_id:eq:', '');
+      const summary = elSummaries.get(room);
+      assert.equal(url.searchParams.get('summary_mode'), 'include');
+      return Response.json({ conversations: summary ? [{ conversation_id: `conv_${room}`, status: 'done', transcript_summary: summary }] : [] });
+    }
     if (url.pathname === '/v1/convai/phone-numbers' && method === 'POST' && takenSipIds.has(body?.phone_number)) {
       return Response.json({ detail: { status: 'phone_number_already_exists', message: `Phone number ${body.phone_number} already exists.` } }, { status: 409 });
     }
@@ -90,6 +96,7 @@ function twilioSign(url: string, params: Record<string, string>, token = TOKEN) 
 
 let elMcpDenied = false;
 const takenSipIds = new Set<string>();
+const elSummaries = new Map<string, string>();
 async function hook(connId: string, action: string, params: Record<string, string>, query: Record<string, string> = {}, token = TOKEN) {
   const qs = new URLSearchParams(query).toString();
   const url = `${ORIGIN}/api/voice/twilio/${connId}/${action}${qs ? `?${qs}` : ''}`;
@@ -257,7 +264,10 @@ describe('Live Rooms: Twilio rooms, Ear, Voice Front, outbound, turn-based', () 
 
     await hook(conn.id, 'conference', { StatusCallbackEvent: 'participant-join', ConferenceSid: 'CF1', CallSid: 'CAcust1', FriendlyName: `cc-${room.id}` }, { room: room.id });
     const add = twilioCalls.find((c) => c.path === `/Conferences/cc-${room.id}/Participants.json`)!;
-    assert.equal(add.params.get('To'), `sip:${tables.voice_agents[0].provider_state.elevenlabs.sip_identifier}@sip.rtc.elevenlabs.io:5061;transport=tls?X-Room-Id=${room.id}`);
+    assert.equal(
+      add.params.get('To'),
+      `sip:${tables.voice_agents[0].provider_state.elevenlabs.sip_identifier}@sip.rtc.elevenlabs.io:5061;transport=tls?X-Room-Id=${room.id}&X-Contact-Brief=${encodeURIComponent('No earlier conversations with this number.')}`
+    );
     assert.ok(add.params.get('SipAuthUsername') && add.params.get('SipAuthPassword'));
     assert.equal(tables.rooms[0].status, 'live');
     assert.equal(tables.room_participants.filter((p) => p.room_id === room.id).length, 2);
@@ -381,6 +391,60 @@ describe('Live Rooms: Twilio rooms, Ear, Voice Front, outbound, turn-based', () 
     holdRuns = true;
     const slow = await hook(conn.id, 'turn', { CallSid: 'CAt', SpeechResult: 'Otra pregunta' }, { room: room.id });
     assert.match(slow.text, /<Say[^>]*>Un momento, por favor\.<\/Say><Redirect method="POST">[^<]*turn\?room=[^<]*poll=/);
+  });
+
+  test('the voice knows the caller from the first second, can hang up, and the call gets a summary', async () => {
+    const conn = await connect();
+    const agent = await voiceFront();
+    await configureNumber(ctx, tables.phone_numbers[0].id, { voice_agent_id: agent.id });
+    // The number also reports when inbound calls end.
+    const numberCfg = twilioCalls.filter((c) => c.path.startsWith('/IncomingPhoneNumbers/')).at(-1)!;
+    assert.match(numberCfg.params.get('StatusCallback')!, /\/call-status$/);
+
+    const created = elCalls.filter((c) => c.path === '/v1/convai/agents/create').at(-1)!.body;
+    assert.deepEqual(created.conversation_config.agent.prompt.built_in_tools.end_call.params, { system_tool_type: 'end_call' });
+    assert.ok(created.conversation_config.agent.dynamic_variable_placeholders.sip_contact_brief);
+    assert.match(created.conversation_config.agent.prompt.prompt, /\{\{sip_contact_brief\}\}/);
+
+    const caller = '+13055550100';
+    tables.rooms.push({ id: 'room-before', tenant_id: TENANT, kind: 'phone_in', mode: 'elevenlabs', status: 'ended', voice_agent_id: agent.id, customer_number: caller, summary: 'The caller, Quetzal, asked the agent to remember his name.', started_at: '2026-10-20T10:00:00.000Z', ended_at: '2026-10-20T10:02:00.000Z', created_at: '2026-10-20T10:00:00.000Z' });
+
+    await hook(conn.id, 'incoming', { CallSid: 'CAq', From: caller, To: '+15550001111' });
+    const room = tables.rooms.find((r) => r.customer_number === caller && r.id !== 'room-before')!;
+    await hook(conn.id, 'conference', { StatusCallbackEvent: 'participant-join', ConferenceSid: 'CFq', CallSid: 'CAq', FriendlyName: `cc-${room.id}` }, { room: room.id });
+    const add = twilioCalls.filter((c) => c.path === `/Conferences/cc-${room.id}/Participants.json`).at(-1)!;
+    const sipTo = add.params.get('To')!;
+    assert.match(sipTo, new RegExp(`X-Room-Id=${room.id}&X-Contact-Brief=`));
+    assert.match(decodeURIComponent(sipTo.split('X-Contact-Brief=')[1]), /Quetzal/);
+    assert.equal(add.params.get('EndConferenceOnExit'), 'true', 'when the agent hangs up, the call ends');
+
+    // After the call, ElevenLabs' own summary is copied in (found by the room id).
+    tables.rooms.find((r) => r.id === room.id)!.status = 'ended';
+    tables.rooms.find((r) => r.id === room.id)!.ended_at = new Date(Date.now() - 60_000).toISOString();
+    elSummaries.set(room.id, 'Quetzal called again; he was greeted by name.');
+    await sweepRooms();
+    assert.equal(tables.rooms.find((r) => r.id === room.id)!.summary, 'Quetzal called again; he was greeted by name.');
+    elSummaries.clear();
+  });
+
+  test('turn-based calls close when the caller hangs up and get a summary from the team', async () => {
+    const stored = new Map<string, unknown>();
+    setAudioCacheForTests({ get: async (k) => (stored.get(k) as any) ?? null, put: async (k, v) => void stored.set(k, v) });
+    const conn = await connect();
+    const agent = await createVoiceAgent(ctx, { name: 'Simple line', mode: 'turn_based', team_id: team, greeting: 'Hola.' }, ORIGIN);
+    await configureNumber(ctx, tables.phone_numbers[0].id, { voice_agent_id: agent.id });
+    await hook(conn.id, 'incoming', { CallSid: 'CAtb', From: '+5215500002222', To: '+15550001111' });
+    const room = tables.rooms.at(-1)!;
+    await hook(conn.id, 'turn', { CallSid: 'CAtb', SpeechResult: 'Me llamo Quetzal', Confidence: '0.9' }, { room: room.id });
+
+    reply = 'Quetzal called to say his name; nothing pending.';
+    const res = await hook(conn.id, 'call-status', { CallSid: 'CAtb', CallStatus: 'completed' });
+    assert.equal(res.status, 204);
+    const after = tables.rooms.find((r) => r.id === room.id)!;
+    assert.equal(after.status, 'ended');
+    assert.equal(after.end_reason, 'caller hung up');
+    assert.equal(after.summary, 'Quetzal called to say his name; nothing pending.');
+    assert.match(prompts.at(-1)!.last, /The call has ended/);
   });
 
   test('a SIP identifier taken in another ElevenLabs workspace is replaced by a new one', async () => {

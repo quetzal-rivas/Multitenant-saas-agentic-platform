@@ -30,3 +30,23 @@ test('history text is empty for a first contact and labelled as data otherwise',
   assert.match(failed, /did not connect/);
   assert.doesNotMatch(failed, /Twilio 401|compliance/);
 });
+
+test('contact brief fits a SIP header and leads with the name', async () => {
+  const { contactBrief, NO_HISTORY_BRIEF } = await import('../lib/services/contact-history');
+  assert.equal(contactBrief(null), NO_HISTORY_BRIEF);
+  const brief = contactBrief(
+    {
+      number: '+1',
+      name: 'Quetzal',
+      calls: [
+        { room_id: 'a', at: '2026-10-21T10:54:00.000Z', direction: 'inbound', duration_s: 150, voice_agent: 'Angélica', purpose: null, outcome: null, summary: 'x'.repeat(2000), alerts: [], excerpt: [] },
+        { room_id: 'b', at: '2026-10-18T10:00:00.000Z', direction: 'outbound', duration_s: null, voice_agent: null, purpose: null, outcome: 'not connected (Twilio 401)', summary: null, alerts: [], excerpt: [] },
+      ],
+      threads: [{ thread_id: 't', channel: 'whatsapp', last_at: '2026-10-20T00:00:00.000Z', lines: [] }],
+    },
+    Date.parse('2026-10-21T12:00:00.000Z')
+  );
+  assert.ok(brief.length <= 600);
+  assert.match(brief, /^Name on file: Quetzal\. They called today:/);
+  assert.doesNotMatch(brief, /Twilio 401/);
+});

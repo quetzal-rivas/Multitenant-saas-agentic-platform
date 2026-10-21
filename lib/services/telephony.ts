@@ -194,6 +194,8 @@ export async function configureNumber(ctx: Ctx, numberId: string, input: { voice
   try {
     await twilio.configureNumber(creds, number.provider_sid, {
       voiceUrl: input.voice_agent_id ? twilioHookUrl(conn, 'incoming') : '',
+      // Tells us when an inbound call ends (turn-based calls have no conference to report it).
+      statusCallback: input.voice_agent_id ? twilioHookUrl(conn, 'call-status') : '',
       ...(input.sms_to_webhooks !== undefined ? { smsUrl: smsEndpointId ? `${conn.public_origin}/api/hooks/${smsEndpointId}` : '' } : {}),
     });
   } catch (err) {

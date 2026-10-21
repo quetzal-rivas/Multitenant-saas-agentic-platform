@@ -3,7 +3,8 @@ import { getSupabaseAdminClient } from '@/lib/supabase';
 import type { AuthContext } from '@/lib/auth/require-auth';
 import { twilio, isE164 } from '@/lib/rooms/adapters/twilio';
 import { attrs, esc, response, say, speechLanguage } from '@/lib/rooms/twiml';
-import { elevenLabsSipUri } from '@/lib/rooms/elevenlabs';
+import { elevenLabsSipUri, fetchElevenLabsCallSummary } from '@/lib/rooms/elevenlabs';
+import { getTenantSecret } from '@/lib/secrets/secrets-service';
 import { TURN_BASED_CAPABILITIES, TWILIO_CONFERENCE_CAPABILITIES, type Trigger } from '@/lib/rooms/types';
 import { speakWithFallback, PLATFORM_VOICE_PROFILE } from '@/lib/voice/engine';
 import { presignedAudioUrl } from '@/lib/voice/audio-cache';
@@ -16,7 +17,7 @@ import { claimRun, dispatchRun, executeRun, getRun, startRun, waitForRun, worker
 import { credsFor, hasCallCompliance, requireConnection, twilioHookUrl, connectionSecrets } from './telephony';
 import { loadVoiceAgent, voiceAgentSecrets, withinCallingHours } from './voice-agents';
 import { ServiceError, isServiceError } from './errors';
-import { contactHistory, contactHistoryText } from './contact-history';
+import { contactBrief, contactHistory, contactHistoryText } from './contact-history';
 
 /**
  * Live Rooms: one room per live conversation on the org's own Twilio account.
@@ -313,14 +314,18 @@ async function addVoiceFront(conn: Row, room: Row, agent: Row) {
   }
   const secrets = await voiceAgentSecrets(agent);
   const creds = await credsFor(conn);
+  // The agent knows the caller from the first second (SIP header → {{sip_contact_brief}}).
+  const brief = contactBrief(await contactHistory(room.tenant_id, room.customer_number, { excludeRoomId: room.id }).catch(() => null));
   try {
     const res = await twilio.addParticipant(creds, room.conference_name, {
       from: room.agent_number || room.customer_number || '+10000000000',
-      to: elevenLabsSipUri(el.sip_identifier, room.id),
+      to: elevenLabsSipUri(el.sip_identifier, room.id, brief),
       label: 'agent',
       sipAuth: secrets.sip_username ? { username: secrets.sip_username, password: secrets.sip_password } : null,
       statusCallback: twilioHookUrl(conn, 'participant', { room: room.id, role: 'agent' }),
       timeLimit: agent.max_minutes * 60,
+      // When the agent hangs up (end_call), the call ends for everyone instead of leaving silence.
+      endConferenceOnExit: true,
     });
     await addParticipantRow(room, { role: 'agent', call_sid: res.call_sid, label: agent.name, address: 'elevenlabs' });
   } catch (err) {
@@ -433,6 +438,27 @@ async function finishRoom(room: Row, reason: string, status: 'ended' | 'failed' 
     await queueListener(room, agent, 'The call ended. Write a short summary (who called, what they wanted, outcome, risks, follow-ups) and post it with contextcontrol_room_note.', 'summary').catch((err) =>
       console.error('[rooms] summary run failed', err)
     );
+  }
+  // Memory per contact needs a summary. ElevenLabs calls get ElevenLabs' own (sweepRooms);
+  // turn-based calls ask the team behind the call for a short one.
+  if (status === 'ended' && room.mode === 'turn_based' && !room.summary) await summarizeTurnBased(room).catch((err) => console.error('[rooms] summary failed', err));
+}
+
+const SUMMARY_REQUEST = 'The call has ended.';
+
+async function summarizeTurnBased(room: Row) {
+  const { data: lines } = await db().from('utterances').select('speaker_role').eq('room_id', room.id).limit(3);
+  if ((lines || []).filter((l: Row) => l.speaker_role === 'customer').length === 0) return; // nothing was said
+  const run = await startRun(
+    systemCtx(room.tenant_id),
+    room.session_id,
+    `${SUMMARY_REQUEST} Write a summary of it in 2-3 sentences for the next conversation with this person: their name if they gave it, what they wanted, what was promised, what is pending. Reply with only the summary. Do not use tools.`,
+    { origin: 'room', roomId: room.id }
+  );
+  if (workerConfigured()) await dispatchRun(run.id);
+  else {
+    const owner = `inline-summary:${run.id}`;
+    if (await claimRun(run.id, owner, 5 * 60_000)) await executeRun(run.id, { owner, deadlineAt: Date.now() + 4 * 60_000 });
   }
 }
 
@@ -729,9 +755,14 @@ async function queueListener(room: Row, agent: Row, reason: string, key: string)
 }
 
 /** Hook from agent-runs when a room run ends: run queued listener checks. */
-export async function onRoomRunFinished(run: Row, _status?: string, _detail?: string | null, _message?: string | null) {
+export async function onRoomRunFinished(run: Row, status?: string, _detail?: string | null, message?: string | null) {
   if (!run.room_id) return;
   const room = await loadRoom(run.room_id);
+  // The end-of-call summary of a turn-based call.
+  if (room && status === 'ok' && String(run.input_message ?? '').startsWith(SUMMARY_REQUEST) && message?.trim() && !room.summary) {
+    await updateRoom(room.id, { summary: message.trim().slice(0, 4000) });
+    return;
+  }
   if (!room || run.session_id !== room.listener_session_id) return;
   const pending: string[] = room.trigger_state?.pending ?? [];
   if (!pending.length) return;
@@ -771,8 +802,50 @@ export async function sweepRooms(now = Date.now()) {
       }
     }
   }
+  const summarized = await collectElevenLabsSummaries(now).catch((err) => {
+    console.error('[rooms] summary collection failed', err);
+    return 0;
+  });
   const { data: purged } = await db().from('utterances').delete().lte('created_at', new Date(now - UTTERANCE_RETENTION_DAYS * 86_400_000).toISOString()).select('id');
-  return { fired, closed, purged: purged?.length ?? 0 };
+  return { fired, closed, purged: purged?.length ?? 0, summarized };
+}
+
+/**
+ * ElevenLabs calls: copy ElevenLabs' own summary into the room once the call is processed
+ * (found by the room id sent in the SIP header). No webhook to set up in the tenant's workspace.
+ * Tried for two hours after the call ends.
+ */
+async function collectElevenLabsSummaries(now: number): Promise<number> {
+  const { data: rooms } = await db()
+    .from('rooms')
+    .select('id, tenant_id, voice_agent_id, ended_at, summary, mode, status')
+    .eq('mode', 'elevenlabs')
+    .eq('status', 'ended')
+    .is('summary', null)
+    .gte('ended_at', new Date(now - 2 * 3_600_000).toISOString())
+    .lte('ended_at', new Date(now - 20_000).toISOString())
+    .limit(10);
+  let done = 0;
+  for (const room of rooms || []) {
+    const agent = room.voice_agent_id ? await loadVoiceAgent(room.tenant_id, room.voice_agent_id).catch(() => null) : null;
+    const agentId = agent?.provider_state?.elevenlabs?.agent_id;
+    const key = agentId ? await getTenantSecret(room.tenant_id, 'elevenlabs').catch(() => null) : null;
+    if (!agentId || !key) continue;
+    const found = await fetchElevenLabsCallSummary(key, agentId, room.id).catch(() => null);
+    if (!found) continue;
+    await updateRoom(room.id, { summary: found.summary.slice(0, 4000) });
+    done++;
+  }
+  return done;
+}
+
+/** Status callback of an inbound call (set on the number): close turn-based rooms when the caller hangs up. */
+export async function handleCallStatus(conn: Row, p: Record<string, string>) {
+  if (!p.CallSid) return;
+  const { data } = await db().from('room_participants').select(PARTICIPANT_COLUMNS).eq('call_sid', p.CallSid).eq('role', 'customer').limit(1);
+  const part = data?.[0];
+  if (!part || part.tenant_id !== conn.tenant_id) return;
+  await handleParticipantStatus(conn, part.room_id, 'customer', p);
 }
 
 // ---------------------------------------------------------------------------

@@ -147,6 +147,30 @@ function ago(iso: string, now: number): string {
   return `${Math.round(days / 30)} months ago`;
 }
 
+export const NO_HISTORY_BRIEF = 'No earlier conversations with this number.';
+
+/**
+ * A short brief (fits a SIP header, about 600 characters) for a voice agent that must know
+ * the caller from the first second: name on file and the latest conversations.
+ */
+export function contactBrief(h: ContactHistory | null, now = Date.now(), max = 600): string {
+  if (!h || (!h.calls.length && !h.threads.length)) return NO_HISTORY_BRIEF;
+  const parts: string[] = [];
+  if (h.name) parts.push(`Name on file: ${h.name}.`);
+  for (const c of h.calls.slice(0, 2)) {
+    const what = c.summary
+      ? c.summary
+      : c.excerpt.length
+        ? c.excerpt.slice(-4).join(' / ')
+        : c.outcome?.startsWith('not connected')
+          ? 'did not connect'
+          : 'no details kept';
+    parts.push(`${c.direction === 'outbound' ? 'We called them' : 'They called'} ${ago(c.at, now)}: ${clip(what, 260)}`);
+  }
+  if (h.threads.length) parts.push(`Also wrote on ${[...new Set(h.threads.map((t) => t.channel))].join(', ')} (last ${ago(h.threads[0].last_at, now)}).`);
+  return clip(parts.join(' '), max);
+}
+
 /** Text for an agent prompt. Empty when there is no earlier contact. */
 export function contactHistoryText(h: ContactHistory | null, now = Date.now()): string {
   if (!h || (!h.calls.length && !h.threads.length)) return '';

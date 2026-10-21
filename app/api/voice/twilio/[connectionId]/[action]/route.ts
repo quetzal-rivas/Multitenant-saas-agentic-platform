@@ -13,6 +13,7 @@ import {
   handleParticipantStatus,
   handleTranscription,
   handleTurn,
+  handleCallStatus,
 } from '@/lib/services/rooms';
 import { response, say } from '@/lib/rooms/twiml';
 
@@ -78,6 +79,9 @@ export async function POST(req: NextRequest, { params }: Params) {
         return new NextResponse(null, { status: 204 });
       case 'participant':
         await handleParticipantStatus(conn, roomId, q.get('role') || 'customer', p);
+        return new NextResponse(null, { status: 204 });
+      case 'call-status':
+        await handleCallStatus(conn, p);
         return new NextResponse(null, { status: 204 });
       case 'transcription':
         await handleTranscription(conn, roomId, p);

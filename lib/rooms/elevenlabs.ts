@@ -77,6 +77,8 @@ export interface ElevenLabsAgentSpec {
   sipPassword: string;
 }
 
+const newSipIdentifier = () => `cc${crypto.randomBytes(5).toString('hex')}`;
+
 export function newSipCredentials() {
   return { username: `cc${crypto.randomBytes(6).toString('hex')}`, password: crypto.randomBytes(24).toString('base64url') };
 }
@@ -158,7 +160,7 @@ async function syncSteps(key: string, spec: ElevenLabsAgentSpec, next: ElevenLab
   if (!next.agent_id) next.agent_id = (await el<{ agent_id: string }>(key, 'POST', '/v1/convai/agents/create', agentBody)).agent_id;
 
   // 4. The SIP entry our conference dials (identifier + digest credentials).
-  const sipIdentifier = next.sip_identifier ?? `cc${crypto.randomBytes(5).toString('hex')}`;
+  let sipIdentifier = next.sip_identifier ?? newSipIdentifier();
   const trunk = { credentials: { username: spec.sipUsername, password: spec.sipPassword } };
   if (next.phone_number_id) {
     await el(key, 'PATCH', `/v1/convai/phone-numbers/${next.phone_number_id}`, { agent_id: next.agent_id, inbound_trunk_config: trunk }).catch(async (err) => {
@@ -167,15 +169,26 @@ async function syncSteps(key: string, spec: ElevenLabsAgentSpec, next: ElevenLab
     });
   }
   if (!next.phone_number_id) {
-    const created = await el<{ phone_number_id: string }>(key, 'POST', '/v1/convai/phone-numbers', {
-      provider: 'sip_trunk',
-      phone_number: sipIdentifier,
-      label: `Context Control · ${spec.name}`.slice(0, 80),
-      agent_id: next.agent_id,
-      supports_inbound: true,
-      supports_outbound: false,
-      inbound_trunk_config: trunk,
-    });
+    const create = (identifier: string) =>
+      el<{ phone_number_id: string }>(key, 'POST', '/v1/convai/phone-numbers', {
+        provider: 'sip_trunk',
+        phone_number: identifier,
+        label: `Context Control · ${spec.name}`.slice(0, 80),
+        agent_id: next.agent_id,
+        supports_inbound: true,
+        supports_outbound: false,
+        inbound_trunk_config: trunk,
+      });
+    let created: { phone_number_id: string };
+    try {
+      created = await create(sipIdentifier);
+    } catch (err) {
+      // SIP identifiers are unique across ElevenLabs: one left in another workspace (e.g. after
+      // switching ElevenLabs accounts) blocks it. Ours is just a random handle, so pick a new one.
+      if (!(err instanceof ElevenLabsError && err.status === 409)) throw err;
+      sipIdentifier = newSipIdentifier();
+      created = await create(sipIdentifier);
+    }
     next.phone_number_id = created.phone_number_id;
   }
   next.sip_identifier = sipIdentifier;

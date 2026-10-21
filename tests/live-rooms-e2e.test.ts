@@ -64,6 +64,9 @@ async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
       return Response.json({ detail: [{ type: 'missing', loc: ['body', 'type'], msg: 'Field required', input: body }] }, { status: 422 });
     }
     if (url.pathname === '/v1/convai/secrets') return Response.json({ type: 'stored', secret_id: 'sec_1', name: body.name });
+    if (url.pathname === '/v1/convai/phone-numbers' && method === 'POST' && takenSipIds.has(body?.phone_number)) {
+      return Response.json({ detail: { status: 'phone_number_already_exists', message: `Phone number ${body.phone_number} already exists.` } }, { status: 409 });
+    }
     if (url.pathname === '/v1/convai/settings' && method === 'PATCH') {
       if (body?.can_use_mcp_servers === true) elMcpDenied = false;
       return Response.json({ can_use_mcp_servers: !elMcpDenied });
@@ -86,6 +89,7 @@ function twilioSign(url: string, params: Record<string, string>, token = TOKEN) 
 }
 
 let elMcpDenied = false;
+const takenSipIds = new Set<string>();
 async function hook(connId: string, action: string, params: Record<string, string>, query: Record<string, string> = {}, token = TOKEN) {
   const qs = new URLSearchParams(query).toString();
   const url = `${ORIGIN}/api/voice/twilio/${connId}/${action}${qs ? `?${qs}` : ''}`;
@@ -377,6 +381,25 @@ describe('Live Rooms: Twilio rooms, Ear, Voice Front, outbound, turn-based', () 
     holdRuns = true;
     const slow = await hook(conn.id, 'turn', { CallSid: 'CAt', SpeechResult: 'Otra pregunta' }, { room: room.id });
     assert.match(slow.text, /<Say[^>]*>Un momento, por favor\.<\/Say><Redirect method="POST">[^<]*turn\?room=[^<]*poll=/);
+  });
+
+  test('a SIP identifier taken in another ElevenLabs workspace is replaced by a new one', async () => {
+    const agent = await voiceFront();
+    const row = tables.voice_agents.find((v) => v.id === agent.id)!;
+    const old = row.provider_state.elevenlabs.sip_identifier;
+    // Switching ElevenLabs accounts: our ids are unknown there, and the old identifier is still taken.
+    row.provider_state.elevenlabs = { voice_id: null, sip_identifier: old };
+    takenSipIds.add(old);
+    try {
+      const { updateVoiceAgent } = await import('../lib/services/voice-agents');
+      const synced = await updateVoiceAgent(ctx, agent.id, { name: 'Reception', mode: 'elevenlabs', team_id: team, mcp_profile_id: mcpProfile }, ORIGIN);
+      assert.equal(synced.elevenlabs!.ready, true);
+      const now = tables.voice_agents.find((v) => v.id === agent.id)!.provider_state.elevenlabs.sip_identifier;
+      assert.notEqual(now, old);
+      assert.match(now, /^cc[0-9a-f]{10}$/);
+    } finally {
+      takenSipIds.clear();
+    }
   });
 
   test('a Voice Front that failed to sync is not "ready", keeps its old key, and calls fall back to turn-based', async () => {

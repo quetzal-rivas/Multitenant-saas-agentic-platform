@@ -451,6 +451,23 @@ describe('Live Rooms: Twilio rooms, Ear, Voice Front, outbound, turn-based', () 
     assert.ok(!(tables.agent_sessions.find((s) => s.id === fresh.session_id)!.instructions ?? '').includes('Earlier contact'));
   });
 
+  test('Twilio signatures: equivalent URL forms are accepted, a wrong token never is', async () => {
+    const conn = await connect();
+    const send = (signedUrl: string, token = TOKEN) => {
+      const url = `${ORIGIN}/api/voice/twilio/${conn.id}/conference?room=r1&poll=p1&n=1`;
+      const params = { CallSid: 'CAsig', StatusCallbackEvent: 'conference-start' };
+      return TWILIO_HOOK(
+        new NextRequest(url, { method: 'POST', body: new URLSearchParams(params).toString(), headers: { 'content-type': 'application/x-www-form-urlencoded', 'x-twilio-signature': twilioSign(signedUrl, params, token) } }),
+        { params: Promise.resolve({ connectionId: conn.id, action: 'conference' }) }
+      );
+    };
+    const url = `${ORIGIN}/api/voice/twilio/${conn.id}/conference?room=r1&poll=p1&n=1`;
+    assert.notEqual((await send(url)).status, 403);
+    assert.notEqual((await send(url.replace(/&/g, '&amp;'))).status, 403, 'a <Redirect> URL signed as written in the TwiML');
+    assert.equal((await send(url, 'wrong-token')).status, 403);
+    assert.equal((await send(`${ORIGIN}/api/voice/twilio/${conn.id}/conference?room=other`)).status, 403, 'a signature for another URL');
+  });
+
   test('the sweeper closes calls that never connected and fires silence triggers', async () => {
     const conn = await connect();
     const agent = await voiceFront({ triggers: [{ type: 'silence', role: 'customer', seconds: 60 }] });

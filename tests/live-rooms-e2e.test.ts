@@ -402,7 +402,9 @@ describe('Live Rooms: Twilio rooms, Ear, Voice Front, outbound, turn-based', () 
     assert.match(numberCfg.params.get('StatusCallback')!, /\/call-status$/);
 
     const created = elCalls.filter((c) => c.path === '/v1/convai/agents/create').at(-1)!.body;
-    assert.deepEqual(created.conversation_config.agent.prompt.built_in_tools.end_call.params, { system_tool_type: 'end_call' });
+    assert.equal(created.conversation_config.agent.prompt.built_in_tools.end_call, null, "ElevenLabs' end_call is off: hanging up goes through our tool");
+    assert.match(created.conversation_config.agent.prompt.prompt, /contextcontrol_room_hangup/);
+    assert.ok(tables.mcp_api_keys.at(-1)!.tools_whitelist.includes('contextcontrol_room_hangup'), 'the voice key may hang up');
     assert.ok(created.conversation_config.agent.dynamic_variables.dynamic_variable_placeholders.sip_contact_brief);
     assert.match(created.conversation_config.agent.prompt.prompt, /\{\{sip_contact_brief\}\}/);
 
@@ -418,8 +420,18 @@ describe('Live Rooms: Twilio rooms, Ear, Voice Front, outbound, turn-based', () 
     assert.match(decodeURIComponent(sipTo.split('X-Contact-Brief=')[1]), /Quetzal/);
     assert.equal(add.params.get('EndConferenceOnExit'), 'true', 'when the agent hangs up, the call ends');
 
+    // The voice says goodbye and hangs up: we end the conference in Twilio right away.
+    const { setHangupDelayForTests } = await import('../lib/services/rooms');
+    setHangupDelayForTests(0);
+    tables.rooms.find((r) => r.id === room.id)!.provider_room_sid = 'CFq';
+    const voice = { tenantId: TENANT, userId: 'key_voice', authMode: 'api_key', apiKeyId: 'k', scopes: ['mcp:rooms:read', 'mcp:rooms:write'], toolsWhitelist: [] } as any;
+    const hung: any = await executePlatformTool('contextcontrol_room_hangup', { room_id: room.id, reason: 'caller said goodbye' }, voice);
+    assert.equal(hung.room.status, 'ended');
+    assert.ok(twilioCalls.some((c) => c.path === '/Conferences/CFq.json' && c.params.get('Status') === 'completed'), 'the conference is closed in Twilio');
+    assert.match(tables.rooms.find((r) => r.id === room.id)!.end_reason, /the voice agent hung up: caller said goodbye/);
+    setHangupDelayForTests(4000);
+
     // After the call, ElevenLabs' own summary is copied in (found by the room id).
-    tables.rooms.find((r) => r.id === room.id)!.status = 'ended';
     tables.rooms.find((r) => r.id === room.id)!.ended_at = new Date(Date.now() - 60_000).toISOString();
     elSummaries.set(room.id, 'Quetzal called again; he was greeted by name.');
     await sweepRooms();

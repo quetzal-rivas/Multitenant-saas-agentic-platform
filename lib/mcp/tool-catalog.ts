@@ -228,6 +228,13 @@ export const roomContextArgs = z.object({ room_id: roomId }).strict();
 export const roomTranscriptArgs = z
   .object({ room_id: roomId, since_seq: z.number().int().min(0).optional().describe('Return utterances after this sequence number (0 or omitted: from the start).') })
   .strict();
+export const roomHangupArgs = z
+  .object({
+    room_id: roomId,
+    reason: z.string().trim().max(200).optional().describe('Why the call ends, e.g. "caller said goodbye".'),
+  })
+  .strict();
+
 export const roomNoteArgs = z
   .object({
     room_id: roomId,
@@ -569,6 +576,16 @@ export const PLATFORM_TOOL_DEFINITIONS = [
     outputSchema: roomOutput,
   },
   {
+    name: 'contextcontrol_room_hangup',
+    title: 'Hang up the call',
+    description: 'End the live call for everyone. Say your goodbye first: the call ends a few seconds after this is called, so the goodbye is heard. Returns { room }.',
+    requiredScope: 'mcp:rooms:write',
+    sideEffect: 'write',
+    annotations: write(true, true),
+    schema: roomHangupArgs,
+    outputSchema: roomOutput,
+  },
+  {
     name: 'contextcontrol_ask_team',
     title: 'Ask the team',
     description: 'Hand a question or task from the call to the team behind this voice agent (it has the organization\'s tools and knowledge). Waits a few seconds: returns { status: "done", answer } or { status: "working", run_id } (then call contextcontrol_team_answer).',
@@ -721,7 +738,7 @@ export const PLATFORM_TOOL_DEFINITIONS = [
 ] as const satisfies readonly PlatformToolDefinition[];
 
 /** Tools a voice agent's MCP key gets (not place_call). */
-export const ROOM_TOOL_NAMES = ['contextcontrol_room_context', 'contextcontrol_room_transcript', 'contextcontrol_room_note', 'contextcontrol_ask_team', 'contextcontrol_team_answer'] as const;
+export const ROOM_TOOL_NAMES = ['contextcontrol_room_context', 'contextcontrol_room_transcript', 'contextcontrol_room_note', 'contextcontrol_room_hangup', 'contextcontrol_ask_team', 'contextcontrol_team_answer'] as const;
 export const ROOM_SCOPES = ['mcp:rooms:read', 'mcp:rooms:write'] as const;
 
 export type PlatformToolName = (typeof PLATFORM_TOOL_DEFINITIONS)[number]['name'];

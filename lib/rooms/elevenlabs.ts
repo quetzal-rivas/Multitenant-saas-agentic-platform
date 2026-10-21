@@ -146,15 +146,9 @@ async function syncSteps(key: string, spec: ElevenLabsAgentSpec, next: ElevenLab
         prompt: {
           prompt: spec.prompt,
           mcp_server_ids: [next.mcp_server_id],
-          // Lets the agent hang up after saying goodbye (the conference then ends for everyone).
-          built_in_tools: {
-            end_call: {
-              type: 'system',
-              name: 'end_call',
-              description: 'End the call after saying goodbye, when the caller is done or asks to hang up.',
-              params: { system_tool_type: 'end_call' },
-            },
-          },
+          // Hanging up goes through contextcontrol_room_hangup (we end the call in Twilio at once).
+          // ElevenLabs' own end_call only closes its side and leaves the line open for ~30 s.
+          built_in_tools: { end_call: null },
         },
         // Filled per call from SIP headers (X-Room-Id, X-Contact-Brief).
         dynamic_variables: { dynamic_variable_placeholders: { sip_room_id: 'test-room', sip_contact_brief: 'No earlier conversations with this number.' } },
@@ -263,7 +257,7 @@ export function voiceFrontPrompt(p: { name: string; instructions?: string | null
       : '',
     'Use contextcontrol_room_note to flag anything a human should see now (complaints, cancellations, legal threats, urgent requests).',
     'Never invent facts, prices or commitments. If you cannot help, say a person will follow up.',
-    'When the conversation is over (they said goodbye or asked to hang up), say a short goodbye and use end_call.',
+    'When the conversation is over (they said goodbye or asked to hang up), say a short goodbye and then call contextcontrol_room_hangup.',
     p.instructions?.trim() ? `\nAdditional instructions:\n${p.instructions.trim()}` : '',
   ]
     .filter(Boolean)

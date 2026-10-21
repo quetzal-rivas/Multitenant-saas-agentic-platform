@@ -228,14 +228,23 @@ export async function utterancesSince(ctx: Pick<Ctx, 'tenantId'>, id: string, si
 
 /** End a live room (hang up everyone). */
 export async function endRoom(ctx: Pick<Ctx, 'tenantId'>, id: string) {
-  const room = await roomForTenant(ctx.tenantId, id);
+  return hangUpRoom(await roomForTenant(ctx.tenantId, id), 'ended by a user');
+}
+
+async function hangUpRoom(room: Row, reason: string) {
   if (room.status === 'ended' || room.status === 'failed') return presentRoom(room);
-  const { creds } = await requireConnection(ctx.tenantId);
+  const { creds } = await requireConnection(room.tenant_id);
   if (room.provider_room_sid) await twilio.endConference(creds, room.provider_room_sid).catch(() => undefined);
   const { data: parts } = await db().from('room_participants').select('call_sid, left_at').eq('room_id', room.id);
   for (const p of parts || []) if (p.call_sid && !p.left_at) await twilio.hangup(creds, p.call_sid).catch(() => undefined);
-  await finishRoom(room, 'ended by a user');
+  await finishRoom(room, reason);
   return presentRoom({ ...room, status: 'ended' });
+}
+
+/** Seconds the voice's goodbye gets before the call is cut (the tool runs while it is speaking). */
+let HANGUP_DELAY_MS = 4_000;
+export function setHangupDelayForTests(ms: number) {
+  HANGUP_DELAY_MS = ms;
 }
 
 // ---------------------------------------------------------------------------
@@ -647,6 +656,18 @@ export async function roomNoteTool(ctx: Ctx, args: { room_id?: string; text: str
   const room = await roomForTenant(ctx.tenantId, args.room_id);
   const author = ctx.apiKeyId ? 'Voice agent' : ctx.teamId ? 'Team' : 'Agent';
   return { note: await addNote(room, { text: args.text, level: args.level, author }) };
+}
+
+/**
+ * The voice agent ends the call. We cut it ourselves through Twilio (immediate) instead of
+ * waiting for the voice provider to drop its SIP leg, which can take half a minute.
+ */
+export async function roomHangupTool(ctx: Ctx, args: { room_id?: string; reason?: string }) {
+  const room = await roomForTenant(ctx.tenantId, args.room_id);
+  if (room.status === 'ended' || room.status === 'failed') return { room: presentRoom(room) };
+  await new Promise((r) => setTimeout(r, HANGUP_DELAY_MS));
+  const fresh = (await loadRoom(room.id)) ?? room;
+  return { room: await hangUpRoom(fresh, `the voice agent hung up${args.reason ? `: ${args.reason.slice(0, 150)}` : ''}`) };
 }
 
 /** The voice hands a question to its team (runs in the room's instance). */

@@ -61,6 +61,7 @@ const TOOL_HANDLERS: Record<PlatformToolName, (ctx: ToolCtx, args: any) => Promi
   contextcontrol_room_context: rooms.roomContextTool,
   contextcontrol_room_transcript: rooms.roomTranscriptTool,
   contextcontrol_room_note: rooms.roomNoteTool,
+  contextcontrol_room_hangup: rooms.roomHangupTool,
   contextcontrol_ask_team: rooms.askTeamTool,
   contextcontrol_team_answer: (ctx, args) => rooms.teamAnswerTool(ctx, args),
   contextcontrol_place_call: rooms.placeCallTool,

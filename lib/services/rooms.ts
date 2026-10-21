@@ -14,7 +14,7 @@ import { updateSession } from './agent-sessions';
 import { getContextProfile, contextProfileInstructions } from './context-profiles';
 import { getVoiceProfile } from './voice-profiles';
 import { claimRun, dispatchRun, executeRun, getRun, startRun, waitForRun, workerConfigured } from './agent-runs';
-import { credsFor, hasCallCompliance, requireConnection, twilioHookUrl, connectionSecrets } from './telephony';
+import { credsFor, friendly, hasCallCompliance, requireConnection, twilioHookUrl, connectionSecrets } from './telephony';
 import { loadVoiceAgent, voiceAgentSecrets, withinCallingHours } from './voice-agents';
 import { ServiceError, isServiceError } from './errors';
 import { contactBrief, contactHistory, contactHistoryText } from './contact-history';
@@ -336,12 +336,12 @@ async function addVoiceFront(conn: Row, room: Row, agent: Row) {
       sipAuth: secrets.sip_username ? { username: secrets.sip_username, password: secrets.sip_password } : null,
       statusCallback: twilioHookUrl(conn, 'participant', { room: room.id, role: 'agent' }),
       timeLimit: agent.max_minutes * 60,
-      // When the agent hangs up (end_call), the call ends for everyone instead of leaving silence.
+      // When the agent hangs up (contextcontrol_room_hangup), the call ends for everyone instead of leaving silence.
       endConferenceOnExit: true,
     });
     await addParticipantRow(room, { role: 'agent', call_sid: res.call_sid, label: agent.name, address: 'elevenlabs' });
   } catch (err) {
-    await addNote(room, { text: `The AI agent could not join: ${(err as Error).message}`, level: 'alert', author: 'Calls' });
+    await addNote(room, { text: `The AI agent could not join: ${friendly(err)}`, level: 'alert', author: 'Calls' });
   }
 }
 
@@ -612,8 +612,9 @@ export async function placeCall(ctx: Ctx, args: { to: string; voice_agent_id?: s
     await addParticipantRow(room, { role: 'customer', call_sid: call.sid, label: args.to, address: args.to });
     return { room_id: room.id, status: 'ringing' };
   } catch (err) {
-    await finishRoom(room, (err as Error).message, 'failed');
-    throw new ServiceError(`Twilio could not place the call: ${(err as Error).message}`, 'CONFLICT');
+    const why = friendly(err);
+    await finishRoom(room, why, 'failed');
+    throw new ServiceError(`Twilio could not place the call. ${why}`, 'CONFLICT');
   }
 }
 

@@ -2,6 +2,7 @@ import { getSupabaseAdminClient } from '@/lib/supabase';
 import type { AuthContext } from '@/lib/auth/require-auth';
 import { envelopeDecryptSecret, envelopeEncryptSecret, type EncryptedSecretPayload } from '@/lib/secrets/envelope-encryption';
 import { twilio, TwilioError, voiceAccessToken, type TwilioCreds } from '@/lib/rooms/adapters/twilio';
+import { explainTwilioError, twilioErrorText } from '@/lib/rooms/twilio-errors';
 import { createEndpoint, setEndpointSecret } from './inbound';
 import { ServiceError } from './errors';
 
@@ -67,8 +68,12 @@ export async function requireConnection(tenantId: string): Promise<{ conn: Row; 
   return { conn, creds: await credsFor(conn) };
 }
 
-function friendly(err: unknown): string {
-  if (err instanceof TwilioError) return err.status === 401 ? 'Twilio rejected the Account SID / Auth Token.' : err.message;
+/** Twilio errors as concrete next steps (by Twilio's error code). */
+export function friendly(err: unknown): string {
+  if (err instanceof TwilioError) {
+    const code = err.code ?? (err.status === 401 ? 20003 : null);
+    return twilioErrorText(explainTwilioError(code, err.message));
+  }
   return (err as Error)?.message || 'Twilio request failed.';
 }
 

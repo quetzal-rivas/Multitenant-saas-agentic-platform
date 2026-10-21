@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 
-export type LLMProvider = 'anthropic' | 'openai' | 'gemini';
+export type LLMProvider = 'anthropic' | 'openai' | 'gemini' | 'xai';
 
 /**
  * Provider-neutral conversation turn. Assistant turns also keep the provider's raw
@@ -71,7 +71,29 @@ export const DEFAULT_MODELS: Record<LLMProvider, string> = {
   anthropic: 'claude-opus-5-5',
   openai: 'gpt-5',
   gemini: 'gemini-3.8-flash',
+  xai: 'grok-4.7',
 };
+
+/** Models for answers someone is waiting on (live calls), used when rotating to another provider. */
+export const FAST_MODELS: Record<LLMProvider, string> = {
+  anthropic: 'claude-haiku-5-5',
+  openai: 'gpt-5',
+  gemini: 'gemini-3.8-flash',
+  xai: 'grok-4.20-0309-non-reasoning',
+};
+
+/**
+ * Worth trying another provider: quota, rate limits, overload, server errors and timeouts.
+ * Not a bad key or a bad request (another provider would hide a configuration problem).
+ */
+export function isRotatableError(err: unknown): boolean {
+  const name = (err as Error)?.name;
+  if (name === 'TimeoutError' || name === 'AbortError') return true;
+  if (err instanceof Anthropic.RateLimitError || err instanceof Anthropic.InternalServerError || err instanceof Anthropic.APIConnectionError) return true;
+  const message = err instanceof Error ? err.message : String(err);
+  if (/API_KEY_INVALID|API key not valid|Incorrect API key|invalid_api_key|\(401\)|\(403\)/i.test(message)) return false;
+  return /\b(429|500|502|503|504|529)\b|quota|rate.?limit|busy|overload|did not answer|no response within|timed? ?out|ECONNRESET|fetch failed/i.test(message);
+}
 
 /** Group consecutive tool results so each provider gets them in a single turn. */
 function groupToolResults(messages: LLMMessage[]): Array<LLMMessage | LLMMessage[]> {
@@ -277,6 +299,72 @@ async function generateOpenAI(options: LLMGenerateOptions): Promise<LLMGenerateR
     usage: { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens },
     finishReason: toolCalls.length ? 'tool_calls' : choice?.finish_reason === 'length' ? 'length' : 'stop',
     model: data.model,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// xAI Grok (Responses API over fetch; https://docs.x.ai)
+// ---------------------------------------------------------------------------
+
+async function generateXai(options: LLMGenerateOptions): Promise<LLMGenerateResult> {
+  const model = options.model || DEFAULT_MODELS.xai;
+  const input: any[] = [];
+  for (const m of options.messages) {
+    if (m.role === 'system') continue;
+    if (m.role === 'tool') {
+      input.push({ type: 'function_call_output', call_id: m.toolCallId, output: m.content });
+    } else if (m.role === 'assistant') {
+      if (m.content) input.push({ role: 'assistant', content: m.content });
+      for (const tc of m.toolCalls ?? []) input.push({ type: 'function_call', call_id: tc.id, name: tc.name, arguments: JSON.stringify(tc.arguments) });
+    } else {
+      input.push({ role: 'user', content: m.content });
+    }
+  }
+  const payload: any = { model, input, max_output_tokens: options.maxTokens || 16000, store: false };
+  if (options.systemPrompt) payload.instructions = options.systemPrompt;
+  if (options.temperature !== undefined) payload.temperature = options.temperature;
+  if (options.tools?.length) {
+    payload.tools = options.tools.map((t) => ({ type: 'function', name: t.name, description: t.description, parameters: t.parameters }));
+  }
+
+  const res = await fetchWithRetry(() =>
+    fetch('https://api.x.ai/v1/responses', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${options.apiKey}` },
+      body: JSON.stringify(payload),
+      signal: attemptSignal(options.signal, options.attemptTimeoutMs),
+    })
+  );
+  if (!res.ok) {
+    const body = (await res.text()).slice(0, 300);
+    if (res.status === 429) throw new Error(`Rate limited by the provider (xAI 429): ${body}`);
+    throw new Error(`xAI API error (${res.status}): ${body}`);
+  }
+
+  const data = await res.json();
+  let text = '';
+  const toolCalls: NonNullable<LLMGenerateResult['toolCalls']> = [];
+  for (const item of data.output || []) {
+    if (item.type === 'message') {
+      for (const part of item.content || []) if (part.type === 'output_text' && typeof part.text === 'string') text += part.text;
+    } else if (item.type === 'function_call') {
+      let args: Record<string, any> = {};
+      try {
+        args = JSON.parse(item.arguments || '{}');
+      } catch {
+        args = {};
+      }
+      toolCalls.push({ id: item.call_id || item.id, name: item.name, arguments: args });
+    }
+  }
+  const inputTokens = data.usage?.input_tokens || 0;
+  const outputTokens = data.usage?.output_tokens || 0;
+  return {
+    text,
+    toolCalls: toolCalls.length ? toolCalls : undefined,
+    usage: { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens },
+    finishReason: toolCalls.length ? 'tool_calls' : data.incomplete_details?.reason === 'max_output_tokens' ? 'length' : 'stop',
+    model: data.model || model,
   };
 }
 
@@ -495,6 +583,8 @@ export async function generateLLMResponse(options: LLMGenerateOptions): Promise<
       return generateOpenAI(options);
     case 'gemini':
       return generateGemini(options);
+    case 'xai':
+      return generateXai(options);
     default:
       throw new Error(`Unsupported LLM provider: ${options.provider}`);
   }

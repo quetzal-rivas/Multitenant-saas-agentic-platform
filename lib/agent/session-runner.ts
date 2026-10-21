@@ -18,7 +18,7 @@ import { functionToolName } from '@/lib/functions/function-spec';
 import { connectorToolsFor, fetchUrlDef, runConnectorTool, webSearchDef } from '@/lib/services/connections';
 import { FETCH_URL_TOOL } from '@/lib/connectors/fetch-url';
 import { emitRunEvent } from './supervisor-graph';
-import { generateLLMResponse, type LLMMessage, type LLMToolDefinition } from './providers/llm-adapter';
+import { DEFAULT_MODELS, FAST_MODELS, generateLLMResponse, isRotatableError, type LLMMessage, type LLMProvider, type LLMToolDefinition } from './providers/llm-adapter';
 
 export const MAX_AGENT_STEPS = 15;
 /** Steps a worker may take per delegated task (workers cannot delegate further). */
@@ -247,8 +247,12 @@ export interface TurnControl {
 
 /** Per-attempt model timeout during live calls (normal runs keep the adapter default). */
 export const FAST_ATTEMPT_TIMEOUT_MS = 12_000;
-/** A live call never waits longer than this for one model answer, across all fallback models. */
-export const FAST_TOTAL_TIMEOUT_MS = 20_000;
+/** A live call never waits longer than this for one model answer, across models and providers. */
+export const FAST_TOTAL_TIMEOUT_MS = 25_000;
+/** During a live call, one provider gets this long before the next provider is tried. */
+export const FAST_PROVIDER_BUDGET_MS = 10_000;
+/** Order in which other providers with a stored key take over (the instance's own provider goes first). */
+export const PROVIDER_ROTATION: LLMProvider[] = ['anthropic', 'openai', 'xai', 'gemini'];
 const fastOptions = () => ({ reasoning: 'low' as const, attemptTimeoutMs: FAST_ATTEMPT_TIMEOUT_MS, signal: AbortSignal.timeout(FAST_TOTAL_TIMEOUT_MS) });
 
 async function runToolLoop(opts: {
@@ -458,6 +462,45 @@ export async function runTurn(
     );
   }
 
+  /**
+   * The instance's provider first; if it is out of quota, overloaded or too slow, the same
+   * request goes to the next provider that has a key (Claude, OpenAI, Grok, Gemini). Each
+   * provider ignores the others' internal content, so switching mid-conversation is safe.
+   */
+  let fallbacks: Array<{ provider: LLMProvider; apiKey: string }> | null = null;
+  const generateRotating: typeof generate = async (o) => {
+    const attempt = (opts: Parameters<typeof generate>[0]) => {
+      if (!control.fast) return generate(opts);
+      const budget = AbortSignal.timeout(FAST_PROVIDER_BUDGET_MS);
+      return generate({ ...opts, signal: opts.signal ? AbortSignal.any([opts.signal, budget]) : budget });
+    };
+    try {
+      return await attempt(o);
+    } catch (err) {
+      if (!isRotatableError(err) || o.signal?.aborted) throw err;
+      if (!fallbacks) {
+        fallbacks = [];
+        for (const p of PROVIDER_ROTATION) {
+          if (p === provider) continue;
+          const key = await getSecret(ctx.tenantId, p).catch(() => null);
+          if (key) fallbacks.push({ provider: p, apiKey: key });
+        }
+      }
+      let last = err;
+      for (const fb of fallbacks) {
+        if (o.signal?.aborted) break;
+        try {
+          console.warn(`[session-runner] ${provider} failed (${(last as Error)?.message?.slice(0, 120)}); trying ${fb.provider}`);
+          return await attempt({ ...o, provider: fb.provider, apiKey: fb.apiKey, model: (control.fast ? FAST_MODELS : DEFAULT_MODELS)[fb.provider] });
+        } catch (e) {
+          last = e;
+          if (!isRotatableError(e)) continue;
+        }
+      }
+      throw last;
+    }
+  };
+
   const saved = control.saved ?? null;
   const previous = saved ? null : await latestCheckpoint(ctx, session.id);
   const previousCheckpointId = saved ? saved.previousCheckpointId : previous?.id || null;
@@ -579,7 +622,7 @@ export async function runTurn(
   }) =>
     runToolLoop({
       ...opts,
-      generate,
+      generate: generateRotating,
       provider,
       apiKey,
       usage,

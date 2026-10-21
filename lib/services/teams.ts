@@ -1,10 +1,11 @@
 import { getSupabaseAdminClient } from '@/lib/supabase';
 import type { AuthContext } from '@/lib/auth/require-auth';
-import { DEFAULT_MODELS } from '@/lib/agent/providers/llm-adapter';
+import type { ProviderMode } from '@/lib/agent/providers/registry';
 import { nextRun, type HeartbeatSchedule } from '@/lib/agent/heartbeat-schedule';
 import { teamSpecSchema, workerSlug, type TeamSpec } from '@/lib/agent/team-spec';
 export { teamSpecSchema, workerSlug, MAX_TEAM_WORKERS, type TeamSpec } from '@/lib/agent/team-spec';
-import { configuredProviders, createSession, LLM_PROVIDERS } from './agent-sessions';
+import { createSession, resolveAgentLlm } from './agent-sessions';
+import { assertAgentProvider } from './llm-providers';
 import { getContextProfile } from './context-profiles';
 import { getProfile } from './profiles';
 import { getVoiceProfile } from './voice-profiles';
@@ -13,8 +14,8 @@ import { ServiceError } from './errors';
 type Ctx = Pick<AuthContext, 'tenantId' | 'userId' | 'authMode' | 'apiKeyId'>;
 
 const TEAM_COLUMNS =
-  'id, name, description, provider, model, routing_strategy, supervisor_instructions, supervisor_context_profile_id, supervisor_mcp_profile_id, supervisor_tools, voice_profile_id, heartbeat_enabled, heartbeat_goal, heartbeat_schedule, heartbeat_max_runs_per_day, heartbeat_wake_when, heartbeat_session_id, heartbeat_next_run_at, heartbeat_last_run_at, heartbeat_last_status, heartbeat_last_error, heartbeat_runs_day, heartbeat_runs_today, created_at, updated_at';
-const WORKER_COLUMNS = 'id, name, slug, role, instructions, context_profile_id, mcp_profile_id, tools, model, position';
+  'id, name, description, provider, model, provider_mode, routing_strategy, supervisor_instructions, supervisor_context_profile_id, supervisor_mcp_profile_id, supervisor_tools, voice_profile_id, heartbeat_enabled, heartbeat_goal, heartbeat_schedule, heartbeat_max_runs_per_day, heartbeat_wake_when, heartbeat_session_id, heartbeat_next_run_at, heartbeat_last_run_at, heartbeat_last_status, heartbeat_last_error, heartbeat_runs_day, heartbeat_runs_today, created_at, updated_at';
+const WORKER_COLUMNS = 'id, name, slug, role, instructions, context_profile_id, mcp_profile_id, tools, model, provider, provider_mode, position';
 
 export interface TeamWorker {
   id: string;
@@ -26,6 +27,9 @@ export interface TeamWorker {
   mcp_profile_id: string | null;
   tools: string[];
   model: string | null;
+  /** Own provider and mode; null = same as the team. */
+  provider: string | null;
+  provider_mode: ProviderMode | null;
   position: number;
 }
 
@@ -33,8 +37,9 @@ export interface AgentTeam {
   id: string;
   name: string;
   description: string | null;
-  provider: (typeof LLM_PROVIDERS)[number];
+  provider: string;
   model: string;
+  provider_mode: ProviderMode;
   routing_strategy: 'supervisor_router';
   supervisor_instructions: string | null;
   supervisor_context_profile_id: string | null;
@@ -63,7 +68,7 @@ export function toTeamSpec(team: AgentTeam): TeamSpec {
   return {
     name: team.name,
     description: team.description,
-    llm: { provider: team.provider, model: team.model },
+    llm: team.provider_mode === 'auto' ? { mode: 'auto' } : { provider: team.provider, model: team.model, mode: team.provider_mode ?? 'preferred' },
     routing_strategy: team.routing_strategy,
     supervisor: {
       instructions: team.supervisor_instructions,
@@ -79,6 +84,8 @@ export function toTeamSpec(team: AgentTeam): TeamSpec {
       mcp_profile_id: w.mcp_profile_id,
       tools: w.tools,
       model: w.model,
+      provider: w.provider ?? null,
+      provider_mode: w.provider_mode ?? null,
     })),
     heartbeat: {
       enabled: team.heartbeat_enabled,
@@ -92,12 +99,9 @@ export function toTeamSpec(team: AgentTeam): TeamSpec {
 }
 
 async function assertSpecReferences(ctx: Ctx, spec: TeamSpec) {
-  const providers = await configuredProviders(ctx.tenantId);
-  if (!providers.includes(spec.llm.provider)) {
-    throw new ServiceError(
-      `No ${spec.llm.provider} API key is stored for this organization. Add one in Account & Billing → LLM keys first.`,
-      'CONFLICT'
-    );
+  // Team and workers: each provider must exist here and (unless automatic) have a key.
+  for (const w of spec.workers) {
+    if (w.provider) await assertAgentProvider(ctx.tenantId, { provider: w.provider, mode: w.provider_mode ?? 'preferred' });
   }
   const contextIds = new Set([spec.supervisor.context_profile_id, ...spec.workers.map((w) => w.context_profile_id)].filter(Boolean) as string[]);
   const mcpIds = new Set([spec.supervisor.mcp_profile_id, ...spec.workers.map((w) => w.mcp_profile_id)].filter(Boolean) as string[]);
@@ -115,7 +119,7 @@ export function stableJson(value: unknown): string {
   return JSON.stringify(value ?? null);
 }
 
-function teamRow(spec: TeamSpec, existing?: AgentTeam | null) {
+function teamRow(spec: TeamSpec, llm: { provider: string; model: string; provider_mode: ProviderMode }, existing?: AgentTeam | null) {
   const schedule = spec.heartbeat.enabled ? spec.heartbeat.schedule ?? null : null;
   const scheduleChanged =
     !existing ||
@@ -124,8 +128,9 @@ function teamRow(spec: TeamSpec, existing?: AgentTeam | null) {
   return {
     name: spec.name,
     description: spec.description ?? null,
-    provider: spec.llm.provider,
-    model: spec.llm.model || DEFAULT_MODELS[spec.llm.provider],
+    provider: llm.provider,
+    model: llm.model,
+    provider_mode: llm.provider_mode,
     routing_strategy: spec.routing_strategy,
     supervisor_instructions: spec.supervisor.instructions ?? null,
     supervisor_context_profile_id: spec.supervisor.context_profile_id ?? null,
@@ -162,6 +167,8 @@ async function replaceWorkers(ctx: Ctx, teamId: string, spec: TeamSpec) {
       mcp_profile_id: w.mcp_profile_id ?? null,
       tools: w.tools,
       model: w.model ?? null,
+      provider: w.provider ?? null,
+      provider_mode: w.provider_mode ?? null,
       position,
     }))
   );
@@ -207,9 +214,10 @@ export async function getTeam(ctx: Ctx, id: string): Promise<AgentTeam> {
 export async function createTeam(ctx: Ctx, raw: unknown): Promise<AgentTeam> {
   const spec = teamSpecSchema.parse(raw);
   await assertSpecReferences(ctx, spec);
+  const llm = await resolveAgentLlm(ctx.tenantId, { provider: spec.llm.provider, model: spec.llm.model, provider_mode: spec.llm.mode });
   const { data, error } = await getSupabaseAdminClient()
     .from('agent_teams')
-    .insert({ tenant_id: ctx.tenantId, created_by: ctx.authMode === 'session' ? ctx.userId : null, ...teamRow(spec) })
+    .insert({ tenant_id: ctx.tenantId, created_by: ctx.authMode === 'session' ? ctx.userId : null, ...teamRow(spec, llm) })
     .select('id')
     .single();
   if (error?.code === '23505') throw new ServiceError(`A team named '${spec.name}' already exists.`, 'CONFLICT');
@@ -222,9 +230,10 @@ export async function updateTeam(ctx: Ctx, id: string, raw: unknown): Promise<Ag
   const spec = teamSpecSchema.parse(raw);
   const existing = await getTeam(ctx, id);
   await assertSpecReferences(ctx, spec);
+  const llm = await resolveAgentLlm(ctx.tenantId, { provider: spec.llm.provider, model: spec.llm.model, provider_mode: spec.llm.mode });
   const { error } = await getSupabaseAdminClient()
     .from('agent_teams')
-    .update(teamRow(spec, existing))
+    .update(teamRow(spec, llm, existing))
     .eq('id', id)
     .eq('tenant_id', ctx.tenantId);
   if (error?.code === '23505') throw new ServiceError(`A team named '${spec.name}' already exists.`, 'CONFLICT');
@@ -250,7 +259,7 @@ export async function createTeamSession(ctx: Ctx, teamId: string, name?: string)
   const team = await getTeam(ctx, teamId);
   return createSession(
     ctx,
-    { name: name || `${team.name} · ${new Date().toISOString().slice(0, 16).replace('T', ' ')}`, provider: team.provider, model: team.model, team_id: team.id },
+    { name: name || `${team.name} · ${new Date().toISOString().slice(0, 16).replace('T', ' ')}`, provider: team.provider, model: team.model, provider_mode: team.provider_mode ?? 'preferred', team_id: team.id },
   );
 }
 

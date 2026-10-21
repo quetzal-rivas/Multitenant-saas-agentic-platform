@@ -72,7 +72,7 @@ describe('Agent Studio end-to-end (fake PostgREST, scripted model)', () => {
   });
 
   test('instance creation validates provider key and tenant-owned attachments', async () => {
-    await assert.rejects(createSession(ctxA, { name: 'x', provider: 'openai' }), /No openai API key/);
+    await assert.rejects(createSession(ctxA, { name: 'x', provider: 'openai' }), /No OpenAI API key/);
     await assert.rejects(createSession(ctxA, { name: 'x', provider: 'anthropic', mcp_profile_id: profileB }), /not found/i);
     await assert.rejects(createSession(ctxA, { name: 'x', provider: 'anthropic', allowed_tools: ['drop_tables'] }));
   });
@@ -181,14 +181,14 @@ describe('Agent Studio end-to-end (fake PostgREST, scripted model)', () => {
     };
     await assert.rejects(
       runSessionTurn(ctxA, sessionId, 'hi', { generate: failing as any, getSecret }),
-      (err: any) => err.statusCode === 502 && /rejected by the provider.*Account & Billing → LLM keys/.test(err.message)
+      (err: any) => err.statusCode === 502 && /rejected by the provider.*Account & Billing → LLM providers/.test(err.message)
     );
   });
 
   test('missing BYOK key and runaway tool loops are handled', async () => {
     await assert.rejects(
       runSessionTurn(ctxA, sessionId, 'hi', { generate: scriptedModel([]).generate, getSecret: async () => null }),
-      /No anthropic API key/
+      /No Anthropic \(Claude\) API key/
     );
 
     const loopSteps = Array.from({ length: MAX_AGENT_STEPS }, (_, i) => () => ({

@@ -255,7 +255,7 @@ const NewFunctionModal: React.FC<{
   const [language, setLanguage] = useState<Language>('python');
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [providers, setProviders] = useState<Array<{ id: string; configured: boolean }>>([]);
+  const [providers, setProviders] = useState<Array<{ id: string; label: string; configured: boolean; enabled: boolean }>>([]);
   const [provider, setProvider] = useState('');
   const [draft, setDraft] = useState<Draft | null>(null);
   const [busy, setBusy] = useState(false);
@@ -263,11 +263,12 @@ const NewFunctionModal: React.FC<{
 
   useEffect(() => {
     if (mode !== 'ai') return;
-    api<{ providers: Array<{ id: string; configured: boolean }> }>('/api/v1/llm-providers')
+    api<{ providers: Array<{ id: string; label: string; configured: boolean; enabled: boolean }> }>('/api/v1/llm-providers')
       .then(({ providers: list }) => {
-        const ready = list.filter((p) => p.configured);
+        // Already in the organization's order; the first one that is on and has a key is the default.
+        const ready = list.filter((p) => p.configured && p.enabled);
         setProviders(ready);
-        setProvider(ready.find((p) => p.id === 'gemini')?.id ?? ready[0]?.id ?? '');
+        setProvider(ready[0]?.id ?? '');
       })
       .catch(() => setProviders([]));
   }, [mode]);
@@ -378,10 +379,10 @@ const NewFunctionModal: React.FC<{
             <div className="flex items-center justify-between gap-3">
               {providers.length > 0 ? (
                 <select className="bg-zinc-900 border border-zinc-700 rounded-md px-2 py-1.5 text-xs" value={provider} onChange={(e) => setProvider(e.target.value)}>
-                  {providers.map((p) => <option key={p.id} value={p.id}>{p.id}</option>)}
+                  {providers.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
                 </select>
               ) : (
-                <span className="text-xs text-amber-400">No LLM key stored. Add one in Account &amp; Billing → LLM keys.</span>
+                <span className="text-xs text-amber-400">No LLM provider is on with a key. Add or turn one on in Account &amp; Billing → LLM providers.</span>
               )}
               <button
                 disabled={busy || description.trim().length < 5 || providers.length === 0}

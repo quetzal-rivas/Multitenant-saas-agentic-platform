@@ -6,8 +6,7 @@ import { AGENT_SCOPES, PLATFORM_TOOL_DEFINITIONS, canUseWebSearch, getAuthorized
 import { WEB_SEARCH_TOOL } from '@/lib/connectors/registry';
 import { webSearchProvider } from '@/lib/connectors/web-search';
 import { FETCH_URL_TOOL } from '@/lib/connectors/fetch-url';
-import { DEFAULT_MODELS } from '@/lib/agent/providers/llm-adapter';
-import { archiveSession, configuredProviders, createSession, latestCheckpoint, listSessions, toTranscript, updateSession } from './agent-sessions';
+import { archiveSession, createSession, latestCheckpoint, listSessions, toTranscript, updateSession } from './agent-sessions';
 import { createTeamSession, getTeam, listTeams } from './teams';
 import { cancelRun, claimRun, dispatchRun, executeRun, messageRun, resumeRuns, startRun, stopRuns, workerConfigured } from './agent-runs';
 import { orgAgentState } from './agent-limits';
@@ -106,18 +105,18 @@ export async function createAgent(ctx: Ctx, args: z.infer<typeof createAgentArgs
   }
   if (refused.length) throw new ServiceError(`These tools cannot be given to the agent: ${refused.join('; ')}.`, 'INVALID');
   const tools = requested;
-  const provider = args.provider ?? (await configuredProviders(ctx.tenantId))[0];
-  if (!provider) throw new ServiceError('No LLM key is stored for this organization. Add one in Account & Billing → LLM keys.', 'CONFLICT');
+  // Provider, model and mode are validated against the organization (its own providers included).
   const session = await createSession(ctx, {
     name: args.name,
-    provider,
-    model: args.model ?? DEFAULT_MODELS[provider],
+    ...(args.provider ? { provider: args.provider } : {}),
+    ...(args.model ? { model: args.model } : {}),
+    ...(args.provider_mode ? { provider_mode: args.provider_mode } : {}),
     allowed_tools: tools,
     instructions: args.instructions ?? null,
     mcp_profile_id: args.mcp_profile_id ?? null,
     context_profile_id: args.context_profile_id ?? null,
   });
-  return { agent: { agent_id: session.id, name: session.name, kind: 'agent', provider, model: session.model, tools } };
+  return { agent: { agent_id: session.id, name: session.name, kind: 'agent', provider: session.provider, model: session.model, provider_mode: session.provider_mode, tools } };
 }
 
 export async function archiveAgent(ctx: Ctx, args: { agent_id: string }) {

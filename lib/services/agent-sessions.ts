@@ -5,7 +5,9 @@ import { z } from 'zod';
 import { getSupabaseAdminClient } from '@/lib/supabase';
 import type { AuthContext } from '@/lib/auth/require-auth';
 import { listTenantSecrets } from '@/lib/secrets/secrets-service';
-import { DEFAULT_MODELS, type LLMMessage, type LLMProvider } from '@/lib/agent/providers/llm-adapter';
+import { type LLMMessage, type LLMProvider } from '@/lib/agent/providers/llm-adapter';
+import { PROVIDER_ID_PATTERN, PROVIDER_MODES, type ProviderMode } from '@/lib/agent/providers/registry';
+import { assertAgentProvider, providerDef, usableProviders } from './llm-providers';
 import { PLATFORM_TOOL_DEFINITIONS } from '@/lib/mcp/tool-catalog';
 import { getContextProfile } from './context-profiles';
 import { getProfile } from './profiles';
@@ -14,17 +16,21 @@ import { ServiceError } from './errors';
 
 type Ctx = Pick<AuthContext, 'tenantId' | 'userId' | 'authMode' | 'apiKeyId'>;
 
-export const LLM_PROVIDERS = ['anthropic', 'openai', 'gemini'] as const;
 // Platform tools, plus the web tools: web_search (through the organization's own LLM key) and fetch_url.
 const toolNames: [string, ...string[]] = [WEB_SEARCH_TOOL, FETCH_URL_TOOL, ...PLATFORM_TOOL_DEFINITIONS.map((t) => t.name)];
 
 /** Read-only tools an instance gets when none are chosen explicitly. */
 export const DEFAULT_SESSION_TOOLS = PLATFORM_TOOL_DEFINITIONS.filter((t) => t.sideEffect === 'read').map((t) => t.name);
 
+const providerId = z.string().trim().regex(PROVIDER_ID_PATTERN);
+
 export const createSessionBody = z.object({
   name: z.string().trim().min(1).max(120),
-  provider: z.enum(LLM_PROVIDERS),
+  /** Omit (or use provider_mode "auto") to follow the organization's provider order. */
+  provider: providerId.optional(),
   model: z.string().trim().min(1).max(120).optional(),
+  /** auto: organization order · preferred: this provider first, then rotation · locked: only this provider. */
+  provider_mode: z.enum(PROVIDER_MODES).optional(),
   mcp_profile_id: z.string().uuid().nullable().optional(),
   context_profile_id: z.string().uuid().nullable().optional(),
   allowed_tools: z.array(z.enum(toolNames)).max(50).optional(),
@@ -33,10 +39,12 @@ export const createSessionBody = z.object({
   instructions: z.string().trim().max(8000).nullable().optional(),
 }).strict();
 
-// Provider and model are fixed once a conversation exists: replaying one provider's
-// turns into another loses tool-call structure and reasoning state.
+// Changing provider mid-conversation is safe: each provider ignores the others' internal content.
 export const updateSessionBody = z.object({
   name: z.string().trim().min(1).max(120).optional(),
+  provider: providerId.optional(),
+  model: z.string().trim().min(1).max(120).optional(),
+  provider_mode: z.enum(PROVIDER_MODES).optional(),
   mcp_profile_id: z.string().uuid().nullable().optional(),
   context_profile_id: z.string().uuid().nullable().optional(),
   allowed_tools: z.array(z.enum(toolNames)).max(50).optional(),
@@ -51,7 +59,7 @@ export const forkSessionBody = z.object({
 }).strict();
 
 const SESSION_COLUMNS =
-  'id, name, agent_type, team_id, provider, model, mcp_profile_id, context_profile_id, voice_profile_id, instructions, created_by_key, allowed_tools, forked_from_checkpoint, created_at, last_active_at';
+  'id, name, agent_type, team_id, provider, model, provider_mode, mcp_profile_id, context_profile_id, voice_profile_id, instructions, created_by_key, allowed_tools, forked_from_checkpoint, created_at, last_active_at';
 const CHECKPOINT_SUMMARY_COLUMNS =
   'id, checkpoint_id, session_id, parent_id, step_index, user_message, assistant_message, tools_executed, usage, metadata, created_at';
 
@@ -66,6 +74,8 @@ export interface AgentSession {
   created_by_key?: string | null;
   provider: LLMProvider;
   model: string;
+  /** auto: organization order · preferred: this provider first · locked: only this provider. */
+  provider_mode: ProviderMode;
   mcp_profile_id: string | null;
   context_profile_id: string | null;
   allowed_tools: string[];
@@ -74,10 +84,20 @@ export interface AgentSession {
   last_active_at: string;
 }
 
-/** Providers this tenant has stored a BYOK key for. */
+/** Providers this organization can use now (turned on, with a key), in its order. */
 export async function configuredProviders(tenantId: string): Promise<LLMProvider[]> {
-  const secrets = await listTenantSecrets(tenantId);
-  return LLM_PROVIDERS.filter((p) => secrets.some((s) => s.provider === p));
+  return (await usableProviders(tenantId)).map((p) => p.id);
+}
+
+/** Resolve provider, model and mode for a new or edited agent, validated against the organization. */
+export async function resolveAgentLlm(tenantId: string, input: { provider?: string | null; model?: string | null; provider_mode?: ProviderMode | null }) {
+  const mode: ProviderMode = input.provider_mode ?? (input.provider ? 'preferred' : 'auto');
+  await assertAgentProvider(tenantId, { provider: input.provider, mode });
+  // Auto agents still store a provider (the organization's first) for display and old clients.
+  const provider = input.provider || (await usableProviders(tenantId))[0]?.id;
+  const def = provider ? await providerDef(tenantId, provider) : null;
+  if (!provider || !def) throw new ServiceError('No LLM provider is on with a key. Add or turn one on in Account & Billing → LLM providers.', 'CONFLICT');
+  return { provider, model: input.model || def.defaultModel, provider_mode: mode };
 }
 
 async function assertAttachments(ctx: Ctx, mcpProfileId?: string | null, contextProfileId?: string | null) {
@@ -112,13 +132,10 @@ export async function getSession(ctx: Ctx, id: string): Promise<AgentSession> {
 
 export async function createSession(ctx: Ctx, raw: unknown, extra: { forkedFrom?: string } = {}) {
   const body = createSessionBody.parse(raw);
-  const providers = await configuredProviders(ctx.tenantId);
-  if (!providers.includes(body.provider)) {
-    throw new ServiceError(
-      `No ${body.provider} API key is stored for this organization. Add one in Account & Billing → LLM keys first.`,
-      'CONFLICT'
-    );
-  }
+  // A team's instance runs on the team's providers; a single agent on its own.
+  const llm = body.team_id
+    ? { provider: body.provider || 'anthropic', model: body.model || 'team', provider_mode: body.provider_mode ?? ('preferred' as ProviderMode) }
+    : await resolveAgentLlm(ctx.tenantId, body);
   await assertAttachments(ctx, body.mcp_profile_id, body.context_profile_id);
   if (body.team_id) {
     const { data: team } = await getSupabaseAdminClient()
@@ -138,8 +155,9 @@ export async function createSession(ctx: Ctx, raw: unknown, extra: { forkedFrom?
       agent_type: body.team_id ? 'team' : 'single',
       team_id: body.team_id || null,
       name: body.name,
-      provider: body.provider,
-      model: body.model || DEFAULT_MODELS[body.provider],
+      provider: llm.provider,
+      model: llm.model,
+      provider_mode: llm.provider_mode,
       mcp_profile_id: body.mcp_profile_id || null,
       context_profile_id: body.context_profile_id || null,
       allowed_tools: body.team_id ? [] : body.allowed_tools ?? DEFAULT_SESSION_TOOLS,
@@ -162,6 +180,19 @@ export async function updateSession(ctx: Ctx, id: string, raw: unknown) {
 
   const patch: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(body)) if (value !== undefined) patch[key] = value;
+  if (body.provider !== undefined || body.model !== undefined || body.provider_mode !== undefined) {
+    const current = await getSession(ctx, id);
+    const changingProvider = body.provider !== undefined && body.provider !== current.provider;
+    Object.assign(
+      patch,
+      await resolveAgentLlm(ctx.tenantId, {
+        provider: body.provider ?? current.provider,
+        // A new provider gets its default model unless one is given.
+        model: body.model ?? (changingProvider ? null : current.model),
+        provider_mode: body.provider_mode ?? current.provider_mode,
+      })
+    );
+  }
   if (Object.keys(patch).length === 0) throw new ServiceError('Nothing to update.', 'INVALID');
 
   const { data, error } = await getSupabaseAdminClient()

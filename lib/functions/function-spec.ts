@@ -46,7 +46,8 @@ export const draftRequestSchema = z
   .object({
     description: z.string().trim().min(5).max(4000),
     language: z.enum(FUNCTION_LANGUAGES),
-    provider: z.enum(['anthropic', 'openai', 'gemini']).optional(),
+    /** Any provider of the organization (built-in or its own); default: its order. */
+    provider: z.string().trim().regex(/^[a-z0-9_-]{1,40}$/).optional(),
   })
   .strict();
 
@@ -55,7 +56,7 @@ export const fixRequestSchema = z
     error: z.string().trim().min(1).max(8000),
     input: z.unknown().optional(),
     code: z.string().min(1).max(MAX_CODE_CHARS).optional().describe('Current editor code; defaults to the saved code.'),
-    provider: z.enum(['anthropic', 'openai', 'gemini']).optional(),
+    provider: z.string().trim().regex(/^[a-z0-9_-]{1,40}$/).optional(),
   })
   .strict();
 

@@ -1,7 +1,9 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
 import { DEFAULT_MODELS, geminiModelChain, type LLMProvider } from '@/lib/agent/providers/llm-adapter';
-import { getTenantSecret, listTenantSecrets } from '@/lib/secrets/secrets-service';
+import { getTenantSecret, type BYOKProvider } from '@/lib/secrets/secrets-service';
+import { secretNameFor } from '@/lib/agent/providers/registry';
+import { listOrgProviders } from '@/lib/services/llm-providers';
 import { ServiceError } from '@/lib/services/errors';
 
 /**
@@ -19,8 +21,9 @@ export interface WebSearchResult {
   provider: SearchProvider;
 }
 
-export type SearchProvider = LLMProvider | 'xai';
-const PREFERENCE: SearchProvider[] = ['gemini', 'anthropic', 'openai', 'xai'];
+/** Providers whose own web search we can call. */
+export type SearchProvider = 'gemini' | 'anthropic' | 'openai' | 'xai';
+const SEARCH_CAPABLE: SearchProvider[] = ['gemini', 'anthropic', 'openai', 'xai'];
 // Non-reasoning: a search answer does not need long thinking, and speed matters inside agent runs.
 const XAI_SEARCH_MODEL = 'grok-4.20-0309-non-reasoning';
 
@@ -33,10 +36,11 @@ export function resetWebSearchCooldownForTests() {
 }
 const INSTRUCTION = 'Search the web and answer concisely with the key facts. Mention dates when relevant.';
 
-/** Providers with a stored key, in the order web search tries them. */
+/** Search-capable providers that are on and have a key, in the organization's order. */
 export async function webSearchProviders(tenantId: string): Promise<SearchProvider[]> {
-  const secrets = await listTenantSecrets(tenantId);
-  return PREFERENCE.filter((p) => secrets.some((s) => s.provider === p));
+  return (await listOrgProviders(tenantId))
+    .filter((p) => p.enabled && p.configured && SEARCH_CAPABLE.includes(p.id as SearchProvider))
+    .map((p) => p.id as SearchProvider);
 }
 
 export async function webSearchProvider(tenantId: string): Promise<SearchProvider | null> {
@@ -168,14 +172,14 @@ const RUNNERS: Record<SearchProvider, (apiKey: string, query: string, signal: Ab
 export async function webSearch(tenantId: string, args: unknown): Promise<WebSearchResult> {
   const { query } = webSearchArgs.parse(args ?? {});
   const providers = await webSearchProviders(tenantId);
-  if (!providers.length) throw new ServiceError('Web search needs a Gemini, Claude, OpenAI or xAI (Grok) key. Add one in Account & Billing → LLM keys.', 'CONFLICT');
+  if (!providers.length) throw new ServiceError('Web search needs a Gemini, Claude, OpenAI or Grok (xAI) key that is turned on. Add one in Account & Billing → LLM providers.', 'CONFLICT');
   const signal = AbortSignal.timeout(WEB_SEARCH_DEADLINE_MS);
   const failures: string[] = [];
   const now = Date.now();
   // Skip providers in cooldown, unless every provider is (then try them all again).
   const ready = providers.filter((p) => (cooledDown.get(`${tenantId}:${p}`) ?? 0) <= now);
   for (const provider of ready.length ? ready : providers) {
-    const apiKey = await getTenantSecret(tenantId, provider);
+    const apiKey = await getTenantSecret(tenantId, secretNameFor(provider) as BYOKProvider);
     if (!apiKey) continue;
     try {
       return { ...(await RUNNERS[provider](apiKey, query, signal)), provider };

@@ -1,20 +1,48 @@
 export const dynamic = 'force-dynamic';
 
 import { NextRequest, NextResponse } from 'next/server';
-import { requireAuth } from '@/lib/auth/require-auth';
+import { requireAuth, requireRole } from '@/lib/auth/require-auth';
 import { errorResponse } from '@/lib/http/route-errors';
-import { DEFAULT_MODELS } from '@/lib/agent/providers/llm-adapter';
-import { LLM_PROVIDERS, configuredProviders } from '@/lib/services/agent-sessions';
+import { PROVIDER_PRESETS } from '@/lib/agent/providers/registry';
+import { agentsLockedTo, createCustomProvider, listOrgProviders, orgLlmSettings, setLlmSettings } from '@/lib/services/llm-providers';
 
-/** Which BYOK LLM providers this organization has keys for. Never returns secrets. */
+/**
+ * The organization's LLM providers (built-in and its own) in its order, with key status,
+ * on/off, and the agents locked to each. Never returns keys.
+ */
 export async function GET(req: NextRequest) {
   try {
     const auth = await requireAuth(req, 'session');
-    const configured = await configuredProviders(auth.tenantId);
+    const providers = await listOrgProviders(auth.tenantId);
+    const locked = await Promise.all(providers.map((p) => agentsLockedTo(auth.tenantId, p.id)));
     return NextResponse.json({
-      providers: LLM_PROVIDERS.map((id) => ({ id, configured: configured.includes(id), defaultModel: DEFAULT_MODELS[id] })),
+      providers: providers.map((p, i) => ({ ...p, defaultModel: p.defaultModel, locked_by: locked[i] })),
+      settings: await orgLlmSettings(auth.tenantId),
+      presets: PROVIDER_PRESETS,
     });
   } catch (err) {
     return errorResponse(err, 'llm-providers');
+  }
+}
+
+/** Order and on/off: { order: [ids], disabled: [ids] } (owner/admin). */
+export async function PUT(req: NextRequest) {
+  try {
+    const auth = await requireAuth(req, 'session');
+    requireRole(auth, ['owner', 'admin']);
+    return NextResponse.json({ settings: await setLlmSettings(auth, await req.json()) });
+  } catch (err) {
+    return errorResponse(err, 'llm-providers:settings');
+  }
+}
+
+/** Add an OpenAI-compatible provider: { slug, label, base_url, default_model, fast_model?, api_key } (checked before saving). */
+export async function POST(req: NextRequest) {
+  try {
+    const auth = await requireAuth(req, 'session');
+    requireRole(auth, ['owner', 'admin']);
+    return NextResponse.json(await createCustomProvider(auth, await req.json()), { status: 201 });
+  } catch (err) {
+    return errorResponse(err, 'llm-providers:create');
   }
 }

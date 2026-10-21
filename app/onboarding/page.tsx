@@ -54,7 +54,7 @@ export default function OnboardingPage() {
         if (Array.isArray(data.secretsFailed) && data.secretsFailed.length > 0) {
           // The workspace exists; tell the user which keys were rejected before moving on.
           const rejected = data.secretsFailed.map((f: { field: string; reason: string }) => `${f.field}: ${f.reason}`).join('\n');
-          setErrorMsg(`Workspace created, but these keys were rejected and not saved:\n${rejected}\nAdd them later in Account & Billing → LLM keys. Continuing in 8 seconds…`);
+          setErrorMsg(`Workspace created, but these keys were rejected and not saved:\n${rejected}\nAdd them later in Account & Billing → LLM providers. Continuing in 8 seconds…`);
           setTimeout(() => router.push('/organizations'), 8000);
           return;
         }

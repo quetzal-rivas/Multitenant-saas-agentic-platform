@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { AuthContext } from '@/lib/auth/require-auth';
 import { DEFAULT_MODELS, generateLLMResponse, type LLMProvider } from '@/lib/agent/providers/llm-adapter';
 import { getTenantSecret } from '@/lib/secrets/secrets-service';
+import { providerDef, providerKey } from '@/lib/services/llm-providers';
 import { configuredProviders } from '@/lib/services/agent-sessions';
 import { ServiceError } from '@/lib/services/errors';
 import { getFunction } from '@/lib/services/functions';
@@ -51,17 +52,19 @@ function extractJson(text: string): unknown {
 async function pickProvider(ctx: Ctx, requested: LLMProvider | undefined, deps: AssistDeps): Promise<LLMProvider> {
   const available = await (deps.providers || configuredProviders)(ctx.tenantId);
   if (requested) {
-    if (!available.includes(requested)) throw new ServiceError(`No ${requested} key is stored. Add one in Account & Billing → LLM keys.`, 'CONFLICT');
+    if (!available.includes(requested)) throw new ServiceError(`No ${requested} key is stored. Add one in Account & Billing → LLM providers.`, 'CONFLICT');
     return requested;
   }
-  if (!available.length) throw new ServiceError('No LLM key is stored for this organization. Add one in Account & Billing → LLM keys.', 'CONFLICT');
-  return available.includes('gemini') ? 'gemini' : available[0];
+  if (!available.length) throw new ServiceError('No LLM provider is on with a key. Add or turn one on in Account & Billing → LLM providers.', 'CONFLICT');
+  // The organization's order (only providers that are on and have a key).
+  return available[0];
 }
 
 /** Ask for JSON matching `shape`; one retry with the validation problem when the reply is not valid. */
 async function askForJson<T>(ctx: Ctx, provider: LLMProvider, systemPrompt: string, prompt: string, shape: z.ZodType<T>, deps: AssistDeps): Promise<T> {
-  const apiKey = await (deps.getSecret || getTenantSecret)(ctx.tenantId, provider);
-  if (!apiKey) throw new ServiceError(`No ${provider} key is stored. Add one in Account & Billing → LLM keys.`, 'CONFLICT');
+  const apiKey = await providerKey(ctx.tenantId, provider, deps.getSecret);
+  if (!apiKey) throw new ServiceError(`No ${provider} key is stored. Add one in Account & Billing → LLM providers.`, 'CONFLICT');
+  const def = (await providerDef(ctx.tenantId, provider)) ?? undefined;
   const generate = deps.generate || generateLLMResponse;
   const messages: Array<{ role: 'user' | 'assistant'; content: string }> = [{ role: 'user', content: prompt }];
   // The hosting gateway cuts requests at ~30 s; stay under it and fail with a clear message.
@@ -73,7 +76,7 @@ async function askForJson<T>(ctx: Ctx, provider: LLMProvider, systemPrompt: stri
     let reply;
     try {
       reply = await generate({
-        provider, model: DEFAULT_MODELS[provider], apiKey, systemPrompt, messages,
+        provider, def, model: def?.defaultModel, apiKey, systemPrompt, messages,
         maxTokens: 4000, reasoning: 'low', signal: AbortSignal.timeout(remaining),
       });
     } catch (err) {

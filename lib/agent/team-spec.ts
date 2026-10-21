@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { heartbeatScheduleSchema } from './heartbeat-schedule';
 import { PLATFORM_TOOL_DEFINITIONS, canonicalToolName } from '@/lib/mcp/tool-catalog';
+import { PROVIDER_ID_PATTERN, PROVIDER_MODES } from '@/lib/agent/providers/registry';
 
 /**
  * Team as code: the single format used by the Team Builder form, the JSON editor,
@@ -10,7 +11,6 @@ import { PLATFORM_TOOL_DEFINITIONS, canonicalToolName } from '@/lib/mcp/tool-cat
 
 export const HEARTBEAT_WAKE_WHEN = ['always', 'board_has_work'] as const;
 
-export const TEAM_LLM_PROVIDERS = ['anthropic', 'openai', 'gemini'] as const;
 export const MAX_TEAM_WORKERS = 8;
 const toolNames = PLATFORM_TOOL_DEFINITIONS.map((t) => t.name) as [string, ...string[]];
 /** Accept legacy tool names in pasted specs, store the canonical ones. */
@@ -22,8 +22,11 @@ export const teamSpecSchema = z
     name: z.string().trim().min(1).max(120),
     description: z.string().trim().max(2000).nullable().optional(),
     llm: z.object({
-      provider: z.enum(TEAM_LLM_PROVIDERS),
+      /** Omit with mode "auto" to follow the organization's provider order. */
+      provider: z.string().trim().regex(PROVIDER_ID_PATTERN).optional(),
       model: z.string().trim().min(1).max(120).optional(),
+      /** auto: organization order · preferred: this provider first, then rotation · locked: only this provider. */
+      mode: z.enum(PROVIDER_MODES).optional(),
     }).strict(),
     routing_strategy: z.literal('supervisor_router').default('supervisor_router'),
     supervisor: z.object({
@@ -42,6 +45,9 @@ export const teamSpecSchema = z
           mcp_profile_id: optionalId,
           tools: z.array(toolName).max(50).default([]),
           model: z.string().trim().min(1).max(120).nullable().optional(),
+          /** A worker's own provider and mode; null = same as the team. */
+          provider: z.string().trim().regex(PROVIDER_ID_PATTERN).nullable().optional(),
+          provider_mode: z.enum(PROVIDER_MODES).nullable().optional(),
         }).strict()
       )
       .max(MAX_TEAM_WORKERS)

@@ -262,8 +262,9 @@ export const createAgentArgs = z
   .object({
     name: z.string().trim().min(1).max(120),
     team_id: z.string().uuid().optional().describe('Run a team (configured in Team Builder) instead of a single agent.'),
-    provider: z.enum(['anthropic', 'openai', 'gemini']).optional().describe('LLM provider (the organization\'s own key). Defaults to the first one with a stored key.'),
+    provider: z.string().trim().regex(/^[a-z0-9_-]{1,40}$/).optional().describe('LLM provider id (built-in like anthropic/openai/gemini/xai, or one the organization added). Omit to follow the organization\'s provider order.'),
     model: z.string().trim().min(1).max(120).optional(),
+    provider_mode: z.enum(['auto', 'preferred', 'locked']).optional().describe('auto: organization order · preferred (default when provider is given): this provider first, then the others · locked: only this provider, fails instead of switching.'),
     instructions: z.string().trim().max(8000).optional().describe('What this agent is for and how it should work.'),
     tools: z.array(z.string().min(1).max(80)).max(50).optional().describe('Tools it may use: platform tools (e.g. contextcontrol_board_claim_task), web_search and fetch_url (reads a page). A tool your key may not use makes the call fail with the reason.'),
     mcp_profile_id: z.string().uuid().optional().describe('MCP profile: adds its AI Function Studio functions and connected-app tools (e.g. web_search).'),

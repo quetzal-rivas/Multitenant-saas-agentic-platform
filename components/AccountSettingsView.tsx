@@ -92,7 +92,7 @@ export const AccountSettingsView: React.FC = () => {
             }`}
           >
             <KeyRound className="w-4 h-4" />
-            LLM keys
+            LLM providers
           </button>
           <button
             onClick={() => setActiveTab('billing')}

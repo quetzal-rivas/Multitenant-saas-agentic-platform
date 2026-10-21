@@ -92,7 +92,7 @@ describe('Teams (fake PostgREST, scripted model)', () => {
     const dropNulls = (v: unknown): unknown => JSON.parse(JSON.stringify(v, (_k, x) => (x === null ? undefined : x)));
     assert.deepEqual(
       dropNulls(teamSpecSchema.parse(spec)),
-      dropNulls(teamSpecSchema.parse({ ...baseSpec, llm: { provider: 'gemini', model: 'gemini-3.8-flash' } }))
+      dropNulls(teamSpecSchema.parse({ ...baseSpec, llm: { provider: 'gemini', model: 'gemini-3.8-flash', mode: 'preferred' } }))
     );
   });
 

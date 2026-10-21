@@ -26,12 +26,13 @@ import {
 import { PLATFORM_TOOL_DEFINITIONS } from '@/lib/mcp/tool-catalog';
 import { VoiceTalkButton } from '@/components/voice/VoiceTalkButton';
 import { useVoice, type Heard } from '@/components/voice/useVoice';
+import { ProviderPicker, type ProviderChoice } from '@/components/ProviderPicker';
 
 // ---------------------------------------------------------------------------
 // Types mirroring /api/v1/agent-sessions responses
 // ---------------------------------------------------------------------------
 
-type Provider = 'anthropic' | 'openai' | 'gemini';
+type Provider = string;
 
 interface AgentSession {
   id: string;
@@ -40,6 +41,7 @@ interface AgentSession {
   team_id?: string | null;
   provider: Provider;
   model: string;
+  provider_mode?: 'auto' | 'preferred' | 'locked';
   mcp_profile_id: string | null;
   context_profile_id: string | null;
   voice_profile_id?: string | null;
@@ -79,7 +81,9 @@ interface CheckpointSummary {
 
 interface ProviderInfo {
   id: Provider;
+  label: string;
   configured: boolean;
+  enabled: boolean;
   defaultModel: string;
 }
 
@@ -95,7 +99,12 @@ interface AgentSessionStudioProps {
   initialProfileId?: string;
 }
 
-const PROVIDER_LABELS: Record<Provider, string> = { anthropic: 'Anthropic', openai: 'OpenAI', gemini: 'Google Gemini' };
+/** "Gemini · gemini-3.8-flash", "Automatic", "🔒 DeepSeek · deepseek-v4-pro". */
+function llmSummary(s: Pick<AgentSession, 'provider' | 'model' | 'provider_mode'>, providers: ProviderInfo[]): string {
+  if (s.provider_mode === 'auto') return 'Automatic (organization order)';
+  const label = providers.find((p) => p.id === s.provider)?.label ?? s.provider;
+  return `${s.provider_mode === 'locked' ? '🔒 ' : ''}${label} · ${s.model}`;
+}
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DEFAULT_TOOLS = PLATFORM_TOOL_DEFINITIONS.filter((t) => t.sideEffect === 'read').map((t) => t.name);
 
@@ -137,8 +146,8 @@ interface InstanceFormValues {
   /** When set, the instance runs this team (configured in Team Builder). */
   team_id: string;
   name: string;
-  provider: Provider;
-  model: string;
+  /** Provider, model and mode (auto / preferred / locked). */
+  llm: ProviderChoice;
   mcp_profile_id: string;
   context_profile_id: string;
   allowed_tools: string[];
@@ -158,7 +167,7 @@ const InstanceModal: React.FC<{
   const [values, setValues] = useState<InstanceFormValues>(initial);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const configured = providers.filter((p) => p.configured);
+  const configured = providers.filter((p) => p.configured && p.enabled);
   const set = <K extends keyof InstanceFormValues>(key: K, value: InstanceFormValues[K]) =>
     setValues((v) => ({ ...v, [key]: value }));
 
@@ -194,7 +203,7 @@ const InstanceModal: React.FC<{
         {noProviders ? (
           <div className="p-3 rounded-lg bg-amber-950/40 border border-amber-900/60 text-xs text-amber-200 space-y-1">
             <p className="font-semibold">No LLM key stored for this organization.</p>
-            <p>Instances run on your own Anthropic, OpenAI, or Gemini key. Add one under Account &amp; Billing → LLM keys, then come back.</p>
+            <p>Instances run on your own provider keys. Add one (or turn one on) under Account &amp; Billing → LLM providers, then come back.</p>
           </div>
         ) : (
           <div className="space-y-4 text-xs">
@@ -234,38 +243,10 @@ const InstanceModal: React.FC<{
             ) : (
               <>
 
-            <div className="grid grid-cols-2 gap-3">
-              <label className="block space-y-1">
-                <span className="font-mono text-zinc-300">LLM provider</span>
-                <select
-                  value={values.provider}
-                  disabled={mode === 'edit'}
-                  onChange={(e) => {
-                    const p = providers.find((x) => x.id === e.target.value)!;
-                    setValues((v) => ({ ...v, provider: p.id, model: p.defaultModel }));
-                  }}
-                  className="w-full bg-[#090b0f] border border-zinc-700 rounded-lg px-3 py-2 font-mono text-white disabled:opacity-60"
-                >
-                  {(mode === 'edit' ? providers : configured).map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {PROVIDER_LABELS[p.id]}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="block space-y-1">
-                <span className="font-mono text-zinc-300">Model</span>
-                <input
-                  value={values.model}
-                  disabled={mode === 'edit'}
-                  onChange={(e) => set('model', e.target.value)}
-                  className="w-full bg-[#090b0f] border border-zinc-700 rounded-lg px-3 py-2 font-mono text-white disabled:opacity-60"
-                />
-              </label>
+            <div className="space-y-1">
+              <span className="font-mono text-zinc-300">LLM provider and model</span>
+              <ProviderPicker providers={providers} value={values.llm} onChange={(llm) => set('llm', llm)} />
             </div>
-            {mode === 'edit' && (
-              <p className="text-[11px] text-zinc-500 -mt-2">Provider and model are fixed once an instance exists. Fork it to change them.</p>
-            )}
 
             <label className="block space-y-1">
               <span className="font-mono text-zinc-300">Instructions (optional)</span>
@@ -361,7 +342,7 @@ const InstanceModal: React.FC<{
           {!noProviders && (
             <button
               onClick={submit}
-              disabled={saving || !values.name.trim() || (!values.team_id && !values.model.trim())}
+              disabled={saving || !values.name.trim()}
               className="px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold text-xs disabled:opacity-50"
             >
               {saving ? 'Saving…' : mode === 'create' ? 'Create instance' : 'Save changes'}
@@ -546,13 +527,11 @@ export const AgentSessionStudio: React.FC<AgentSessionStudioProps> = ({ initialT
   };
 
   const formFromSession = (s: AgentSession | null): InstanceFormValues => {
-    const firstConfigured = providers.find((p) => p.configured) || providers[0];
     return s
       ? {
           team_id: s.team_id || '',
           name: s.name,
-          provider: s.provider,
-          model: s.model,
+          llm: { provider: s.provider_mode === 'auto' ? null : s.provider, model: s.provider_mode === 'auto' ? '' : s.model, mode: s.provider_mode ?? 'preferred' },
           mcp_profile_id: s.mcp_profile_id || '',
           context_profile_id: s.context_profile_id || '',
           allowed_tools: s.allowed_tools,
@@ -561,8 +540,7 @@ export const AgentSessionStudio: React.FC<AgentSessionStudioProps> = ({ initialT
       : {
           team_id: '',
           name: '',
-          provider: firstConfigured?.id || 'anthropic',
-          model: firstConfigured?.defaultModel || '',
+          llm: { provider: null, model: '', mode: 'auto' },
           mcp_profile_id: '',
           context_profile_id: '',
           allowed_tools: DEFAULT_TOOLS,
@@ -571,6 +549,10 @@ export const AgentSessionStudio: React.FC<AgentSessionStudioProps> = ({ initialT
   };
 
   const submitInstance = async (values: InstanceFormValues) => {
+    const llm =
+      values.llm.mode === 'auto' || !values.llm.provider
+        ? { provider_mode: 'auto' }
+        : { provider: values.llm.provider, ...(values.llm.model.trim() ? { model: values.llm.model.trim() } : {}), provider_mode: values.llm.mode ?? 'preferred' };
     const attachments = {
       mcp_profile_id: values.mcp_profile_id || null,
       context_profile_id: values.context_profile_id || null,
@@ -586,13 +568,13 @@ export const AgentSessionStudio: React.FC<AgentSessionStudioProps> = ({ initialT
     } else if (modal === 'create') {
       const { session } = await api<{ session: AgentSession }>('/api/v1/agent-sessions', {
         method: 'POST',
-        body: JSON.stringify({ name: values.name.trim(), provider: values.provider, model: values.model.trim(), ...attachments }),
+        body: JSON.stringify({ name: values.name.trim(), ...llm, ...attachments }),
       });
       await loadSessions(session.id);
     } else if (active) {
       await api(`/api/v1/agent-sessions/${active.id}`, {
         method: 'PATCH',
-        body: JSON.stringify(active.team_id ? { name: values.name.trim(), instructions: values.instructions.trim() || null } : { name: values.name.trim(), ...attachments }),
+        body: JSON.stringify(active.team_id ? { name: values.name.trim(), instructions: values.instructions.trim() || null } : { name: values.name.trim(), ...llm, ...attachments }),
       });
       await loadSessions(active.id);
     }
@@ -769,7 +751,7 @@ export const AgentSessionStudio: React.FC<AgentSessionStudioProps> = ({ initialT
                 {active.team_id ? (
                   <>Runs the team <span className="text-zinc-200">{teams.find((t) => t.id === active.team_id)?.name ?? '…'}</span>: a supervisor that can delegate to its workers. </>
                 ) : (
-                  <>Runs on {PROVIDER_LABELS[active.provider]} <code className="text-zinc-300">{active.model}</code> with {active.allowed_tools.length} tool(s). </>
+                  <>Runs on <code className="text-zinc-300">{llmSummary(active, providers)}</code> with {active.allowed_tools.length} tool(s). </>
                 )}
                 Each turn is saved as a checkpoint you can inspect or fork.
               </p>
@@ -940,9 +922,9 @@ export const AgentSessionStudio: React.FC<AgentSessionStudioProps> = ({ initialT
               <section className="space-y-1.5">
                 <h4 className="font-mono uppercase text-zinc-500 text-[10px] tracking-wider">LLM</h4>
                 <p className="text-zinc-200">
-                  {PROVIDER_LABELS[active.provider]} · <code>{active.model}</code>
+                  <code>{llmSummary(active, providers)}</code>
                 </p>
-                <p className="text-zinc-500">Runs on your organization&apos;s stored {PROVIDER_LABELS[active.provider]} key.</p>
+                <p className="text-zinc-500">Runs on your organization&apos;s own keys{active.provider_mode === 'locked' ? ' (locked: no switching)' : ', switching providers when one is out of quota'}.</p>
               </section>
               <section className="space-y-1.5">
                 <h4 className="font-mono uppercase text-zinc-500 text-[10px] tracking-wider">Voice</h4>

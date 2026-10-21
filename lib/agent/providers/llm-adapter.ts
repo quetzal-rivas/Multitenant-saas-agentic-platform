@@ -1,6 +1,10 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { BUILT_IN_PROVIDERS, builtInProvider, type ProviderDef } from './registry';
 
-export type LLMProvider = 'anthropic' | 'openai' | 'gemini' | 'xai';
+/** Built-in provider ids; organizations can add their own (any id from the registry). */
+export type BuiltInProvider = 'anthropic' | 'openai' | 'gemini' | 'xai';
+/** A provider id: a built-in one or an organization's own OpenAI-compatible provider. */
+export type LLMProvider = string;
 
 /**
  * Provider-neutral conversation turn. Assistant turns also keep the provider's raw
@@ -47,6 +51,8 @@ export interface LLMGenerateOptions {
    * LLM_ATTEMPT_TIMEOUT_MS). Live calls use a short one: a hung request must not stall the call.
    */
   attemptTimeoutMs?: number;
+  /** How to reach the provider (base URL, parameters). Defaults to the built-in definition for `provider`. */
+  def?: ProviderDef;
 }
 
 export interface LLMGenerateResult {
@@ -67,20 +73,11 @@ export interface LLMGenerateResult {
   providerContent?: { provider: LLMProvider; content: unknown; model?: string };
 }
 
-export const DEFAULT_MODELS: Record<LLMProvider, string> = {
-  anthropic: 'claude-opus-5-5',
-  openai: 'gpt-5',
-  gemini: 'gemini-3.8-flash',
-  xai: 'grok-4.7',
-};
+/** Default model per built-in provider (from the registry). */
+export const DEFAULT_MODELS = Object.fromEntries(BUILT_IN_PROVIDERS.map((p) => [p.id, p.defaultModel])) as Record<BuiltInProvider, string> & Record<string, string | undefined>;
 
-/** Models for answers someone is waiting on (live calls), used when rotating to another provider. */
-export const FAST_MODELS: Record<LLMProvider, string> = {
-  anthropic: 'claude-haiku-5-5',
-  openai: 'gpt-5',
-  gemini: 'gemini-3.8-flash',
-  xai: 'grok-4.20-0309-non-reasoning',
-};
+/** Models for answers someone is waiting on (live calls), per built-in provider. */
+export const FAST_MODELS = Object.fromEntries(BUILT_IN_PROVIDERS.map((p) => [p.id, p.fastModel])) as Record<BuiltInProvider, string> & Record<string, string | undefined>;
 
 /**
  * Worth trying another provider: quota, rate limits, overload, server errors and timeouts.
@@ -222,8 +219,11 @@ async function generateAnthropic(options: LLMGenerateOptions): Promise<LLMGenera
 // OpenAI (Chat Completions over fetch)
 // ---------------------------------------------------------------------------
 
+/** OpenAI and every OpenAI-compatible provider (DeepSeek, Mistral, Groq, OpenRouter, ...). */
 async function generateOpenAI(options: LLMGenerateOptions): Promise<LLMGenerateResult> {
-  const model = options.model || DEFAULT_MODELS.openai;
+  const def = options.def ?? builtInProvider(options.provider) ?? builtInProvider('openai')!;
+  const label = def.label;
+  const model = options.model || def.defaultModel;
   const messages: any[] = [];
   if (options.systemPrompt) messages.push({ role: 'system', content: options.systemPrompt });
 
@@ -253,9 +253,9 @@ async function generateOpenAI(options: LLMGenerateOptions): Promise<LLMGenerateR
   const payload: any = {
     model,
     messages,
-    max_completion_tokens: options.maxTokens || 16000,
+    [def.maxTokensParam ?? 'max_tokens']: options.maxTokens || 16000,
   };
-  if (options.reasoning === 'low') payload.reasoning_effort = 'low';
+  if (options.reasoning === 'low' && def.reasoningParam) payload.reasoning_effort = 'low';
   if (options.temperature !== undefined) payload.temperature = options.temperature;
   if (options.tools?.length) {
     payload.tools = options.tools.map((t) => ({
@@ -265,7 +265,7 @@ async function generateOpenAI(options: LLMGenerateOptions): Promise<LLMGenerateR
   }
 
   const res = await fetchWithRetry(() =>
-    fetch('https://api.openai.com/v1/chat/completions', {
+    fetch(`${(def.baseUrl ?? 'https://api.openai.com/v1').replace(/\/+$/, '')}/chat/completions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${options.apiKey}` },
       body: JSON.stringify(payload),
@@ -274,8 +274,8 @@ async function generateOpenAI(options: LLMGenerateOptions): Promise<LLMGenerateR
   );
   if (!res.ok) {
     const body = (await res.text()).slice(0, 300);
-    if (res.status === 429) throw new Error(`Rate limited by the provider (OpenAI 429): ${body}`);
-    throw new Error(`OpenAI API error (${res.status}): ${body}`);
+    if (res.status === 429) throw new Error(`Rate limited by the provider (${label} 429): ${body}`);
+    throw new Error(`${label} API error (${res.status}): ${body}`);
   }
 
   const data = await res.json();
@@ -576,10 +576,11 @@ export async function generateLLMResponse(options: LLMGenerateOptions): Promise<
   if (!options.apiKey) {
     throw new Error(`Missing BYOK API key for provider ${options.provider}`);
   }
-  switch (options.provider) {
+  const kind = options.def?.kind ?? builtInProvider(options.provider)?.kind;
+  switch (kind) {
     case 'anthropic':
       return generateAnthropic(options);
-    case 'openai':
+    case 'openai_compatible':
       return generateOpenAI(options);
     case 'gemini':
       return generateGemini(options);

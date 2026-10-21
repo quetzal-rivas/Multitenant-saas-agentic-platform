@@ -18,7 +18,9 @@ import { functionToolName } from '@/lib/functions/function-spec';
 import { connectorToolsFor, fetchUrlDef, runConnectorTool, webSearchDef } from '@/lib/services/connections';
 import { FETCH_URL_TOOL } from '@/lib/connectors/fetch-url';
 import { emitRunEvent } from './supervisor-graph';
-import { DEFAULT_MODELS, FAST_MODELS, generateLLMResponse, isRotatableError, type LLMMessage, type LLMProvider, type LLMToolDefinition } from './providers/llm-adapter';
+import { generateLLMResponse, isRotatableError, type LLMMessage, type LLMToolDefinition } from './providers/llm-adapter';
+import { providerChain, type AgentLlm, type ChainLink } from '@/lib/services/llm-providers';
+import type { ProviderMode } from './providers/registry';
 
 export const MAX_AGENT_STEPS = 15;
 /** Steps a worker may take per delegated task (workers cannot delegate further). */
@@ -140,7 +142,7 @@ export function delegateToolName(worker: Pick<TeamWorker, 'slug'>): string {
 /** Surface LLM provider failures (bad key, rate limit, unknown model) as a 502 the UI can show. */
 function providerError(provider: string, err: unknown): ServiceError {
   if (err instanceof Anthropic.AuthenticationError) {
-    return new ServiceError('The stored Anthropic API key was rejected. Update it in Account & Billing → LLM keys.', 'INVALID', 502);
+    return new ServiceError('The stored Anthropic API key was rejected. Update it in Account & Billing → LLM providers.', 'INVALID', 502);
   }
   if (err instanceof Anthropic.RateLimitError) {
     return new ServiceError('Anthropic rate limit reached for this organization’s key. Try again shortly.', 'INVALID', 502);
@@ -155,7 +157,7 @@ function providerError(provider: string, err: unknown): ServiceError {
   // OpenAI (401) and Gemini (400 API_KEY_INVALID) report a bad key without a typed error.
   if (/API_KEY_INVALID|API key not valid|Incorrect API key|invalid_api_key|\(401\)/i.test(message)) {
     return new ServiceError(
-      `The stored ${provider} API key was rejected by the provider. Replace it in Account & Billing → LLM keys.`,
+      `The stored ${provider} API key was rejected by the provider. Replace it in Account & Billing → LLM providers.`,
       'INVALID',
       502
     );
@@ -251,8 +253,14 @@ export const FAST_ATTEMPT_TIMEOUT_MS = 12_000;
 export const FAST_TOTAL_TIMEOUT_MS = 25_000;
 /** During a live call, one provider gets this long before the next provider is tried. */
 export const FAST_PROVIDER_BUDGET_MS = 10_000;
-/** Order in which other providers with a stored key take over (the instance's own provider goes first). */
-export const PROVIDER_ROTATION: LLMProvider[] = ['anthropic', 'openai', 'xai', 'gemini'];
+/**
+ * Outside calls, a provider that still has another one behind it gets this long (attempts of
+ * ROTATE_ATTEMPT_TIMEOUT_MS) before the next one is tried. The last provider in the chain, and
+ * a locked one, keep the adapter's longer timeout: there is nothing to switch to.
+ */
+export const ROTATE_PROVIDER_BUDGET_MS = 40_000;
+export const ROTATE_ATTEMPT_TIMEOUT_MS = 30_000;
+
 const fastOptions = () => ({ reasoning: 'low' as const, attemptTimeoutMs: FAST_ATTEMPT_TIMEOUT_MS, signal: AbortSignal.timeout(FAST_TOTAL_TIMEOUT_MS) });
 
 async function runToolLoop(opts: {
@@ -451,54 +459,61 @@ export async function runTurn(
 
   const session = await getSession(ctx, sessionId);
   const team = session.team_id ? await getTeam(ctx, session.team_id) : null;
-  const provider = team?.provider ?? session.provider;
-  const model = team?.model ?? session.model;
-
-  const apiKey = await getSecret(ctx.tenantId, provider);
-  if (!apiKey) {
-    throw new ServiceError(
-      `No ${provider} API key is stored for this organization. Add one in Account & Billing → LLM keys.`,
-      'CONFLICT'
-    );
-  }
+  const chainOptions = { fast: control.fast, getSecret: getSecret as any };
+  // The instance (or the team's supervisor) runs on its chain: locked, preferred or automatic.
+  const ownLlm: AgentLlm = team
+    ? { provider: team.provider, model: team.model, mode: (team.provider_mode ?? 'preferred') as ProviderMode }
+    : { provider: session.provider, model: session.model, mode: (session.provider_mode ?? 'preferred') as ProviderMode };
+  const ownChain = await providerChain(ctx.tenantId, ownLlm, chainOptions);
+  const provider = ownChain[0].def.id;
+  const model = ownChain[0].model;
+  const apiKey = ownChain[0].apiKey;
 
   /**
-   * The instance's provider first; if it is out of quota, overloaded or too slow, the same
-   * request goes to the next provider that has a key (Claude, OpenAI, Grok, Gemini). Each
-   * provider ignores the others' internal content, so switching mid-conversation is safe.
+   * Run one model request on a chain: each provider in turn when the previous one is out of
+   * quota, overloaded or too slow. A locked chain has a single link and fails instead of
+   * switching. Each provider ignores the others' internal content, so switching mid-
+   * conversation is safe.
    */
-  let fallbacks: Array<{ provider: LLMProvider; apiKey: string }> | null = null;
-  const generateRotating: typeof generate = async (o) => {
-    const attempt = (opts: Parameters<typeof generate>[0]) => {
-      if (!control.fast) return generate(opts);
-      const budget = AbortSignal.timeout(FAST_PROVIDER_BUDGET_MS);
-      return generate({ ...opts, signal: opts.signal ? AbortSignal.any([opts.signal, budget]) : budget });
-    };
-    try {
-      return await attempt(o);
-    } catch (err) {
-      if (!isRotatableError(err) || o.signal?.aborted) throw err;
-      if (!fallbacks) {
-        fallbacks = [];
-        for (const p of PROVIDER_ROTATION) {
-          if (p === provider) continue;
-          const key = await getSecret(ctx.tenantId, p).catch(() => null);
-          if (key) fallbacks.push({ provider: p, apiKey: key });
-        }
+  const chainGenerate = (chain: ChainLink[], locked: boolean): typeof generate => async (o) => {
+    let last: unknown = null;
+    for (const [i, link] of chain.entries()) {
+      if (o.signal?.aborted) break;
+      const req = { ...o, provider: link.def.id, def: link.def, apiKey: link.apiKey, model: link.model };
+      const canRotate = !locked && !!chain[i + 1];
+      if (control.fast || canRotate) {
+        const budget = AbortSignal.timeout(control.fast ? FAST_PROVIDER_BUDGET_MS : ROTATE_PROVIDER_BUDGET_MS);
+        req.signal = o.signal ? AbortSignal.any([o.signal, budget]) : budget;
+        if (!control.fast) req.attemptTimeoutMs = ROTATE_ATTEMPT_TIMEOUT_MS;
       }
-      let last = err;
-      for (const fb of fallbacks) {
-        if (o.signal?.aborted) break;
-        try {
-          console.warn(`[session-runner] ${provider} failed (${(last as Error)?.message?.slice(0, 120)}); trying ${fb.provider}`);
-          return await attempt({ ...o, provider: fb.provider, apiKey: fb.apiKey, model: (control.fast ? FAST_MODELS : DEFAULT_MODELS)[fb.provider] });
-        } catch (e) {
-          last = e;
-          if (!isRotatableError(e)) continue;
+      try {
+        return await generate(req);
+      } catch (err) {
+        last = err;
+        if (locked) {
+          throw new ServiceError(`${link.def.label} (${link.model}) failed and this agent is locked to it: ${(err as Error)?.message?.slice(0, 300)}`, 'CONFLICT', 502);
         }
+        if (!isRotatableError(err) || o.signal?.aborted) throw err;
+        if (chain[i + 1]) console.warn(`[session-runner] ${link.def.id} failed (${(err as Error)?.message?.slice(0, 120)}); trying ${chain[i + 1].def.id}`);
       }
-      throw last;
     }
+    throw last ?? new ServiceError('No LLM provider answered.', 'CONFLICT', 502);
+  };
+  const ownGenerate = chainGenerate(ownChain, ownLlm.mode === 'locked');
+
+  /** A worker with its own provider, model or mode gets its own chain (built once per turn). */
+  const workerChains = new Map<string, typeof generate>();
+  const workerGenerate = async (worker: { slug: string; provider?: string | null; model?: string | null; provider_mode?: string | null }) => {
+    if (!worker.provider && !worker.provider_mode) return ownGenerate;
+    if (!workerChains.has(worker.slug)) {
+      const llm: AgentLlm = {
+        provider: worker.provider ?? ownLlm.provider,
+        model: worker.model ?? (worker.provider ? null : ownLlm.model),
+        mode: (worker.provider_mode ?? ownLlm.mode) as ProviderMode,
+      };
+      workerChains.set(worker.slug, chainGenerate(await providerChain(ctx.tenantId, llm, chainOptions), llm.mode === 'locked'));
+    }
+    return workerChains.get(worker.slug)!;
   };
 
   const saved = control.saved ?? null;
@@ -619,10 +634,12 @@ export async function runTurn(
     initialText?: string;
     deadlineAt?: number;
     onStep?: (stepsDone: number, finalText: string) => Promise<void>;
+    /** A worker's own provider chain (defaults to the instance's / supervisor's). */
+    generate?: typeof generate;
   }) =>
     runToolLoop({
       ...opts,
-      generate: generateRotating,
+      generate: opts.generate ?? ownGenerate,
       provider,
       apiKey,
       usage,
@@ -697,6 +714,7 @@ export async function runTurn(
             messages: [{ role: 'user', content: brief }],
             tools: await withProfileTools(await namedTools(worker.tools), worker.mcp_profile_id),
             model: worker.model || team.model,
+            generate: await workerGenerate(worker),
             maxSteps: MAX_WORKER_STEPS,
             worker: worker.name,
           });

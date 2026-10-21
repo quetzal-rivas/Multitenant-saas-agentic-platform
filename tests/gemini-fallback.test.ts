@@ -95,7 +95,9 @@ describe('Gemini fallback chain', () => {
       return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: `hi from ${model}` }] } }], modelVersion: model, usageMetadata: {} }), { status: 200 });
     }) as typeof fetch;
     const started = Date.now();
-    const res = await generateLLMResponse({ provider: 'gemini', model: 'gemini-3.8-flash', apiKey: 'k', messages: [{ role: 'user', content: 'hi' }], reasoning: 'low', attemptTimeoutMs: 150 });
+    // AbortSignal.timeout timers do not keep Node alive; this does while the attempt hangs.
+    const keepAlive = setInterval(() => undefined, 25);
+    const res = await generateLLMResponse({ provider: 'gemini', model: 'gemini-3.8-flash', apiKey: 'k', messages: [{ role: 'user', content: 'hi' }], reasoning: 'low', attemptTimeoutMs: 150 }).finally(() => clearInterval(keepAlive));
     assert.equal(res.text, 'hi from gemini-3.7-flash');
     assert.ok(Date.now() - started < 2_000, 'did not wait the default 90 s');
     assert.deepEqual(calls[0].thinking, { thinkingLevel: 'low' });

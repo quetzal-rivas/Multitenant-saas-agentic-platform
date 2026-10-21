@@ -23,7 +23,8 @@ import {
 } from 'lucide-react';
 import { PLATFORM_TOOL_DEFINITIONS } from '@/lib/mcp/tool-catalog';
 import { ScheduleEditor, formatWhen } from '@/components/ScheduleEditor';
-import { MAX_TEAM_WORKERS, TEAM_LLM_PROVIDERS, teamSpecSchema, workerSlug, type TeamSpec } from '@/lib/agent/team-spec';
+import { MAX_TEAM_WORKERS, teamSpecSchema, workerSlug, type TeamSpec } from '@/lib/agent/team-spec';
+import { ProviderPicker, type ProviderChoice } from '@/components/ProviderPicker';
 import {
   DEFAULT_HEARTBEAT_SCHEDULE,
   describeSchedule,
@@ -34,7 +35,7 @@ import {
 // Types and helpers
 // ---------------------------------------------------------------------------
 
-type Provider = (typeof TEAM_LLM_PROVIDERS)[number];
+type Provider = string;
 type Worker = TeamSpec['workers'][number];
 
 interface TeamSummary {
@@ -65,8 +66,20 @@ interface NamedOption {
 
 interface ProviderInfo {
   id: Provider;
+  label: string;
   configured: boolean;
+  enabled: boolean;
   defaultModel: string;
+}
+
+/** The team's (supervisor's) provider choice in the picker's shape, and back. */
+const teamChoice = (llm: TeamSpec['llm']): ProviderChoice => ({ provider: llm.provider ?? null, model: llm.model ?? '', mode: llm.mode ?? (llm.provider ? 'preferred' : 'auto') });
+const teamLlm = (c: ProviderChoice): TeamSpec['llm'] =>
+  c.mode === 'auto' || !c.provider ? { mode: 'auto' } : { provider: c.provider, ...(c.model.trim() ? { model: c.model.trim() } : {}), mode: c.mode ?? 'preferred' };
+function llmLabel(llm: TeamSpec['llm'], providers: ProviderInfo[]): string {
+  if ((llm.mode ?? (llm.provider ? 'preferred' : 'auto')) === 'auto') return 'Automatic (organization order)';
+  const p = providers.find((x) => x.id === llm.provider);
+  return `${llm.mode === 'locked' ? '🔒 ' : ''}${p?.label ?? llm.provider} · ${llm.model || p?.defaultModel || ''}`;
 }
 
 interface AgentTeamBuilderProps {
@@ -74,7 +87,6 @@ interface AgentTeamBuilderProps {
   onLaunchThread?: (teamId: string, sessionId: string) => void;
 }
 
-const PROVIDER_LABELS: Record<Provider, string> = { anthropic: 'Anthropic', openai: 'OpenAI', gemini: 'Google Gemini' };
 const STEPS = [
   { num: 1, label: 'Team & supervisor' },
   { num: 2, label: 'Workers' },
@@ -99,11 +111,11 @@ function browserTimeZone(): string {
   }
 }
 
-function emptySpec(provider: Provider): TeamSpec {
+function emptySpec(): TeamSpec {
   return {
     name: '',
     description: '',
-    llm: { provider },
+    llm: { mode: 'auto' },
     routing_strategy: 'supervisor_router',
     supervisor: { instructions: '', context_profile_id: null, mcp_profile_id: null, tools: [] },
     workers: [],
@@ -143,7 +155,7 @@ export const AgentTeamBuilder: React.FC<AgentTeamBuilderProps> = ({ onLaunchThre
   /** Phones show either the team list or the editor. */
   const [mobileDetail, setMobileDetail] = useState(false);
   const [record, setRecord] = useState<TeamRecord | null>(null);
-  const [draft, setDraft] = useState<TeamSpec>(() => emptySpec('gemini'));
+  const [draft, setDraft] = useState<TeamSpec>(() => emptySpec());
   const [step, setStep] = useState<number>(1);
   const [toolTarget, setToolTarget] = useState<string>('supervisor'); // 'supervisor' | worker index
   const [busy, setBusy] = useState<'save' | 'archive' | 'run' | 'launch' | null>(null);
@@ -181,8 +193,7 @@ export const AgentTeamBuilder: React.FC<AgentTeamBuilderProps> = ({ onLaunchThre
         setProviders(prov.providers);
         setContextProfiles(ctx.profiles);
         setMcpProfiles(mcp.profiles);
-        const firstConfigured = prov.providers.find((p) => p.configured)?.id ?? 'gemini';
-        setDraft(emptySpec(firstConfigured));
+        setDraft(emptySpec());
         const list = await loadTeams();
         if (list[0]) await openTeam(list[0].id);
       } catch (err: any) {
@@ -215,7 +226,7 @@ export const AgentTeamBuilder: React.FC<AgentTeamBuilderProps> = ({ onLaunchThre
   const newTeam = () => {
     setSelectedId(null);
     setRecord(null);
-    setDraft(emptySpec(configured[0]?.id ?? 'gemini'));
+    setDraft(emptySpec());
     setStep(1);
     setToolTarget('supervisor');
     setNotice(null);
@@ -418,7 +429,7 @@ export const AgentTeamBuilder: React.FC<AgentTeamBuilderProps> = ({ onLaunchThre
 
         {configured.length === 0 && (
           <div className="mx-6 mt-4 p-3 rounded-lg bg-amber-950/40 border border-amber-900/60 text-xs text-amber-200">
-            No LLM key is stored yet. Add one in Account &amp; Billing → LLM keys; teams run on your own key.
+            No LLM key is stored yet. Add one in Account &amp; Billing → LLM providers; teams run on your own key.
           </div>
         )}
         {notice && (
@@ -452,30 +463,9 @@ export const AgentTeamBuilder: React.FC<AgentTeamBuilderProps> = ({ onLaunchThre
                     <input className={inputCls} value={draft.name} onChange={(e) => update({ name: e.target.value })} placeholder="e.g. Ops Team" />
                     {issueFor('name') && <p className="text-xs text-rose-400 mt-1">{issueFor('name')}</p>}
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className={labelCls}>LLM provider</label>
-                      <select
-                        className={inputCls}
-                        value={draft.llm.provider}
-                        onChange={(e) => update({ llm: { provider: e.target.value as Provider } })}
-                      >
-                        {providers.map((p) => (
-                          <option key={p.id} value={p.id} disabled={!p.configured}>
-                            {PROVIDER_LABELS[p.id]}{p.configured ? '' : ' (no key)'}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className={labelCls}>Model</label>
-                      <input
-                        className={inputCls}
-                        value={draft.llm.model ?? ''}
-                        onChange={(e) => update({ llm: { ...draft.llm, model: e.target.value || undefined } })}
-                        placeholder={providers.find((p) => p.id === draft.llm.provider)?.defaultModel}
-                      />
-                    </div>
+                  <div>
+                    <label className={labelCls}>LLM provider and model (supervisor; workers can choose their own)</label>
+                    <ProviderPicker providers={providers} value={teamChoice(draft.llm)} onChange={(c) => update({ llm: teamLlm(c) })} />
                   </div>
                 </div>
                 <div>
@@ -570,9 +560,15 @@ export const AgentTeamBuilder: React.FC<AgentTeamBuilderProps> = ({ onLaunchThre
                           {mcpProfiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                         </select>
                       </div>
-                      <div>
-                        <label className={labelCls}>Model override</label>
-                        <input className={inputCls} value={w.model ?? ''} onChange={(e) => updateWorker(i, { model: e.target.value || null })} placeholder="Team default" />
+                      <div className="sm:col-span-2">
+                        <label className={labelCls}>LLM provider and model</label>
+                        <ProviderPicker
+                          compact
+                          providers={providers}
+                          inheritLabel="Same as the team"
+                          value={{ provider: w.provider ?? null, model: w.model ?? '', mode: w.provider_mode ?? (w.provider ? 'preferred' : null) }}
+                          onChange={(c) => updateWorker(i, { provider: c.provider, model: c.model.trim() || null, provider_mode: c.mode })}
+                        />
                       </div>
                     </div>
                     <button onClick={() => { setToolTarget(String(i)); setStep(3); }} className="text-xs text-emerald-400 hover:text-emerald-300">
@@ -739,7 +735,7 @@ export const AgentTeamBuilder: React.FC<AgentTeamBuilderProps> = ({ onLaunchThre
                 <div className="p-4 rounded-xl border border-zinc-800 bg-[#0d1017] text-sm space-y-1">
                   <div className="text-white font-semibold">{draft.name || 'Untitled team'}</div>
                   <div className="text-zinc-400 text-xs">
-                    {PROVIDER_LABELS[draft.llm.provider]} · {draft.llm.model || providers.find((p) => p.id === draft.llm.provider)?.defaultModel} ·{' '}
+                    {llmLabel(draft.llm, providers)} ·{' '}
                     {draft.workers.length ? `supervisor + ${draft.workers.length} worker${draft.workers.length === 1 ? '' : 's'}` : 'single agent'} ·{' '}
                     {draft.heartbeat.enabled && draft.heartbeat.schedule ? `heartbeat ${describeSchedule(draft.heartbeat.schedule)}` : 'no heartbeat'}
                   </div>

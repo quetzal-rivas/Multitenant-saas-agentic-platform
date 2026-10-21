@@ -112,7 +112,7 @@ export async function storeOnboardingSecrets(
       result.stored.push(provider);
     } catch (err) {
       console.error(`[onboarding] failed to store ${provider} secret`, err);
-      result.failed.push({ field, reason: 'Could not store the key. Try again from Account & Billing → LLM keys.' });
+      result.failed.push({ field, reason: 'Could not store the key. Try again from Account & Billing → LLM providers.' });
     }
   }
   return result;

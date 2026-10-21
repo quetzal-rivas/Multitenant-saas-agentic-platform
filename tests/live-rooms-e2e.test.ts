@@ -27,7 +27,7 @@ const TOKEN = 'twilio-auth-token-123456';
 const usage = { inputTokens: 1, outputTokens: 1, totalTokens: 2 };
 
 let reply = 'There are 2 open tasks on the board.';
-let prompts: Array<{ system: string; last: string }> = [];
+let prompts: Array<{ system: string; last: string; reasoning?: string; attemptTimeoutMs?: number }> = [];
 let holdRuns = false;
 const held: string[] = [];
 
@@ -133,7 +133,7 @@ describe('Live Rooms: Twilio rooms, Ear, Voice Front, outbound, turn-based', () 
     setDefaultRunnerDepsForTests({
       getSecret: async () => 'k',
       generate: async (o: any) => {
-        prompts.push({ system: o.systemPrompt, last: o.messages[o.messages.length - 1]?.content ?? '' });
+        prompts.push({ system: o.systemPrompt, last: o.messages[o.messages.length - 1]?.content ?? '', reasoning: o.reasoning, attemptTimeoutMs: o.attemptTimeoutMs });
         return { text: reply, usage, finishReason: 'stop' } as LLMGenerateResult;
       },
     });
@@ -314,6 +314,14 @@ describe('Live Rooms: Twilio rooms, Ear, Voice Front, outbound, turn-based', () 
     const answer: any = await executePlatformTool('contextcontrol_ask_team', { room_id: room.id, question: 'What is on the board?' }, vctx);
     assert.deepEqual(answer, { status: 'done', answer: reply });
     assert.match(prompts.at(-1)!.system, /voice conversation/, 'team answers in spoken style');
+    // A caller is waiting: quick answers, a short per-attempt timeout, tools only when needed.
+    assert.equal(prompts.at(-1)!.reasoning, 'low');
+    assert.equal(prompts.at(-1)!.attemptTimeoutMs, 12_000);
+    assert.match(prompts.at(-1)!.last, /use tools only if they are really needed/);
+    // Each model call is timed in the run's timeline (Logs).
+    const askRun = tables.agent_runs.filter((r) => r.room_id === room.id && /What is on the board/.test(r.input_message)).at(-1)!;
+    const timed = tables.run_events.find((e) => e.run_id === askRun.id && e.event_type === 'model_call')!;
+    assert.equal(typeof timed.payload.latencyMs, 'number');
     await executePlatformTool('contextcontrol_room_note', { room_id: room.id, text: 'Wants to cancel', level: 'alert' }, vctx);
     assert.ok(tables.room_notes.some((n) => n.level === 'alert' && n.author === 'Voice agent'));
     await assert.rejects(executePlatformTool('contextcontrol_room_context', { room_id: room.id }, { ...vctx, tenantId: OTHER }), /not found/i);

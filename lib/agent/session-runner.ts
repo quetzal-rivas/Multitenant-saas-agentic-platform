@@ -235,7 +235,15 @@ export interface TurnControl {
   beforeTool?: () => Promise<void>;
   /** Asked to end with JSON matching this schema (orchestration output_schema). */
   outputSchema?: Record<string, unknown> | null;
+  /**
+   * A live call is waiting: quick model answers (low reasoning) and a short per-attempt timeout,
+   * so a hung request moves on to the next model instead of stalling the call.
+   */
+  fast?: boolean;
 }
+
+/** Per-attempt model timeout during live calls (normal runs keep the adapter default). */
+export const FAST_ATTEMPT_TIMEOUT_MS = 12_000;
 
 async function runToolLoop(opts: {
   generate: typeof generateLLMResponse;
@@ -249,6 +257,10 @@ async function runToolLoop(opts: {
   worker?: string;
   usage: TurnResult['usage'];
   onModel: (servedBy: string) => void;
+  /** Each model call's duration and tokens (for the run timeline). */
+  onModelCall?: (info: { latencyMs: number; tokens: number; model: string | null }) => Promise<void>;
+  /** Live-call settings for every model call (see TurnControl.fast). */
+  fast?: boolean;
   onTool: (record: ToolExecutionRecord) => Promise<void>;
   /** Resume support: steps already completed, text so far, and when to pause. */
   startStep?: number;
@@ -278,6 +290,7 @@ async function runToolLoop(opts: {
     opts.usage.steps += 1;
     let result;
     try {
+      const startedAt = Date.now();
       result = await opts.generate({
         provider: opts.provider,
         model: opts.model,
@@ -285,7 +298,9 @@ async function runToolLoop(opts: {
         systemPrompt: opts.systemPrompt,
         messages: opts.messages,
         tools: defs,
+        ...(opts.fast ? { reasoning: 'low' as const, attemptTimeoutMs: FAST_ATTEMPT_TIMEOUT_MS } : {}),
       });
+      await opts.onModelCall?.({ latencyMs: Date.now() - startedAt, tokens: result.usage.totalTokens, model: result.model ?? opts.model ?? null }).catch(() => undefined);
     } catch (err) {
       throw providerError(opts.provider, err);
     }
@@ -368,7 +383,15 @@ async function runToolLoop(opts: {
   };
   try {
     opts.usage.steps += 1;
-    const wrap = await opts.generate({ provider: opts.provider, model: opts.model, apiKey: opts.apiKey, systemPrompt: opts.systemPrompt, messages: [...opts.messages, wrapUp], tools: defs });
+    const wrap = await opts.generate({
+      provider: opts.provider,
+      model: opts.model,
+      apiKey: opts.apiKey,
+      systemPrompt: opts.systemPrompt,
+      messages: [...opts.messages, wrapUp],
+      tools: defs,
+      ...(opts.fast ? { reasoning: 'low' as const, attemptTimeoutMs: FAST_ATTEMPT_TIMEOUT_MS } : {}),
+    });
     opts.usage.inputTokens += wrap.usage.inputTokens;
     opts.usage.outputTokens += wrap.usage.outputTokens;
     opts.usage.totalTokens += wrap.usage.totalTokens;
@@ -570,6 +593,17 @@ export async function runTurn(
       },
       onModel: (served) => {
         if (!opts.worker) servedBy = served;
+      },
+      fast: control.fast,
+      onModelCall: async (info) => {
+        await emit({
+          run_id: runId,
+          tenant_id: ctx.tenantId,
+          step_name: info.model ?? 'model',
+          status: 'completed',
+          event_type: 'model_call',
+          payload: { latencyMs: info.latencyMs, tokens: info.tokens, worker: opts.worker ?? null },
+        });
       },
       onTool: async (record) => {
         executions.push(record);

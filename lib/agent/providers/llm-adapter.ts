@@ -42,6 +42,11 @@ export interface LLMGenerateOptions {
   reasoning?: 'low';
   /** Abort the provider request (e.g. to stay under a gateway timeout). */
   signal?: AbortSignal;
+  /**
+   * Give up on one attempt after this long and move to the next model (default
+   * LLM_ATTEMPT_TIMEOUT_MS). Live calls use a short one: a hung request must not stall the call.
+   */
+  attemptTimeoutMs?: number;
 }
 
 export interface LLMGenerateResult {
@@ -152,7 +157,7 @@ async function generateAnthropic(options: LLMGenerateOptions): Promise<LLMGenera
     // On a safety decline, the API re-runs the request on an appropriate fallback model.
     betas: ['server-side-fallback-2026-07-01'],
     fallbacks: 'default',
-  }, { timeout: 3 * 60_000, ...(options.signal ? { signal: options.signal } : {}) });
+  }, { timeout: options.attemptTimeoutMs ?? 3 * 60_000, ...(options.signal ? { signal: options.signal } : {}) });
 
   if (response.stop_reason === 'refusal') {
     return {
@@ -242,7 +247,7 @@ async function generateOpenAI(options: LLMGenerateOptions): Promise<LLMGenerateR
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${options.apiKey}` },
       body: JSON.stringify(payload),
-      signal: attemptSignal(options.signal),
+      signal: attemptSignal(options.signal, options.attemptTimeoutMs),
     })
   );
   if (!res.ok) {
@@ -316,8 +321,8 @@ export const GEMINI_FALLBACK_MODELS = [
 export const LLM_ATTEMPT_TIMEOUT_MS = 90_000;
 
 /** The caller's abort signal combined with a per-attempt timeout. */
-function attemptSignal(callerSignal: AbortSignal | undefined): AbortSignal {
-  const timeout = AbortSignal.timeout(LLM_ATTEMPT_TIMEOUT_MS);
+function attemptSignal(callerSignal: AbortSignal | undefined, ms = LLM_ATTEMPT_TIMEOUT_MS): AbortSignal {
+  const timeout = AbortSignal.timeout(ms);
   return callerSignal ? AbortSignal.any([callerSignal, timeout]) : timeout;
 }
 
@@ -416,14 +421,15 @@ async function generateGemini(options: LLMGenerateOptions): Promise<LLMGenerateR
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': options.apiKey },
         body: JSON.stringify(payload),
-        signal: attemptSignal(options.signal),
+        signal: attemptSignal(options.signal, options.attemptTimeoutMs),
       });
     } catch (err) {
       // The caller gave up: stop. This attempt hung: try the next model.
       if (options.signal?.aborted) throw err;
       if ((err as Error)?.name !== 'TimeoutError') throw err;
-      lastError = new GeminiApiError(504, model, `no response within ${LLM_ATTEMPT_TIMEOUT_MS / 1000}s`);
-      console.warn(`[llm-adapter] ${model} did not answer within ${LLM_ATTEMPT_TIMEOUT_MS / 1000}s; trying the next Gemini fallback`);
+      const waited = (options.attemptTimeoutMs ?? LLM_ATTEMPT_TIMEOUT_MS) / 1000;
+      lastError = new GeminiApiError(504, model, `no response within ${waited}s`);
+      console.warn(`[llm-adapter] ${model} did not answer within ${waited}s; trying the next Gemini fallback`);
       continue;
     }
     if (!res.ok) {

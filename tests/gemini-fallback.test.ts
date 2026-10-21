@@ -82,4 +82,22 @@ describe('Gemini fallback chain', () => {
     assert.equal(other[1].parts[0].thoughtSignature, 'skip_thought_signature_validator');
     assert.equal(messages[1].providerContent!.content[0].thoughtSignature, 'REAL_SIG', 'stored state is not mutated');
   });
+
+  test('live calls: a hung attempt moves on after the short timeout, with low reasoning', async () => {
+    const calls: Array<{ model: string; thinking: unknown }> = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const model = decodeURIComponent(String(input).match(/models\/([^:]+):/)![1]);
+      calls.push({ model, thinking: JSON.parse(String(init?.body)).generationConfig.thinkingConfig });
+      if (model === 'gemini-3.8-flash') {
+        // Hangs until the attempt is aborted.
+        await new Promise((_, reject) => init?.signal?.addEventListener('abort', () => reject(Object.assign(new Error('timeout'), { name: 'TimeoutError' }))));
+      }
+      return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: `hi from ${model}` }] } }], modelVersion: model, usageMetadata: {} }), { status: 200 });
+    }) as typeof fetch;
+    const started = Date.now();
+    const res = await generateLLMResponse({ provider: 'gemini', model: 'gemini-3.8-flash', apiKey: 'k', messages: [{ role: 'user', content: 'hi' }], reasoning: 'low', attemptTimeoutMs: 150 });
+    assert.equal(res.text, 'hi from gemini-3.7-flash');
+    assert.ok(Date.now() - started < 2_000, 'did not wait the default 90 s');
+    assert.deepEqual(calls[0].thinking, { thinkingLevel: 'low' });
+  });
 });

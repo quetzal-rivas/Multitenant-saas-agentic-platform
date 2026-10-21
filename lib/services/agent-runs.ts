@@ -348,6 +348,8 @@ export async function executeRun(runId: string, opts: { owner: string; deadlineA
       beforeStep: makeBeforeStep(run, opts.owner),
       beforeTool: makeBeforeTool(run, opts.owner),
       outputSchema: run.output_schema ?? null,
+      // A live call is waiting on voice-channel runs.
+      fast: run.channel === 'voice',
     });
     if (outcome === 'paused') {
       // Release the lease so the next slice can claim immediately.

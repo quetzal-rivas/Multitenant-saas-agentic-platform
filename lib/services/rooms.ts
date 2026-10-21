@@ -13,7 +13,7 @@ import { createTeamSession, getTeam } from './teams';
 import { updateSession } from './agent-sessions';
 import { getContextProfile, contextProfileInstructions } from './context-profiles';
 import { getVoiceProfile } from './voice-profiles';
-import { claimRun, dispatchRun, executeRun, getRun, startRun, waitForRun, workerConfigured } from './agent-runs';
+import { claimRun, dispatchRun, driveInline, executeRun, getRun, startRun, waitForRun, workerConfigured } from './agent-runs';
 import { credsFor, friendly, hasCallCompliance, requireConnection, twilioHookUrl, connectionSecrets } from './telephony';
 import { loadVoiceAgent, voiceAgentSecrets, withinCallingHours } from './voice-agents';
 import { ServiceError, isServiceError } from './errors';
@@ -39,6 +39,10 @@ const PARTICIPANT_COLUMNS = 'id, room_id, tenant_id, role, call_sid, label, addr
 export const DAILY_OUTBOUND_CAP = 200;
 export const CONCURRENT_CALL_CAP = 10;
 const ASK_TEAM_WAIT_MS = 8_000;
+/** ask_team runs the question right here for this long (no queue); the worker finishes longer ones. */
+const ASK_TEAM_INLINE_MS = 5_000;
+/** A caller is waiting: answer from what you know, reach for tools only when needed. */
+const CALL_ANSWER_STYLE = 'Answer directly and briefly; use tools only if they are really needed to answer. The voice agent will say your answer out loud.';
 const TURN_WAIT_MS = 8_000;
 const TRIGGER_COOLDOWN_MS = 60_000;
 const UTTERANCE_RETENTION_DAYS = 90;
@@ -516,7 +520,7 @@ async function turnStart(conn: Row, room: Row, agent: Row): Promise<string> {
 
 async function startTeamTurn(room: Row, text: string): Promise<string> {
   const ctx = systemCtx(room.tenant_id);
-  const run = await startRun(ctx, room.session_id, text, { origin: 'room', roomId: room.id, channel: 'voice' });
+  const run = await startRun(ctx, room.session_id, `${text}\n\n${CALL_ANSWER_STYLE}`, { origin: 'room', roomId: room.id, channel: 'voice' });
   if (workerConfigured()) await dispatchRun(run.id);
   else {
     const owner = `inline-room:${run.id}`;
@@ -680,10 +684,15 @@ export async function askTeamTool(ctx: Ctx, args: { room_id?: string; question: 
   const sys = systemCtx(room.tenant_id);
   let runId: string;
   try {
-    const run = await startRun(sys, room.session_id, `Question from the live call${room.customer_number ? ` with ${room.customer_number}` : ''}: ${args.question}\n\nAnswer briefly; the voice agent will say your answer out loud.`, { origin: 'room', roomId: room.id, channel: 'voice' });
+    const run = await startRun(sys, room.session_id, `Question from the live call${room.customer_number ? ` with ${room.customer_number}` : ''}: ${args.question}\n\n${CALL_ANSWER_STYLE}`, { origin: 'room', roomId: room.id, channel: 'voice' });
     runId = run.id;
-    if (workerConfigured()) await dispatchRun(run.id);
-    else {
+    if (workerConfigured()) {
+      // Start right away in this request (skips the queue); hand over to the worker if it needs longer.
+      const startedAt = Date.now();
+      const inline = await driveInline(run.id, ASK_TEAM_INLINE_MS).catch(() => null);
+      if (!inline || inline.status === 'paused') await dispatchRun(run.id);
+      return teamAnswerTool(ctx, { run_id: run.id }, Math.max(0, ASK_TEAM_WAIT_MS - (Date.now() - startedAt)));
+    } else {
       const owner = `inline-ask:${run.id}`;
       void (async () => {
         if (await claimRun(run.id, owner, 10 * 60_000)) await executeRun(run.id, { owner, deadlineAt: Date.now() + 9 * 60_000 });

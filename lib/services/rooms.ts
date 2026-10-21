@@ -241,8 +241,11 @@ async function hangUpRoom(room: Row, reason: string) {
   return presentRoom({ ...room, status: 'ended' });
 }
 
-/** Seconds the voice's goodbye gets before the call is cut (the tool runs while it is speaking). */
-let HANGUP_DELAY_MS = 4_000;
+/**
+ * Margin before the call is cut. ElevenLabs runs the hang-up tool after the goodbye finishes
+ * (execution_mode post_tool_speech); this only covers audio still in flight.
+ */
+let HANGUP_DELAY_MS = 1_000;
 export function setHangupDelayForTests(ms: number) {
   HANGUP_DELAY_MS = ms;
 }

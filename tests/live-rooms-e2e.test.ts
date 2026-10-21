@@ -224,6 +224,7 @@ describe('Live Rooms: Twilio rooms, Ear, Voice Front, outbound, turn-based', () 
     assert.equal(mcp.url, `${ORIGIN}/api/mcp/platform`);
     assert.deepEqual(mcp.secret_token, { secret_id: 'sec_1' });
     assert.deepEqual(mcp.request_meta, { room_id: { variable_name: 'sip_room_id' } });
+    assert.deepEqual(mcp.tool_config_overrides, [{ tool_name: 'contextcontrol_room_hangup', pre_tool_speech: 'force', execution_mode: 'post_tool_speech', interruption_mode: 'disable_during_tool' }], 'hang up after the goodbye is heard');
     const created = elCalls.find((c) => c.path === '/v1/convai/agents/create')!.body;
     assert.match(created.conversation_config.agent.prompt.prompt, /contextcontrol_room_context[\s\S]*Board Crew/);
     assert.deepEqual(created.conversation_config.agent.prompt.mcp_server_ids, ['mcp_1']);
@@ -429,7 +430,7 @@ describe('Live Rooms: Twilio rooms, Ear, Voice Front, outbound, turn-based', () 
     assert.equal(hung.room.status, 'ended');
     assert.ok(twilioCalls.some((c) => c.path === '/Conferences/CFq.json' && c.params.get('Status') === 'completed'), 'the conference is closed in Twilio');
     assert.match(tables.rooms.find((r) => r.id === room.id)!.end_reason, /the voice agent hung up: caller said goodbye/);
-    setHangupDelayForTests(4000);
+    setHangupDelayForTests(1000);
 
     // After the call, ElevenLabs' own summary is copied in (found by the room id).
     tables.rooms.find((r) => r.id === room.id)!.ended_at = new Date(Date.now() - 60_000).toISOString();

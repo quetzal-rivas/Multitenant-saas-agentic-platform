@@ -126,6 +126,10 @@ async function syncSteps(key: string, spec: ElevenLabsAgentSpec, next: ElevenLab
       approval_policy: 'auto_approve_all',
       pre_tool_speech: 'auto',
       response_timeout_secs: 30,
+      // Hang up only after the goodbye has finished playing (tools otherwise run while it speaks).
+      tool_config_overrides: [
+        { tool_name: 'contextcontrol_room_hangup', pre_tool_speech: 'force', execution_mode: 'post_tool_speech', interruption_mode: 'disable_during_tool' },
+      ],
     },
   };
   if (next.mcp_server_id) {

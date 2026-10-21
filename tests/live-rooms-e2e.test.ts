@@ -64,6 +64,10 @@ async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
       return Response.json({ detail: [{ type: 'missing', loc: ['body', 'type'], msg: 'Field required', input: body }] }, { status: 422 });
     }
     if (url.pathname === '/v1/convai/secrets') return Response.json({ type: 'stored', secret_id: 'sec_1', name: body.name });
+    if (url.pathname === '/v1/convai/settings' && method === 'PATCH') {
+      if (body?.can_use_mcp_servers === true) elMcpDenied = false;
+      return Response.json({ can_use_mcp_servers: !elMcpDenied });
+    }
     if (url.pathname === '/v1/convai/mcp-servers' && elMcpDenied) return Response.json({ detail: { status: 'mcp_not_allowed', message: 'User does not have access to MCP servers.' } }, { status: 400 });
     if (url.pathname === '/v1/convai/mcp-servers') return Response.json({ id: 'mcp_1' });
     if (url.pathname === '/v1/convai/agents/create') return Response.json({ agent_id: 'agent_1' });
@@ -396,6 +400,14 @@ describe('Live Rooms: Twilio rooms, Ear, Voice Front, outbound, turn-based', () 
       assert.equal(room.mode, 'turn_based');
       assert.match(res.text, /<Gather[^>]*input="speech"/, 'the caller hears the platform voice, not silence');
       assert.ok(tables.room_notes.some((n) => n.room_id === room.id && /not ready[\s\S]*turn-based/.test(n.text)));
+
+      // The owner enables MCP servers (accepting ElevenLabs' terms): the setting flips and the agent syncs.
+      const { enableElevenLabsMcp } = await import('../lib/services/voice-agents');
+      const enabled = await enableElevenLabsMcp(ctx, ORIGIN);
+      assert.ok(elCalls.some((c) => c.method === 'PATCH' && c.path === '/v1/convai/settings' && c.body.can_use_mcp_servers === true));
+      assert.equal(enabled.voice_agents[0].elevenlabs!.ready, true);
+      assert.equal(enabled.voice_agents[0].elevenlabs!.error, null);
+      assert.equal(elCalls.filter((c) => c.path === '/v1/convai/secrets' && c.method === 'POST').length, 1, 'the secret from the failed attempt is reused');
     } finally {
       elMcpDenied = false;
     }

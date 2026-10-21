@@ -184,6 +184,17 @@ async function syncSteps(key: string, spec: ElevenLabsAgentSpec, next: ElevenLab
   return next;
 }
 
+/** ElevenLabs reports this when the workspace has not enabled MCP servers yet. */
+export const isMcpNotEnabledError = (message: string | null | undefined) => /access to MCP servers/i.test(message ?? '');
+
+/**
+ * Turn on MCP servers for the key's ElevenLabs workspace (off by default). This accepts
+ * ElevenLabs' MCP Server terms for that workspace, so it only runs when a person asks for it.
+ */
+export async function enableElevenLabsMcpServers(key: string): Promise<void> {
+  await el(key, 'PATCH', '/v1/convai/settings', { can_use_mcp_servers: true });
+}
+
 /** Remove what we created (best effort). */
 export async function deleteElevenLabsAgent(key: string, state: ElevenLabsState) {
   const tries: Array<[string, string | undefined]> = [

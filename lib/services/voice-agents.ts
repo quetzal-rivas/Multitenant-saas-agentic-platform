@@ -4,7 +4,7 @@ import type { AuthContext } from '@/lib/auth/require-auth';
 import { envelopeDecryptSecret, envelopeEncryptSecret, type EncryptedSecretPayload } from '@/lib/secrets/envelope-encryption';
 import { getTenantSecret } from '@/lib/secrets/secrets-service';
 import { createPlatformApiKey, revokePlatformApiKey } from '@/lib/auth/api-keys';
-import { ElevenLabsSyncError, deleteElevenLabsAgent, newSipCredentials, syncElevenLabsAgent, voiceFrontPrompt, type ElevenLabsState } from '@/lib/rooms/elevenlabs';
+import { ElevenLabsSyncError, enableElevenLabsMcpServers, deleteElevenLabsAgent, newSipCredentials, syncElevenLabsAgent, voiceFrontPrompt, type ElevenLabsState } from '@/lib/rooms/elevenlabs';
 import { ROOM_TOOL_NAMES, ROOM_SCOPES } from '@/lib/mcp/tool-catalog';
 import { getTeam } from './teams';
 import { getContextProfile } from './context-profiles';
@@ -142,6 +142,20 @@ export async function updateVoiceAgent(ctx: Ctx, id: string, raw: unknown, publi
   if (error || !data) throw new Error(`Could not update the voice agent: ${error?.message}`);
   if (v.mode === 'elevenlabs') return presentVoiceAgent(await syncVoiceFront(ctx, data, publicOrigin));
   return presentVoiceAgent(data);
+}
+
+/**
+ * A person enabled MCP servers in their ElevenLabs workspace (accepting ElevenLabs' terms):
+ * flip the setting with the saved key, then sync every ElevenLabs voice agent again.
+ */
+export async function enableElevenLabsMcp(ctx: Ctx, publicOrigin: string) {
+  const elKey = await getTenantSecret(ctx.tenantId, 'elevenlabs');
+  if (!elKey) throw new ServiceError('Add an ElevenLabs key first.', 'CONFLICT');
+  await enableElevenLabsMcpServers(elKey);
+  const { data } = await getSupabaseAdminClient().from('voice_agents').select(COLUMNS).eq('tenant_id', ctx.tenantId).eq('mode', 'elevenlabs').is('archived_at', null);
+  const synced = [];
+  for (const row of data || []) synced.push(presentVoiceAgent(await syncVoiceFront(ctx, row, publicOrigin)));
+  return { enabled: true, voice_agents: synced };
 }
 
 export async function archiveVoiceAgent(ctx: Ctx, id: string) {

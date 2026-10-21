@@ -501,6 +501,22 @@ function AgentsTab({ onNotice, onNavigate }: { onNotice: (n: { ok: boolean; text
 
   const selected = agents.find((a) => a.id === selectedId) ?? null;
 
+  const [enablingMcp, setEnablingMcp] = useState(false);
+  const enableMcp = async () => {
+    setEnablingMcp(true);
+    onNotice(null);
+    try {
+      const res = await api<{ voice_agents: VoiceAgent[] }>('/api/v1/voice-agents/elevenlabs-mcp', { method: 'POST', body: '{}' });
+      await load(selectedId);
+      const failed = res.voice_agents.find((a) => a.elevenlabs?.error);
+      onNotice(failed ? { ok: false, text: `MCP servers enabled, but sync failed: ${failed.elevenlabs!.error}` } : { ok: true, text: 'MCP servers enabled and voice agents synced to ElevenLabs.' });
+    } catch (err: any) {
+      onNotice({ ok: false, text: err?.message || 'Could not enable MCP servers in ElevenLabs' });
+    } finally {
+      setEnablingMcp(false);
+    }
+  };
+
   const save = async () => {
     setSaving(true);
     onNotice(null);
@@ -652,6 +668,22 @@ function AgentsTab({ onNotice, onNavigate }: { onNotice: (n: { ok: boolean; text
             <p className={`text-xs ${selected.elevenlabs.error ? 'text-rose-400' : selected.elevenlabs.ready ? 'text-emerald-400' : 'text-amber-400'}`}>
               {selected.elevenlabs.error ? `ElevenLabs: ${selected.elevenlabs.error}` : selected.elevenlabs.ready ? `ElevenLabs agent synced ${when(selected.elevenlabs.synced_at)}.` : 'Not synced yet: save to create the ElevenLabs agent.'}
             </p>
+          )}
+          {selected?.elevenlabs?.error && /access to MCP servers/i.test(selected.elevenlabs.error) && (
+            <div className="p-3 rounded-lg border border-amber-800 bg-amber-950/20 text-xs text-amber-100 space-y-2">
+              <p>
+                ElevenLabs keeps MCP servers off until the workspace accepts its MCP Server terms. The voice agent needs them to reach your team and the call tools.
+                Until then, calls use the platform&apos;s turn-based voice.
+              </p>
+              <button
+                onClick={enableMcp}
+                disabled={enablingMcp}
+                className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-semibold disabled:opacity-50"
+              >
+                {enablingMcp ? 'Enabling…' : 'Enable MCP servers in ElevenLabs and sync'}
+              </button>
+              <p className="text-[11px] text-amber-200/70">This accepts ElevenLabs&apos; MCP Server terms for the workspace of your saved ElevenLabs key.</p>
+            </div>
           )}
         </section>
 

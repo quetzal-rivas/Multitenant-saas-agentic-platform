@@ -157,7 +157,7 @@ async function syncSteps(key: string, spec: ElevenLabsAgentSpec, next: ElevenLab
           },
         },
         // Filled per call from SIP headers (X-Room-Id, X-Contact-Brief).
-        dynamic_variable_placeholders: { sip_room_id: 'test-room', sip_contact_brief: 'No earlier conversations with this number.' },
+        dynamic_variables: { dynamic_variable_placeholders: { sip_room_id: 'test-room', sip_contact_brief: 'No earlier conversations with this number.' } },
       },
       conversation: { max_duration_seconds: spec.maxSeconds },
       ...(spec.voiceId ? { tts: { voice_id: spec.voiceId } } : {}),

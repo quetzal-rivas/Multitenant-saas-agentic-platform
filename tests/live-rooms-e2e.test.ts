@@ -403,7 +403,7 @@ describe('Live Rooms: Twilio rooms, Ear, Voice Front, outbound, turn-based', () 
 
     const created = elCalls.filter((c) => c.path === '/v1/convai/agents/create').at(-1)!.body;
     assert.deepEqual(created.conversation_config.agent.prompt.built_in_tools.end_call.params, { system_tool_type: 'end_call' });
-    assert.ok(created.conversation_config.agent.dynamic_variable_placeholders.sip_contact_brief);
+    assert.ok(created.conversation_config.agent.dynamic_variables.dynamic_variable_placeholders.sip_contact_brief);
     assert.match(created.conversation_config.agent.prompt.prompt, /\{\{sip_contact_brief\}\}/);
 
     const caller = '+13055550100';

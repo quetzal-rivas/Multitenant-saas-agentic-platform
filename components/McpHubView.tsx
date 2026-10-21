@@ -131,7 +131,8 @@ export const McpHubView: React.FC<McpHubViewProps> = ({ onOpenPlatformMcp }) => 
     return (
       connections.platform.tool_count +
       connections.google.connectors.reduce((n, c) => n + c.tools.length, 0) +
-      (connections.web_search.available ? 1 : 0)
+      (connections.web_search.available ? 1 : 0) +
+      1 // fetch_url
     );
   }, [connections]);
 
@@ -359,8 +360,9 @@ const ConnectionsTab: React.FC<{ data: Connections; onChanged: () => void; onOpe
           <div>
             <h2 className="text-sm font-semibold text-white flex items-center gap-2"><Search className="w-4 h-4 text-amber-400" /> Web search</h2>
             <p className="text-xs text-zinc-400 mt-1">
-              Tool <span className="font-mono text-zinc-200">web_search</span>: searches the web with your organization&apos;s own LLM key and returns an answer with source links.
-              Gemini uses Google Search; Claude and OpenAI use their own web search.
+              Tool <span className="font-mono text-zinc-200">web_search</span>: searches the web with your organization&apos;s own keys and returns an answer with source links
+              (Gemini with Google Search, then Claude, OpenAI or xAI Grok; a provider out of quota hands over to the next).
+              Tool <span className="font-mono text-zinc-200">fetch_url</span>: reads a public web page as text, with no key. Add them to a profile and give it to a team member.
             </p>
           </div>
           <span className={`text-[10px] px-2 py-0.5 rounded border ${data.web_search.available ? 'text-emerald-300 border-emerald-800 bg-emerald-950/40' : 'text-zinc-400 border-zinc-700'}`}>
@@ -424,6 +426,12 @@ const ProfilesTab: React.FC<{ connections: Connections }> = ({ connections }) =>
       name: 'Web search',
       tools: [{ name: 'web_search', description: 'Search the web with your LLM key', read_only: true }],
       reason: connections.web_search.available ? null : 'Add an LLM key first',
+    });
+    groups.push({
+      id: 'fetch_url',
+      name: 'Read web pages',
+      tools: [{ name: 'fetch_url', description: 'Read a public web page (title, description, headings, text). No key needed.', read_only: true }],
+      reason: null,
     });
     return groups;
   }, [connections]);

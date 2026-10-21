@@ -70,7 +70,13 @@ export const twilio = {
   },
 
   /** Outbound call whose TwiML is served by `url` (our outbound handler). */
-  async createCall(creds: TwilioCreds, p: { to: string; from: string; url: string; statusCallback: string; machineDetection?: boolean; timeLimit?: number }) {
+  /**
+   * Outbound call. With `amdCallback`, answering-machine detection runs asynchronously: the call
+   * connects at once and the verdict arrives at that URL (synchronous AMD holds the person in
+   * silence while it decides). The speech threshold is raised from Twilio's 2400 ms default to
+   * cut "machine" verdicts on people who answer with more than a word.
+   */
+  async createCall(creds: TwilioCreds, p: { to: string; from: string; url: string; statusCallback: string; amdCallback?: string; timeLimit?: number }) {
     return call<{ sid: string }>(creds, 'POST', '/Calls.json', {
       To: p.to,
       From: p.from,
@@ -79,7 +85,9 @@ export const twilio = {
       StatusCallback: p.statusCallback,
       StatusCallbackMethod: 'POST',
       StatusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
-      ...(p.machineDetection ? { MachineDetection: 'Enable' } : {}),
+      ...(p.amdCallback
+        ? { MachineDetection: 'Enable', AsyncAmd: 'true', AsyncAmdStatusCallback: p.amdCallback, AsyncAmdStatusCallbackMethod: 'POST', MachineDetectionSpeechThreshold: 3500 }
+        : {}),
       ...(p.timeLimit ? { TimeLimit: p.timeLimit } : {}),
     });
   },

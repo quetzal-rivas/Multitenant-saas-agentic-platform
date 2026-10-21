@@ -606,7 +606,7 @@ export async function placeCall(ctx: Ctx, args: { to: string; voice_agent_id?: s
       from: from.e164,
       url: twilioHookUrl(conn, 'outbound', { room: room.id }),
       statusCallback: twilioHookUrl(conn, 'participant', { room: room.id, role: 'customer' }),
-      machineDetection: true,
+      amdCallback: twilioHookUrl(conn, 'amd', { room: room.id }),
       timeLimit: agent.max_minutes * 60,
     });
     await addParticipantRow(room, { role: 'customer', call_sid: call.sid, label: args.to, address: args.to });
@@ -862,6 +862,19 @@ async function collectElevenLabsSummaries(now: number): Promise<number> {
     done++;
   }
   return done;
+}
+
+/**
+ * Asynchronous answering-machine verdict for an outbound call (the call is already connected).
+ * Only a clear machine or fax ends it; "human" and "unknown" keep the conversation going.
+ */
+export async function handleAmdResult(conn: Row, roomId: string, p: Record<string, string>) {
+  const room = await loadRoom(roomId);
+  if (!room || room.tenant_id !== conn.tenant_id || room.status === 'ended' || room.status === 'failed') return;
+  const verdict = p.AnsweredBy || 'unknown';
+  if (!/^machine|^fax/.test(verdict)) return;
+  await addNote(room, { text: `Voicemail or machine answered (${verdict}); the call was ended without leaving a message.`, level: 'info', author: 'Calls' });
+  await hangUpRoom(room, 'voicemail');
 }
 
 /** Status callback of an inbound call (set on the number): close turn-based rooms when the caller hangs up. */

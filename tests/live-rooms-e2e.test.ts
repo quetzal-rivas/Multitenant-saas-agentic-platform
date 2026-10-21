@@ -365,15 +365,29 @@ describe('Live Rooms: Twilio rooms, Ear, Voice Front, outbound, turn-based', () 
     assert.equal(dial.params.get('To'), '+5215511112222');
     assert.equal(dial.params.get('From'), '+15550001111');
     assert.equal(dial.params.get('MachineDetection'), 'Enable');
+    // Asynchronous detection: the person hears the call at once; the verdict comes later.
+    assert.equal(dial.params.get('AsyncAmd'), 'true');
+    assert.equal(dial.params.get('AsyncAmdStatusCallback'), `${ORIGIN}/api/voice/twilio/${conn.id}/amd?room=${res.room_id}`);
+    assert.equal(dial.params.get('MachineDetectionSpeechThreshold'), '3500');
     assert.equal(dial.params.get('Url'), `${ORIGIN}/api/voice/twilio/${conn.id}/outbound?room=${res.room_id}`);
 
-    const machine = await hook(conn.id, 'outbound', { CallSid: 'CAo', AnsweredBy: 'machine_start' }, { room: res.room_id });
-    assert.match(machine.text, /<Hangup\/>/);
+    // Answered: connected right away (consent, Ear, conference), no verdict yet.
+    const answered = await hook(conn.id, 'outbound', { CallSid: 'CAo' }, { room: res.room_id });
+    assert.match(answered.text, /<Say[\s\S]*<Start><Transcription[\s\S]*<Conference/);
+    tables.rooms.find((r) => r.id === res.room_id)!.provider_room_sid = 'CFo';
+
+    // "human" or "unknown" keeps the call; a machine verdict ends it.
+    await hook(conn.id, 'amd', { CallSid: 'CAo', AnsweredBy: 'unknown' }, { room: res.room_id });
+    assert.notEqual(tables.rooms.find((r) => r.id === res.room_id)!.status, 'ended');
+    await hook(conn.id, 'amd', { CallSid: 'CAo', AnsweredBy: 'machine_start' }, { room: res.room_id });
     assert.equal(tables.rooms.find((r) => r.id === res.room_id)!.end_reason, 'voicemail');
+    assert.ok(twilioCalls.some((c) => c.path === '/Conferences/CFo.json' && c.params.get('Status') === 'completed'));
 
     const second = await placeCall(ctx, { to: '+5215511113333', voice_agent_id: agent.id });
-    const human = await hook(conn.id, 'outbound', { CallSid: 'CAo2', AnsweredBy: 'human' }, { room: second.room_id });
+    const human = await hook(conn.id, 'outbound', { CallSid: 'CAo2' }, { room: second.room_id });
     assert.match(human.text, /<Start><Transcription[\s\S]*<Conference/);
+    await hook(conn.id, 'amd', { CallSid: 'CAo2', AnsweredBy: 'human' }, { room: second.room_id });
+    assert.notEqual(tables.rooms.find((r) => r.id === second.room_id)!.status, 'ended');
 
     // The agent tool requires its own scope (voice agents' keys don't have it).
     const { getAuthorizedPlatformTools } = await import('../lib/mcp/tool-catalog');

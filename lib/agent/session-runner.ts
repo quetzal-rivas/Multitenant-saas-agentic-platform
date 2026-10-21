@@ -148,6 +148,9 @@ function providerError(provider: string, err: unknown): ServiceError {
   if (err instanceof Anthropic.APIError) {
     return new ServiceError(`Anthropic API error (${err.status ?? 'network'}): ${err.message}`, 'INVALID', 502);
   }
+  if ((err as Error)?.name === 'TimeoutError' || (err as Error)?.name === 'AbortError') {
+    return new ServiceError(`The ${provider} model did not answer in time (live calls wait at most ${FAST_TOTAL_TIMEOUT_MS / 1000} s).`, 'INVALID', 504);
+  }
   const message = err instanceof Error ? err.message : String(err);
   // OpenAI (401) and Gemini (400 API_KEY_INVALID) report a bad key without a typed error.
   if (/API_KEY_INVALID|API key not valid|Incorrect API key|invalid_api_key|\(401\)/i.test(message)) {
@@ -244,6 +247,9 @@ export interface TurnControl {
 
 /** Per-attempt model timeout during live calls (normal runs keep the adapter default). */
 export const FAST_ATTEMPT_TIMEOUT_MS = 12_000;
+/** A live call never waits longer than this for one model answer, across all fallback models. */
+export const FAST_TOTAL_TIMEOUT_MS = 20_000;
+const fastOptions = () => ({ reasoning: 'low' as const, attemptTimeoutMs: FAST_ATTEMPT_TIMEOUT_MS, signal: AbortSignal.timeout(FAST_TOTAL_TIMEOUT_MS) });
 
 async function runToolLoop(opts: {
   generate: typeof generateLLMResponse;
@@ -298,7 +304,7 @@ async function runToolLoop(opts: {
         systemPrompt: opts.systemPrompt,
         messages: opts.messages,
         tools: defs,
-        ...(opts.fast ? { reasoning: 'low' as const, attemptTimeoutMs: FAST_ATTEMPT_TIMEOUT_MS } : {}),
+        ...(opts.fast ? fastOptions() : {}),
       });
       await opts.onModelCall?.({ latencyMs: Date.now() - startedAt, tokens: result.usage.totalTokens, model: result.model ?? opts.model ?? null }).catch(() => undefined);
     } catch (err) {
@@ -390,7 +396,7 @@ async function runToolLoop(opts: {
       systemPrompt: opts.systemPrompt,
       messages: [...opts.messages, wrapUp],
       tools: defs,
-      ...(opts.fast ? { reasoning: 'low' as const, attemptTimeoutMs: FAST_ATTEMPT_TIMEOUT_MS } : {}),
+      ...(opts.fast ? fastOptions() : {}),
     });
     opts.usage.inputTokens += wrap.usage.inputTokens;
     opts.usage.outputTokens += wrap.usage.outputTokens;

@@ -64,6 +64,11 @@ async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
       return Response.json({ detail: [{ type: 'missing', loc: ['body', 'type'], msg: 'Field required', input: body }] }, { status: 422 });
     }
     if (url.pathname === '/v1/convai/secrets') return Response.json({ type: 'stored', secret_id: 'sec_1', name: body.name });
+    if (url.pathname.endsWith('/tool-configs') && method === 'POST') {
+      if (toolConfigs.has(url.pathname + body.tool_name)) return Response.json({ detail: { message: 'already exists' } }, { status: 409 });
+      toolConfigs.add(url.pathname + body.tool_name);
+      return Response.json({ id: 'mcp_1' });
+    }
     if (url.pathname === '/v1/convai/conversations' && method === 'GET') {
       const room = (url.searchParams.get('dynamic_variable_params') || '').replace('sip_room_id:eq:', '');
       const summary = elSummaries.get(room);
@@ -97,6 +102,7 @@ function twilioSign(url: string, params: Record<string, string>, token = TOKEN) 
 let elMcpDenied = false;
 const takenSipIds = new Set<string>();
 const elSummaries = new Map<string, string>();
+const toolConfigs = new Set<string>();
 async function hook(connId: string, action: string, params: Record<string, string>, query: Record<string, string> = {}, token = TOKEN) {
   const qs = new URLSearchParams(query).toString();
   const url = `${ORIGIN}/api/voice/twilio/${connId}/${action}${qs ? `?${qs}` : ''}`;
@@ -154,6 +160,7 @@ describe('Live Rooms: Twilio rooms, Ear, Voice Front, outbound, turn-based', () 
     twilioCalls.length = 0;
     elCalls.length = 0;
     twilioRejects = false;
+    toolConfigs.clear();
     resetTables([
       'telephony_connections', 'phone_numbers', 'voice_agents', 'rooms', 'room_participants', 'utterances', 'room_notes', 'call_blocklist',
       'agent_runs', 'agent_sessions', 'agent_teams', 'team_workers', 'checkpoints', 'run_events', 'encrypted_secrets', 'mcp_profiles',
@@ -224,7 +231,8 @@ describe('Live Rooms: Twilio rooms, Ear, Voice Front, outbound, turn-based', () 
     assert.equal(mcp.url, `${ORIGIN}/api/mcp/platform`);
     assert.deepEqual(mcp.secret_token, { secret_id: 'sec_1' });
     assert.deepEqual(mcp.request_meta, { room_id: { variable_name: 'sip_room_id' } });
-    assert.deepEqual(mcp.tool_config_overrides, [{ tool_name: 'contextcontrol_room_hangup', pre_tool_speech: 'force', execution_mode: 'post_tool_speech', interruption_mode: 'disable_during_tool' }], 'hang up after the goodbye is heard');
+    const override = elCalls.find((c) => c.method === 'POST' && c.path === '/v1/convai/mcp-servers/mcp_1/tool-configs')!.body;
+    assert.deepEqual(override, { tool_name: 'contextcontrol_room_hangup', pre_tool_speech: 'force', execution_mode: 'post_tool_speech', interruption_mode: 'disable_during_tool' }, 'hang up after the goodbye is heard');
     const created = elCalls.find((c) => c.path === '/v1/convai/agents/create')!.body;
     assert.match(created.conversation_config.agent.prompt.prompt, /contextcontrol_room_context[\s\S]*Board Crew/);
     assert.deepEqual(created.conversation_config.agent.prompt.mcp_server_ids, ['mcp_1']);
@@ -238,6 +246,7 @@ describe('Live Rooms: Twilio rooms, Ear, Voice Front, outbound, turn-based', () 
     await updateVoiceAgent(ctx, agent.id, { name: 'Reception', mode: 'elevenlabs', team_id: team, mcp_profile_id: mcpProfile }, ORIGIN);
     assert.equal(elCalls.filter((c) => c.path === '/v1/convai/agents/create').length, 1);
     assert.ok(elCalls.some((c) => c.method === 'PATCH' && c.path === '/v1/convai/agents/agent_1'));
+    assert.ok(elCalls.some((c) => c.method === 'PATCH' && c.path === '/v1/convai/mcp-servers/mcp_1/tool-configs/contextcontrol_room_hangup'), 'saving again updates the existing tool setting');
     assert.ok(tables.mcp_api_keys[0].revoked_at, 'previous key revoked');
   });
 

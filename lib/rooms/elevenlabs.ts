@@ -52,6 +52,14 @@ async function el<T = any>(key: string, method: 'GET' | 'POST' | 'PATCH' | 'DELE
   return data as T;
 }
 
+/**
+ * Hang up only after the goodbye has finished playing: by default ElevenLabs runs tools while
+ * the agent is still speaking, which cut the goodbye off.
+ */
+export const MCP_TOOL_OVERRIDES = [
+  { tool_name: 'contextcontrol_room_hangup', pre_tool_speech: 'force', execution_mode: 'post_tool_speech', interruption_mode: 'disable_during_tool' },
+] as const;
+
 export interface ElevenLabsState {
   agent_id?: string;
   mcp_server_id?: string;
@@ -126,10 +134,6 @@ async function syncSteps(key: string, spec: ElevenLabsAgentSpec, next: ElevenLab
       approval_policy: 'auto_approve_all',
       pre_tool_speech: 'auto',
       response_timeout_secs: 30,
-      // Hang up only after the goodbye has finished playing (tools otherwise run while it speaks).
-      tool_config_overrides: [
-        { tool_name: 'contextcontrol_room_hangup', pre_tool_speech: 'force', execution_mode: 'post_tool_speech', interruption_mode: 'disable_during_tool' },
-      ],
     },
   };
   if (next.mcp_server_id) {
@@ -139,6 +143,14 @@ async function syncSteps(key: string, spec: ElevenLabsAgentSpec, next: ElevenLab
     });
   }
   if (!next.mcp_server_id) next.mcp_server_id = (await el<{ id: string }>(key, 'POST', '/v1/convai/mcp-servers', mcpConfig)).id;
+
+  // Per-tool settings live in a sub-resource (the server PATCH ignores them): create, or update if present.
+  for (const { tool_name, ...settings } of MCP_TOOL_OVERRIDES) {
+    await el(key, 'POST', `/v1/convai/mcp-servers/${next.mcp_server_id}/tool-configs`, { tool_name, ...settings }).catch(async (err) => {
+      if (!(err instanceof ElevenLabsError && err.status === 409)) throw err;
+      await el(key, 'PATCH', `/v1/convai/mcp-servers/${next.mcp_server_id}/tool-configs/${encodeURIComponent(tool_name)}`, settings);
+    });
+  }
 
   // 3. The agent.
   const agentBody = {

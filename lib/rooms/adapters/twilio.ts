@@ -49,13 +49,15 @@ export const twilio = {
     return call(creds, 'GET', '.json');
   },
 
-  async listNumbers(creds: TwilioCreds): Promise<Array<{ sid: string; e164: string; friendly_name: string; capabilities: Record<string, boolean> }>> {
+  async listNumbers(creds: TwilioCreds): Promise<Array<{ sid: string; e164: string; friendly_name: string; capabilities: Record<string, boolean>; voice_url: string | null; sms_url: string | null }>> {
     const data = await call(creds, 'GET', '/IncomingPhoneNumbers.json', { PageSize: 200 });
     return (data.incoming_phone_numbers || []).map((n: any) => ({
       sid: n.sid,
       e164: n.phone_number,
       friendly_name: n.friendly_name,
       capabilities: { voice: !!n.capabilities?.voice, sms: !!n.capabilities?.sms },
+      voice_url: n.voice_url || null,
+      sms_url: n.sms_url || null,
     }));
   },
 

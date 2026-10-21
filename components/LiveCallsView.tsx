@@ -773,6 +773,7 @@ function AgentsTab({ onNotice, onNavigate }: { onNotice: (n: { ok: boolean; text
 function SetupTab({ onNotice }: { onNotice: (n: { ok: boolean; text: string } | null) => void }) {
   const [status, setStatus] = useState<{ connection: any; compliance_attested_at: string | null } | null>(null);
   const [numbers, setNumbers] = useState<PhoneNumberRow[]>([]);
+  const [health, setHealth] = useState<Record<string, { voice: string; sms: string; voice_target: string | null }>>({});
   const [agents, setAgents] = useState<Named[]>([]);
   const [sid, setSid] = useState('');
   const [token, setToken] = useState('');
@@ -787,6 +788,12 @@ function SetupTab({ onNotice }: { onNotice: (n: { ok: boolean; text: string } | 
     setStatus(s);
     setNumbers(n.numbers);
     setAgents(a.voice_agents);
+    // Where each number really points in Twilio (another app may have taken it).
+    if (s.connection && n.numbers.some((x) => x.voice_agent_id || x.sms_endpoint_id)) {
+      api<{ numbers: Array<{ id: string; voice: string; sms: string; voice_target: string | null }> }>('/api/v1/telephony/numbers/health')
+        .then((h) => setHealth(Object.fromEntries(h.numbers.map((x) => [x.id, x]))))
+        .catch(() => setHealth({}));
+    } else setHealth({});
   }, []);
 
   useEffect(() => {
@@ -888,6 +895,26 @@ function SetupTab({ onNotice }: { onNotice: (n: { ok: boolean; text: string } | 
                   />
                   SMS → Webhooks
                 </label>
+              )}
+              {(health[n.id]?.voice === 'elsewhere' || health[n.id]?.voice === 'missing' || health[n.id]?.sms === 'elsewhere') && (
+                <div className="sm:col-span-3 p-2.5 rounded-lg border border-amber-800 bg-amber-950/20 text-amber-100 flex flex-wrap items-center justify-between gap-2">
+                  <span>
+                    {health[n.id].voice === 'missing'
+                      ? 'This number is no longer in your Twilio account. Sync from Twilio.'
+                      : health[n.id].voice === 'elsewhere'
+                        ? `Calls to this number go to ${health[n.id].voice_target}, not Context Control (another app changed it in Twilio, e.g. importing the number into ElevenLabs).`
+                        : 'SMS to this number go to another app, not Context Control.'}
+                  </span>
+                  {health[n.id].voice !== 'missing' && (
+                    <button
+                      disabled={busy}
+                      onClick={() => run(() => api(`/api/v1/telephony/numbers/${n.id}`, { method: 'PATCH', body: JSON.stringify({ voice_agent_id: n.voice_agent_id, sms_to_webhooks: !!n.sms_endpoint_id }) }), 'The number points to Context Control again.')}
+                      className="px-2.5 py-1 rounded-md bg-amber-600 hover:bg-amber-500 text-white font-semibold disabled:opacity-50"
+                    >
+                      Point it back to Context Control
+                    </button>
+                  )}
+                </div>
               )}
             </div>
           ))}

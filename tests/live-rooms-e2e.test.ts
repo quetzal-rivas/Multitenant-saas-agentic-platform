@@ -46,9 +46,12 @@ async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
     if (twilioRejects) return Response.json({ message: 'Authenticate', code: 20003 }, { status: 401 });
     if (path === '.json') return Response.json({ sid: AC, status: 'active' });
     if (path === '/IncomingPhoneNumbers.json') {
-      return Response.json({ incoming_phone_numbers: [{ sid: 'PN1', phone_number: '+15550001111', friendly_name: 'Main', capabilities: { voice: true, sms: true } }] });
+      return Response.json({ incoming_phone_numbers: [{ sid: 'PN1', phone_number: '+15550001111', friendly_name: 'Main', capabilities: { voice: true, sms: true }, voice_url: numberVoiceUrl, sms_url: null }] });
     }
-    if (path.startsWith('/IncomingPhoneNumbers/')) return Response.json({ sid: 'PN1' });
+    if (path.startsWith('/IncomingPhoneNumbers/')) {
+      if (params.has('VoiceUrl')) numberVoiceUrl = params.get('VoiceUrl');
+      return Response.json({ sid: 'PN1' });
+    }
     if (path === '/Keys.json') return Response.json({ sid: 'SK' + 'b'.repeat(32), secret: 'api-key-secret' });
     if (path === '/Applications.json') return Response.json({ sid: 'AP' + 'c'.repeat(32) });
     if (path.startsWith('/Applications/')) return Response.json({});
@@ -106,6 +109,7 @@ let elMcpDenied = false;
 const takenSipIds = new Set<string>();
 const elSummaries = new Map<string, string>();
 const toolConfigs = new Set<string>();
+let numberVoiceUrl: string | null = null;
 async function hook(connId: string, action: string, params: Record<string, string>, query: Record<string, string> = {}, token = TOKEN) {
   const qs = new URLSearchParams(query).toString();
   const url = `${ORIGIN}/api/voice/twilio/${connId}/${action}${qs ? `?${qs}` : ''}`;
@@ -164,6 +168,7 @@ describe('Live Rooms: Twilio rooms, Ear, Voice Front, outbound, turn-based', () 
     elCalls.length = 0;
     twilioRejects = false;
     toolConfigs.clear();
+    numberVoiceUrl = null;
     resetTables([
       'telephony_connections', 'phone_numbers', 'voice_agents', 'rooms', 'room_participants', 'utterances', 'room_notes', 'call_blocklist',
       'agent_runs', 'agent_sessions', 'agent_teams', 'team_workers', 'checkpoints', 'run_events', 'encrypted_secrets', 'mcp_profiles',
@@ -470,6 +475,23 @@ describe('Live Rooms: Twilio rooms, Ear, Voice Front, outbound, turn-based', () 
     assert.equal(after.end_reason, 'caller hung up');
     assert.equal(after.summary, 'Quetzal called to say his name; nothing pending.');
     assert.match(prompts.at(-1)!.last, /The call has ended/);
+  });
+
+  test('number health: a number taken by another app is detected and can be pointed back', async () => {
+    await connect();
+    const agent = await voiceFront();
+    await configureNumber(ctx, tables.phone_numbers[0].id, { voice_agent_id: agent.id });
+    const { numbersHealth } = await import('../lib/services/telephony');
+    assert.equal((await numbersHealth(ctx))[0].voice, 'ok');
+
+    // Importing the number into ElevenLabs rewrites its webhook in Twilio.
+    numberVoiceUrl = 'https://api.us.elevenlabs.io/twilio/inbound_call';
+    const taken = (await numbersHealth(ctx))[0];
+    assert.equal(taken.voice, 'elsewhere');
+    assert.equal(taken.voice_target, 'api.us.elevenlabs.io');
+
+    await configureNumber(ctx, tables.phone_numbers[0].id, { voice_agent_id: agent.id });
+    assert.equal((await numbersHealth(ctx))[0].voice, 'ok', 'pointed back');
   });
 
   test('a voice that is not in the current ElevenLabs account: synced with the default voice and flagged', async () => {

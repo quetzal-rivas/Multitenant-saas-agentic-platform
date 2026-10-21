@@ -153,6 +153,53 @@ export async function listNumbers(ctx: Pick<Ctx, 'tenantId'>) {
   return data || [];
 }
 
+export interface NumberHealth {
+  id: string;
+  e164: string;
+  /** ok: calls reach Context Control; elsewhere: another app took the number; missing: no longer in the Twilio account. */
+  voice: 'ok' | 'elsewhere' | 'missing' | 'unassigned';
+  sms: 'ok' | 'elsewhere' | 'off';
+  /** Where calls go instead (host only), when voice is "elsewhere". */
+  voice_target: string | null;
+}
+
+const hostOf = (url: string | null) => {
+  if (!url) return null;
+  try {
+    return new URL(url).host;
+  } catch {
+    return url.slice(0, 80);
+  }
+};
+
+/**
+ * Does each assigned number still point to Context Control in Twilio? Another app (e.g.
+ * importing the number into ElevenLabs) can rewrite its webhooks without us knowing.
+ */
+export async function numbersHealth(ctx: Pick<Ctx, 'tenantId'>): Promise<NumberHealth[]> {
+  const { conn, creds } = await requireConnection(ctx.tenantId);
+  let remote;
+  try {
+    remote = await twilio.listNumbers(creds);
+  } catch (err) {
+    throw new ServiceError(friendly(err), 'CONFLICT');
+  }
+  const local = await listNumbers(ctx);
+  const expectedVoice = twilioHookUrl(conn, 'incoming');
+  return local.map((n: Row) => {
+    const r = remote.find((x) => x.sid === n.provider_sid);
+    const expectedSms = n.sms_endpoint_id ? `${conn.public_origin}/api/hooks/${n.sms_endpoint_id}` : null;
+    const voice: NumberHealth['voice'] = !n.voice_agent_id ? 'unassigned' : !r ? 'missing' : r.voice_url === expectedVoice ? 'ok' : 'elsewhere';
+    return {
+      id: n.id,
+      e164: n.e164,
+      voice,
+      sms: !expectedSms ? 'off' : r?.sms_url === expectedSms ? 'ok' : 'elsewhere',
+      voice_target: voice === 'elsewhere' ? hostOf(r?.voice_url ?? null) ?? '(no webhook)' : null,
+    };
+  });
+}
+
 /** Pull the numbers that exist in the Twilio account. */
 export async function syncNumbers(ctx: Pick<Ctx, 'tenantId'>) {
   const { conn, creds } = await requireConnection(ctx.tenantId);

@@ -8,6 +8,7 @@ import { recoverStaleRuns } from '@/lib/services/agent-runs';
 import { processDueTasks } from '@/lib/services/scheduled-tasks';
 import { sweepInbound } from '@/lib/services/inbound';
 import { sweepRooms } from '@/lib/services/rooms';
+import { resyncOutdatedVoiceAgents } from '@/lib/services/voice-agents';
 
 /**
  * Called every minute by Supabase pg_cron (public.trigger_heartbeat_tick) with the
@@ -39,7 +40,12 @@ export async function POST(req: NextRequest) {
       console.error('[heartbeats:tick] rooms sweep failed', err);
       return null;
     });
-    return NextResponse.json({ processed: outcomes.length, outcomes, tasks, runs, inbound, rooms });
+    // Voice agents set up by an older version of the ElevenLabs sync get the current one.
+    const voice = await resyncOutdatedVoiceAgents().catch((err) => {
+      console.error('[heartbeats:tick] voice agent resync failed', err);
+      return null;
+    });
+    return NextResponse.json({ processed: outcomes.length, outcomes, tasks, runs, inbound, rooms, voice });
   } catch (err) {
     return errorResponse(err, 'heartbeats:tick');
   }

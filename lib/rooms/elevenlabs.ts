@@ -60,11 +60,21 @@ export const MCP_TOOL_OVERRIDES = [
   { tool_name: 'contextcontrol_room_hangup', pre_tool_speech: 'force', execution_mode: 'post_tool_speech', interruption_mode: 'disable_during_tool' },
 ] as const;
 
+/**
+ * Version of what a sync sets up in ElevenLabs (prompt, tools, per-tool settings, variables).
+ * Bump it whenever that changes: voice agents synced with an older version are re-synced
+ * automatically by the minute tick, so every organization gets the improvement.
+ */
+export const ELEVENLABS_SYNC_VERSION = 1;
+
 export interface ElevenLabsState {
   agent_id?: string;
   mcp_server_id?: string;
   secret_id?: string;
   phone_number_id?: string;
+  /** ELEVENLABS_SYNC_VERSION of the last successful sync, and of the last automatic attempt. */
+  sync_version?: number;
+  sync_attempted_version?: number;
   /** SIP identifier the conference dials: sip:<sip_identifier>@sip.rtc.elevenlabs.io */
   sip_identifier?: string;
   synced_at?: string;
@@ -215,6 +225,7 @@ async function syncSteps(key: string, spec: ElevenLabsAgentSpec, next: ElevenLab
     next.phone_number_id = created.phone_number_id;
   }
   next.sip_identifier = sipIdentifier;
+  next.sync_version = ELEVENLABS_SYNC_VERSION;
   next.synced_at = new Date().toISOString();
   next.error = null;
   return next;

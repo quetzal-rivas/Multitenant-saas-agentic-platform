@@ -477,6 +477,35 @@ describe('Live Rooms: Twilio rooms, Ear, Voice Front, outbound, turn-based', () 
     assert.match(prompts.at(-1)!.last, /The call has ended/);
   });
 
+  test('voice agents synced by an older version are re-synced automatically, once per version if it fails', async () => {
+    await connect();
+    const agent = await voiceFront();
+    const { resyncOutdatedVoiceAgents } = await import('../lib/services/voice-agents');
+    const { ELEVENLABS_SYNC_VERSION } = await import('../lib/rooms/elevenlabs');
+    const row = () => tables.voice_agents.find((v) => v.id === agent.id)!;
+    assert.equal(row().provider_state.elevenlabs.sync_version, ELEVENLABS_SYNC_VERSION);
+    assert.deepEqual(await resyncOutdatedVoiceAgents(), { resynced: 0, failed: 0 }, 'up to date: nothing to do');
+
+    // Synced before the current version (e.g. before the hang-up tool existed).
+    row().provider_state.elevenlabs.sync_version = ELEVENLABS_SYNC_VERSION - 1;
+    const patches = elCalls.filter((c) => c.method === 'PATCH' && c.path === '/v1/convai/agents/agent_1').length;
+    assert.deepEqual(await resyncOutdatedVoiceAgents(), { resynced: 1, failed: 0 });
+    assert.equal(row().provider_state.elevenlabs.sync_version, ELEVENLABS_SYNC_VERSION);
+    assert.ok(elCalls.filter((c) => c.method === 'PATCH' && c.path === '/v1/convai/agents/agent_1').length > patches);
+
+    // A failing automatic attempt is not retried every minute (agent from an older version, never auto-tried).
+    row().provider_state.elevenlabs.sync_version = ELEVENLABS_SYNC_VERSION - 1;
+    row().provider_state.elevenlabs.sync_attempted_version = ELEVENLABS_SYNC_VERSION - 1;
+    elMcpDenied = true;
+    try {
+      tables.voice_agents.find((v) => v.id === agent.id)!.provider_state.elevenlabs.mcp_server_id = undefined;
+      assert.deepEqual(await resyncOutdatedVoiceAgents(), { resynced: 0, failed: 1 });
+      assert.deepEqual(await resyncOutdatedVoiceAgents(), { resynced: 0, failed: 0 });
+    } finally {
+      elMcpDenied = false;
+    }
+  });
+
   test('number health: a number taken by another app is detected and can be pointed back', async () => {
     await connect();
     const agent = await voiceFront();

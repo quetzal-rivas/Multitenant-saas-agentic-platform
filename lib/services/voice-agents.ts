@@ -4,7 +4,7 @@ import type { AuthContext } from '@/lib/auth/require-auth';
 import { envelopeDecryptSecret, envelopeEncryptSecret, type EncryptedSecretPayload } from '@/lib/secrets/envelope-encryption';
 import { getTenantSecret } from '@/lib/secrets/secrets-service';
 import { createPlatformApiKey, revokePlatformApiKey } from '@/lib/auth/api-keys';
-import { ElevenLabsSyncError, enableElevenLabsMcpServers, voiceAvailable, deleteElevenLabsAgent, newSipCredentials, syncElevenLabsAgent, voiceFrontPrompt, type ElevenLabsState } from '@/lib/rooms/elevenlabs';
+import { ELEVENLABS_SYNC_VERSION, ElevenLabsSyncError, enableElevenLabsMcpServers, voiceAvailable, deleteElevenLabsAgent, newSipCredentials, syncElevenLabsAgent, voiceFrontPrompt, type ElevenLabsState } from '@/lib/rooms/elevenlabs';
 import { ROOM_TOOL_NAMES, ROOM_SCOPES } from '@/lib/mcp/tool-catalog';
 import { getTeam } from './teams';
 import { getContextProfile } from './context-profiles';
@@ -142,6 +142,36 @@ export async function updateVoiceAgent(ctx: Ctx, id: string, raw: unknown, publi
   if (error || !data) throw new Error(`Could not update the voice agent: ${error?.message}`);
   if (v.mode === 'elevenlabs') return presentVoiceAgent(await syncVoiceFront(ctx, data, publicOrigin));
   return presentVoiceAgent(data);
+}
+
+/**
+ * Minute tick: re-sync ElevenLabs voice agents set up by an older version of the sync, a few at
+ * a time. A failed automatic attempt is not retried until the next version (a person can still
+ * save the agent to retry).
+ */
+export async function resyncOutdatedVoiceAgents(limit = 3): Promise<{ resynced: number; failed: number }> {
+  const db = getSupabaseAdminClient();
+  const { data } = await db.from('voice_agents').select(COLUMNS).eq('mode', 'elevenlabs').is('archived_at', null).limit(500);
+  const outdated = (data || [])
+    .filter((r: Row) => {
+      const el = r.provider_state?.elevenlabs ?? {};
+      return (el.agent_id || el.synced_at) && el.sync_version !== ELEVENLABS_SYNC_VERSION && el.sync_attempted_version !== ELEVENLABS_SYNC_VERSION;
+    })
+    .slice(0, limit);
+  let resynced = 0;
+  let failed = 0;
+  for (const row of outdated) {
+    const { data: conn } = await db.from('telephony_connections').select('public_origin').eq('tenant_id', row.tenant_id).maybeSingle();
+    const origin = conn?.public_origin || process.env.APP_URL?.replace(/\/$/, '');
+    if (!origin) continue;
+    const ctx = { tenantId: row.tenant_id, userId: 'voice-sync', role: 'system', scopes: ['*'], authMode: 'webhook_signature' } as unknown as Ctx;
+    const ps = row.provider_state ?? {};
+    row.provider_state = { ...ps, elevenlabs: { ...(ps.elevenlabs ?? {}), sync_attempted_version: ELEVENLABS_SYNC_VERSION } };
+    const saved = await syncVoiceFront(ctx, row, origin).catch(() => null);
+    if (saved?.provider_state?.elevenlabs?.sync_version === ELEVENLABS_SYNC_VERSION) resynced++;
+    else failed++;
+  }
+  return { resynced, failed };
 }
 
 /**

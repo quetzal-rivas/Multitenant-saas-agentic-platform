@@ -333,6 +333,20 @@ The deployment role needs Amplify permissions for `GetApp`, `UpdateApp`, `ListJo
 
 ---
 
+## 🔁 Environments & Release Flow
+
+| | Staging | Production |
+|---|---|---|
+| URL | https://main.d3nv0k47pswazq.amplifyapp.com | https://www.contextcontrol.com.mx |
+| AWS account | 832554215040 | 975970277865 |
+| Supabase project | context-control-staging | context-control-prod |
+
+1. Work on a branch and open a pull request to `main`. CI runs type-check, lint, unit tests, a migration replay on an empty Postgres, a CDK synth of both environments and a secret scan; `main` only accepts pull requests whose checks pass.
+2. Merging deploys **staging** automatically (`.github/workflows/deploy-stack.yml` → `deploy-environment.yml`): database migrations, Supabase auth settings, infrastructure (`infra/cdk`), the agent worker, the web app and a smoke test.
+3. **Production** deploys the same way only after staging passes and the owner approves the `production` environment in GitHub.
+
+Per-environment settings live in the GitHub environment of the same name (variables and secrets listed at the top of `deploy-environment.yml`). AWS access from CI uses OIDC; no AWS keys are stored.
+
 ## 📜 License
 
 Distributed under the MIT License.

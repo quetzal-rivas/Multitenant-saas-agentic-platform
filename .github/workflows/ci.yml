@@ -69,6 +69,28 @@ jobs:
           sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client >/dev/null
           scripts/ci/verify-migrations.sh
 
+  infrastructure:
+    name: Infrastructure (CDK synth)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Synthesize both environments
+        run: |
+          npm ci
+          node scripts/build-agent-worker.mjs
+          cd infra/cdk
+          npm ci
+          npx tsc -p .
+          npx cdk synth -c stage=staging -q
+          npx cdk synth -c stage=production -q
+
   secret-scanning:
     name: Secret Scanning
     runs-on: ubuntu-latest

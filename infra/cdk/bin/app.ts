@@ -21,6 +21,7 @@ new ContextControlStack(app, `ContextControl-${stage}`, {
   env: { account: STAGES[stage].account, region: 'us-east-2' },
   stage,
   githubRepository: 'quetzal-rivas/Multitenant-saas-agentic-platform',
+  githubRepositoryId: '1389238528',
   githubEnvironment: STAGES[stage].githubEnvironment,
   alertEmail: 'aws@contextcontrol.com.mx',
   tags: { app: 'context-control', stage },

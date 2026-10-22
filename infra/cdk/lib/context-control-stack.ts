@@ -15,6 +15,8 @@ export interface ContextControlStackProps extends StackProps {
   stage: 'staging' | 'production';
   /** owner/name of the GitHub repository whose workflow deploys this stack. */
   githubRepository: string;
+  /** Its numeric id: GitHub's immutable OIDC subject is repo:<owner>@<id>/<name>@<repoId>:… */
+  githubRepositoryId: string;
   /** GitHub Actions environment allowed to assume the deploy role. */
   githubEnvironment: string;
   alertEmail: string;
@@ -229,9 +231,13 @@ export class ContextControlStack extends Stack {
       description: `Deploys Context Control ${props.stage} from GitHub Actions (${props.githubEnvironment} environment only)`,
       maxSessionDuration: Duration.hours(1),
       assumedBy: new iam.WebIdentityPrincipal(github.openIdConnectProviderArn, {
-        StringEquals: {
-          'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com',
-          'token.actions.githubusercontent.com:sub': `repo:${props.githubRepository}:environment:${props.githubEnvironment}`,
+        StringEquals: { 'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com' },
+        // The repository id is pinned, so the owner part may change (e.g. a transfer to an organization).
+        StringLike: {
+          'token.actions.githubusercontent.com:sub': [
+            `repo:*/${props.githubRepository.split('/')[1]}@${props.githubRepositoryId}:environment:${props.githubEnvironment}`,
+            `repo:${props.githubRepository}:environment:${props.githubEnvironment}`,
+          ],
         },
       }),
       inlinePolicies: {

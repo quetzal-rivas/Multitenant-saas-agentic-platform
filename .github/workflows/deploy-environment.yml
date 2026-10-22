@@ -6,6 +6,9 @@ name: Deploy one environment
 #   variables: NEXT_PUBLIC_SUPABASE_URL, SUPABASE_PROJECT_ID, AWS_DEPLOY_ROLE_ARN, AMPLIFY_APP_ID, APP_URL
 #   secrets:   NEXT_PUBLIC_SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_DB_PASSWORD,
 #              SUPABASE_ACCESS_TOKEN, CLIENT_TOKEN_SIGNING_KEY
+#   optional:  SMTP_USER + SMTP_PASSWORD (secrets; SES sign-in emails), SMTP_FROM (variable),
+#              GITHUB_LOGIN_CLIENT_ID (variable) + GITHUB_LOGIN_SECRET (secret),
+#              GOOGLE_LOGIN_CLIENT_ID (variable) + GOOGLE_LOGIN_SECRET (secret)
 # Production also uses the repository secrets STRIPE_* and GOOGLE_OAUTH_* (staging never does).
 
 on:
@@ -65,6 +68,14 @@ jobs:
           supabase db push --include-all
 
       - name: Point the heartbeat scheduler and sign-in emails at this environment
+        env:
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_FROM: ${{ vars.SMTP_FROM || 'no-reply@contextcontrol.com.mx' }}
+          GITHUB_LOGIN_CLIENT_ID: ${{ vars.GITHUB_LOGIN_CLIENT_ID }}
+          GITHUB_LOGIN_SECRET: ${{ secrets.GITHUB_LOGIN_SECRET }}
+          GOOGLE_LOGIN_CLIENT_ID: ${{ vars.GOOGLE_LOGIN_CLIENT_ID }}
+          GOOGLE_LOGIN_SECRET: ${{ secrets.GOOGLE_LOGIN_SECRET }}
         run: |
           api() { curl -sf -X "$1" "https://api.supabase.com/v1/projects/$SUPABASE_PROJECT_ID/$2" \
             -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" -H 'Content-Type: application/json' -d "$3" >/dev/null; }
@@ -74,9 +85,25 @@ jobs:
           case "$BASE" in *"'"*) echo "APP_URL must not contain quotes"; exit 1 ;; esac
           SQL="UPDATE public.platform_settings SET value = '$BASE/api/v1/heartbeats/tick', updated_at = now() WHERE key = 'heartbeat_tick_url'"
           api POST database/query "$(jq -n --arg q "$SQL" '{query: $q}')"
-          # Confirmation, invitation and password-reset links; both public URLs may receive them.
-          api PATCH config/auth "$(jq -n --arg u "$BASE" --arg a "$AMPLIFY_URL" '{site_url: $u, uri_allow_list: ($u + "/**," + $a + "/**")}')"
-          echo "Heartbeats and sign-in links point at $BASE"
+          # Auth settings as code. Each optional part applies only when its configuration exists in
+          # the environment; otherwise Supabase keeps what it has.
+          CONFIG=$(jq -n --arg u "$BASE" --arg a "$AMPLIFY_URL" '{site_url: $u, uri_allow_list: ($u + "/**," + $a + "/**")}')
+          if [ -n "$SMTP_USER" ] && [ -n "$SMTP_PASSWORD" ]; then
+            # Sign-in emails through SES, signed for the domain (infra/cdk EmailDomain).
+            CONFIG=$(jq --arg user "$SMTP_USER" --arg pass "$SMTP_PASSWORD" --arg from "$SMTP_FROM" \
+              '. + {smtp_host: "email-smtp.us-east-2.amazonaws.com", smtp_port: "587", smtp_user: $user, smtp_pass: $pass,
+                    smtp_admin_email: $from, smtp_sender_name: "Context Control", rate_limit_email_sent: 100}' <<< "$CONFIG")
+          fi
+          if [ -n "$GITHUB_LOGIN_CLIENT_ID" ] && [ -n "$GITHUB_LOGIN_SECRET" ]; then
+            CONFIG=$(jq --arg id "$GITHUB_LOGIN_CLIENT_ID" --arg s "$GITHUB_LOGIN_SECRET" \
+              '. + {external_github_enabled: true, external_github_client_id: $id, external_github_secret: $s}' <<< "$CONFIG")
+          fi
+          if [ -n "$GOOGLE_LOGIN_CLIENT_ID" ] && [ -n "$GOOGLE_LOGIN_SECRET" ]; then
+            CONFIG=$(jq --arg id "$GOOGLE_LOGIN_CLIENT_ID" --arg s "$GOOGLE_LOGIN_SECRET" \
+              '. + {external_google_enabled: true, external_google_client_id: $id, external_google_secret: $s}' <<< "$CONFIG")
+          fi
+          api PATCH config/auth "$CONFIG"
+          echo "Auth settings applied: $(jq -c 'keys' <<< "$CONFIG")"
 
       # --- Infrastructure and worker ------------------------------------------------------
       - uses: actions/setup-node@v4

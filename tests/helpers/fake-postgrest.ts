@@ -83,6 +83,15 @@ const RPC: Record<string, (args: Row) => unknown> = {
     runs.push({ ...p_run });
     return { outcome: 'created', run_id: p_run.id };
   },
+  /** auth.users is emulated as tables.auth_users ({ id, email }). */
+  user_id_by_email({ p_email }: Row) {
+    return (tables.auth_users || []).find((u) => String(u.email).toLowerCase() === String(p_email).toLowerCase())?.id ?? null;
+  },
+  org_member_emails({ p_org }: Row) {
+    return (tables.organization_members || [])
+      .filter((m) => m.organization_id === p_org)
+      .map((m) => ({ user_id: m.user_id, email: (tables.auth_users || []).find((u) => u.id === m.user_id)?.email ?? null }));
+  },
 };
 
 export async function fakePostgrest(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {

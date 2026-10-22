@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Bot, Building2, Key, Phone, ArrowRight, CheckCircle2, ShieldAlert, Sparkles, Layers } from 'lucide-react';
@@ -8,7 +8,7 @@ import { Bot, Building2, Key, Phone, ArrowRight, CheckCircle2, ShieldAlert, Spar
 export default function OnboardingPage() {
   const router = useRouter();
   const [step, setStep] = useState<number>(1);
-  const [orgName, setOrgName] = useState<string>('QuantumLeads LLC');
+  const [orgName, setOrgName] = useState<string>('');
   const [apiKeys, setApiKeys] = useState<{ name: string; value: string }[]>([
     { name: 'OPENAI_API_KEY', value: '' },
     { name: 'ANTHROPIC_API_KEY', value: '' },
@@ -19,6 +19,18 @@ export default function OnboardingPage() {
   const [twilioToken, setTwilioToken] = useState<string>('');
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [joining, setJoining] = useState(true);
+
+  // Someone invited to an organization joins it instead of creating a new one.
+  useEffect(() => {
+    fetch('/api/v1/account/invites/accept', { method: 'POST' })
+      .then((res) => (res.ok ? res.json() : { joined: null }))
+      .then((data: { joined: { name: string } | null }) => {
+        if (data.joined) router.replace('/dashboard');
+        else setJoining(false);
+      })
+      .catch(() => setJoining(false));
+  }, [router]);
 
   const handleCompleteOnboarding = async () => {
     setSubmitting(true);
@@ -72,6 +84,10 @@ export default function OnboardingPage() {
     }
   };
 
+  if (joining) {
+    return <div className="min-h-screen bg-[#07090e] text-zinc-500 text-sm font-mono flex items-center justify-center">Checking for invitations…</div>;
+  }
+
   return (
     <div className="min-h-screen bg-[#07090e] text-zinc-100 font-sans flex flex-col justify-center items-center px-4 py-12 selection:bg-emerald-900 selection:text-emerald-200">
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-emerald-900/15 via-zinc-950/0 to-transparent pointer-events-none" />
@@ -121,7 +137,7 @@ export default function OnboardingPage() {
               </div>
               <h2 className="text-2xl font-bold text-white">Create Your Organization</h2>
               <p className="text-zinc-400 text-sm mt-1">
-                Name your tenant workspace. This provisions a dedicated Supabase PostgreSQL schema boundary with native RLS isolation.
+                Name your workspace. Its data is kept separate from every other organization by row-level security.
               </p>
             </div>
 

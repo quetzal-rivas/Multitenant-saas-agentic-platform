@@ -37,6 +37,20 @@ export default function LoginPage() {
     }
   };
 
+  const handleForgotPassword = async () => {
+    if (!email) {
+      setMessage('Enter your email above, then choose "Forgot your password?" again.');
+      return;
+    }
+    setLoading(true);
+    setMessage(null);
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/auth/callback?next=/reset-password`,
+    });
+    setLoading(false);
+    setMessage(error ? `Could not send the reset email: ${error.message}` : `If ${email} has an account, a link to set a new password is on its way.`);
+  };
+
   const handleEmailAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email || !password) return;
@@ -49,7 +63,7 @@ export default function LoginPage() {
           setLoading(false);
           return;
         }
-        const { error } = await supabase.auth.signUp({
+        const { data, error } = await supabase.auth.signUp({
           email,
           password,
           options: {
@@ -58,7 +72,11 @@ export default function LoginPage() {
           },
         });
         if (error) throw error;
-        setMessage('✅ Account created! You can now log in.');
+        if (data.session) {
+          router.push('/onboarding');
+          return;
+        }
+        setMessage(`Account created. Open the confirmation link sent to ${email}, then sign in.`);
         setIsSignUp(false);
       } else {
         const { error } = await supabase.auth.signInWithPassword({
@@ -223,6 +241,14 @@ export default function LoginPage() {
             {isSignUp ? 'Create Account' : 'Sign In'} <ArrowRight className="w-4 h-4" />
           </button>
         </form>
+
+        {!isSignUp && (
+          <div className="mt-3 text-center">
+            <button onClick={handleForgotPassword} disabled={loading} className="text-xs text-zinc-500 hover:text-white transition-colors">
+              Forgot your password?
+            </button>
+          </div>
+        )}
 
         <div className="mt-4 text-center">
           <button

@@ -162,6 +162,8 @@ export interface SourceResolutionBreakdown {
   latency_ms: number;
   truncated: boolean;
   relevance_score?: number;
+  /** resolved: in the payload; empty: no text or input for it; not_connected: its data source is not connected yet. */
+  status?: 'resolved' | 'empty' | 'not_connected';
 }
 
 export interface ResolveResponse {

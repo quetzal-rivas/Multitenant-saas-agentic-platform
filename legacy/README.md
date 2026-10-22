@@ -24,6 +24,7 @@ decide what to keep. Nothing in this folder is type-checked, linted, tested, bun
 | `components/SimulatorView.tsx` | "Test Simulator" sandbox: a fake LangGraph / Redis / "Port 3000 Mock Egress" pipeline | Mock; nothing it showed ran | Agent Studio (real runs) and Logs & Tracing |
 | `components/SettingsView.tsx` | "Compiler Policies" page (token budget, cache TTL, output format) | Save did nothing; no setting was read anywhere | Nothing yet (run limits live in `organizations.agent_limits`) |
 | `components/SourcesView.tsx` | "Sources" page with config / test-ping dialogs | UI only: no API stored or tested sources | Context profiles' own source steps (Profile builder) |
+| `lib/compiler-sample-data.ts` | Context compiler that filled memory, RAG, conversation, live-data, tenant and user steps with invented sample data (a timeshare customer "Sarah", contract CTR-9281…) | Returned fake context to real callers through `/api/v1/context/resolve`, which also served demo profiles without auth | `lib/compiler.ts` (only profile text, the organization, and caller input; unconnected sources reported as `not_connected`) and an authenticated, database-backed resolve route |
 
 ## AWS resources from the old backend (not touched)
 Moving these files does not delete anything in AWS. Earlier experiments left resources such as a

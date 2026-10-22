@@ -100,6 +100,25 @@ export async function getContextProfile(ctx: Ctx, id: string) {
   return toContextProfile(data as ContextProfileRow);
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Resolve a profile by slug or id for /api/v1/context/resolve, with the organization record
+ * the compiler puts in the tenant section. Only this organization's profiles are visible.
+ */
+export async function profileForResolve(ctx: Ctx, ref: string) {
+  const supabase = getSupabaseAdminClient();
+  let query = supabase.from('context_profiles').select(COLUMNS).eq('tenant_id', ctx.tenantId).is('archived_at', null);
+  query = UUID_RE.test(ref) ? query.eq('id', ref) : query.eq('slug', ref);
+  const [{ data, error }, { data: org }] = await Promise.all([
+    query.maybeSingle(),
+    supabase.from('organizations').select('id, name').eq('id', ctx.tenantId).maybeSingle(),
+  ]);
+  if (error) throw new Error(`Could not load context profile: ${error.message}`);
+  if (!data) throw new ServiceError(`Context profile '${ref}' was not found in this organization.`, 'NOT_FOUND');
+  return { profile: toContextProfile(data as ContextProfileRow), organization: (org as { id: string; name: string } | null) ?? undefined };
+}
+
 export async function createContextProfile(ctx: Ctx, raw: unknown) {
   const body = contextProfileBody.parse(raw) as Record<string, any>;
   const { data, error } = await getSupabaseAdminClient()

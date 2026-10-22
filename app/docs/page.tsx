@@ -665,10 +665,10 @@ function DocContextProfiles() {
       <div className="space-y-6 text-sm text-zinc-300 leading-relaxed">
         <h3 className="text-xl font-bold text-white font-mono border-b border-zinc-800 pb-2">1. Overview & Strategic Purpose</h3>
         <p>
-          In modern enterprise LLM architectures, unmanaged prompt context leads directly to context window drift, non-deterministic model behavior, severe hallucination, and escalating API infrastructure costs. The <strong>Context Profiles Engine</strong> serves as a deterministic context compiler (`compileContext`) designed to solve these challenges. It standardizes system prompts, corporate brand voice, customer loyalty rules, working memory, and vector RAG fragments into tight, token-budgeted prompt payloads.
+          In modern enterprise LLM architectures, unmanaged prompt context leads directly to context window drift, non-deterministic model behavior, severe hallucination, and escalating API infrastructure costs. The <strong>Context Profiles Engine</strong> serves as a deterministic context compiler (`compileContext`) designed to solve these challenges. It combines a profile's instructions and policies, the organization, the caller's identity fields and the runtime input into one token-budgeted payload. Agents in Agent Studio and Team Builder use a profile's instructions directly; other apps call <code>POST /api/v1/context/resolve</code> with an API key that has <code>mcp:profiles:read</code>.
         </p>
         <p>
-          By establishing strict Context Profiles, tenant organizations can guarantee that their AI agents remain compliant with corporate brand guidelines, legal policies, and token allocation limits across every interaction channel—whether serving live customer support chats, executing background BullMQ tasks, or answering voice calls over PSTN phone lines.
+          By establishing strict Context Profiles, tenant organizations can guarantee that their AI agents remain compliant with corporate brand guidelines, legal policies, and token allocation limits across every interaction channel—whether they answer chats, run scheduled tasks or take phone calls.
         </p>
 
         <h3 className="text-xl font-bold text-white font-mono border-b border-zinc-800 pb-2 mt-6">2. Key Capabilities & Architecture</h3>
@@ -676,7 +676,7 @@ function DocContextProfiles() {
           <li><strong>Deterministic Context Compilation Pipeline:</strong> The compiler evaluates and sequences context sources based on tenant-configured priority weights (e.g., `system_instructions` Priority 100, `agent_instructions` Priority 90, `tenant_context` Priority 85).</li>
           <li><strong>Priority-Based Token Trimming Algorithm:</strong> Standard token counters truncate messages arbitrarily. The platform's compiler utilizes a priority-aware trimming algorithm (`estimateTokens` based on 3.8 chars/token). If total tokens exceed `maxTokensBudget`, lower-priority steps are progressively truncated while high-priority system instructions remain pristine.</li>
           <li><strong>Contract Validation Matrix:</strong> Profiles specify a data contract (`profile.contract.required`) enforcing required identity and input parameters (e.g., `tenant_id`, `user_id`, `query`). Missing parameters trigger validation failures in the resolution metadata, preventing incomplete context execution.</li>
-          <li><strong>Tenant Brand Voice & Policy Injection:</strong> Automatically injects tenant-specific corporate brand voice directives directly into system instructions, standardizing tone across all communication channels.</li>
+          <li><strong>Sources not connected yet:</strong> working memory, long-term memory, conversation history, knowledge base (RAG) and live data steps can be added to a profile, but no data source feeds them yet. They are reported as <code>not_connected</code> in <code>source_breakdown</code> and add nothing to the payload.</li>
         </ul>
 
         <h3 className="text-xl font-bold text-white font-mono border-b border-zinc-800 pb-2 mt-6">3. Step-by-Step UI How-To-Use Guide</h3>
@@ -686,7 +686,7 @@ function DocContextProfiles() {
           <li>In the **System Prompt Instructions** field, define core agent behavior and operational guardrails.</li>
           <li>Specify **Brand Voice & Tone** guidelines and define the **Max Token Budget** (e.g., `8192` tokens).</li>
           <li>Configure **Pipeline Step Priorities** by adjusting priority sliders for System Instructions, Knowledge Base RAG, User Identity, and Conversation History.</li>
-          <li>Click the **Live Compiler Sandbox** drawer to test token trimming with sample input data.</li>
+          <li>Use the preview on the right to see the exact payload the API returns; steps marked “not connected” add nothing yet.</li>
         </ol>
       </div>
     </div>

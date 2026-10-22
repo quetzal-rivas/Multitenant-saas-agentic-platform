@@ -58,28 +58,15 @@ export const ContextBuilder: React.FC<ContextBuilderProps> = ({
   const [copied, setCopied] = useState(false);
   const [publishSuccess, setPublishSuccess] = useState(false);
 
-  // Simulated Test Request state for real-time compilation
-  const [simulatedIdentity, setSimulatedIdentity] = useState({
-    tenant_id: 'tenant_123',
-    user_id: 'user_456',
-    conversation_id: 'conversation_789',
-  });
-  const [simulatedQuery, setSimulatedQuery] = useState(
-    "Analyze this month's cancellations and propose a VIP retention upgrade for Thanksgiving."
-  );
+  // Preview request: the same compiler the resolve API uses, with a sample caller identity.
+  const [simulatedIdentity] = useState({ user_id: 'preview_user' });
+  const [simulatedQuery, setSimulatedQuery] = useState('');
 
-  // Live compiled response computed with useMemo
   const compiled: ResolveResponse = React.useMemo(() => {
     return compileContext(profile, {
       profile: profile.slug,
       identity: simulatedIdentity,
-      input: {
-        query: simulatedQuery,
-        trigger: {
-          type: 'contract_cancelled',
-          contract_id: 'CTR-9281',
-        },
-      },
+      input: simulatedQuery.trim() ? { query: simulatedQuery } : {},
       options: {
         format: activeTab === 'json' ? 'json' : 'markdown',
       },
@@ -296,7 +283,17 @@ export const ContextBuilder: React.FC<ContextBuilderProps> = ({
                     </div>
 
                     <div className="flex items-center gap-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
-                      {stepBreakdown && step.enabled && (
+                      {stepBreakdown && step.enabled && stepBreakdown.status === 'not_connected' && (
+                        <span className="text-[10px] font-mono text-amber-300 bg-amber-950/60 px-1.5 py-0.5 rounded border border-amber-800/50" title="This source type is not connected to a data source yet, so it adds nothing to the context.">
+                          not connected
+                        </span>
+                      )}
+                      {stepBreakdown && step.enabled && stepBreakdown.status === 'empty' && (
+                        <span className="text-[10px] font-mono text-zinc-400 bg-zinc-800 px-1.5 py-0.5 rounded border border-zinc-700" title="No text or input for this step yet.">
+                          empty
+                        </span>
+                      )}
+                      {stepBreakdown && step.enabled && (stepBreakdown.status ?? 'resolved') === 'resolved' && (
                         <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/70 px-1.5 py-0.5 rounded border border-emerald-800/50">
                           {stepBreakdown.tokens} tkn
                         </span>
@@ -566,17 +563,11 @@ export const ContextBuilder: React.FC<ContextBuilderProps> = ({
                 type="text"
                 value={simulatedQuery}
                 onChange={(e) => setSimulatedQuery(e.target.value)}
-                placeholder="Simulate user prompt / trigger query..."
+                placeholder="Optional: a query to preview the runtime input step"
                 className="w-full bg-[#121620] border border-zinc-700/80 rounded px-2.5 py-1 text-xs text-zinc-200 focus:outline-none focus:border-emerald-500"
               />
             </div>
-            <div className="flex items-center gap-2 text-zinc-400 shrink-0 font-mono text-[11px]">
-              <span>Tenant:</span>
-              <span className="text-emerald-400">{simulatedIdentity.tenant_id}</span>
-              <span>•</span>
-              <span>User:</span>
-              <span className="text-emerald-400">{simulatedIdentity.user_id}</span>
-            </div>
+            <div className="text-zinc-500 shrink-0 font-mono text-[11px]">Preview · the API adds your organization and the caller&apos;s fields</div>
           </div>
 
           {/* Main Context Output Area */}
@@ -612,8 +603,8 @@ export const ContextBuilder: React.FC<ContextBuilderProps> = ({
                     >
                       <div className="flex items-center justify-between text-xs">
                         <span className="font-bold text-white">{item.name}</span>
-                        <span className="text-emerald-400 font-mono">
-                          {item.latency_ms} ms
+                        <span className={`font-mono ${item.status === 'not_connected' ? 'text-amber-300' : item.status === 'empty' ? 'text-zinc-500' : 'text-emerald-400'}`}>
+                          {item.status === 'not_connected' ? 'not connected' : item.status === 'empty' ? 'empty' : `${item.latency_ms} ms`}
                         </span>
                       </div>
                       <div className="flex items-center justify-between text-[11px] text-zinc-400 font-mono">

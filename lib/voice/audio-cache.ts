@@ -6,7 +6,7 @@ import type { SpeechAudio, SynthesizeOptions } from './types';
 
 /**
  * Spoken-audio cache in S3 (bucket VOICE_CACHE_BUCKET, created by
- * scripts/aws/setup-voice-cache.sh). Each clip is addressed by a hash of everything that
+ * infra/cdk (VoiceMediaBucket)). Each clip is addressed by a hash of everything that
  * shapes the sound (text, provider, voice, model, speed, style, language), so a sentence
  * is synthesized once and every later request for it is served from S3 without calling
  * the provider or using its quota. Objects live under the organization's prefix and

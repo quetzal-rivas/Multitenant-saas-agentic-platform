@@ -7,6 +7,7 @@ import * as kms from 'aws-cdk-lib/aws-kms';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as ses from 'aws-cdk-lib/aws-ses';
 import * as sns from 'aws-cdk-lib/aws-sns';
 import * as subs from 'aws-cdk-lib/aws-sns-subscriptions';
 import type { Construct } from 'constructs';
@@ -20,6 +21,8 @@ export interface ContextControlStackProps extends StackProps {
   /** GitHub Actions environment allowed to assume the deploy role. */
   githubEnvironment: string;
   alertEmail: string;
+  /** Domain the sign-in emails are sent from (SES, DKIM-signed); production only. */
+  emailDomain?: string;
 }
 
 /** Repository root (this file is infra/cdk/lib/). */
@@ -270,6 +273,16 @@ export class ContextControlStack extends Stack {
     alarm('WorkerErrors', worker.metricErrors({ period: Duration.minutes(5) }), 3, 'Agent worker failed 3+ times in 5 minutes');
     alarm('WorkerThrottles', worker.metricThrottles({ period: Duration.minutes(5) }), 1, 'Agent worker was throttled');
     alarm('DeployerErrors', deployer.metricErrors({ period: Duration.minutes(5) }), 1, 'AI Function Studio could not create a function');
+
+    // --- Sign-in email (Supabase Auth sends through SES SMTP) ---------------------------------
+    if (props.emailDomain) {
+      const identity = new ses.EmailIdentity(this, 'EmailDomain', {
+        identity: ses.Identity.domain(props.emailDomain),
+        dkimSigning: true,
+      });
+      // The three DKIM CNAMEs to publish in Cloudflare (name -> value).
+      identity.dkimRecords.forEach((r, i) => new CfnOutput(this, `DkimRecord${i + 1}`, { value: `${r.name} CNAME ${r.value}` }));
+    }
 
     new CfnOutput(this, 'AmplifyComputeRoleArn', { value: computeRole.roleArn });
     new CfnOutput(this, 'KmsKeyArn', { value: key.keyArn });

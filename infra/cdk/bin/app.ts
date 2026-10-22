@@ -24,5 +24,6 @@ new ContextControlStack(app, `ContextControl-${stage}`, {
   githubRepositoryId: '1389238528',
   githubEnvironment: STAGES[stage].githubEnvironment,
   alertEmail: 'aws@contextcontrol.com.mx',
+  emailDomain: stage === 'production' ? 'contextcontrol.com.mx' : undefined,
   tags: { app: 'context-control', stage },
 });

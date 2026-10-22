@@ -48,7 +48,6 @@ export default async function LandingPage() {
             <a href="#features" className="hover:text-emerald-400 transition-colors">Core Features</a>
             <a href="#showcase" className="hover:text-emerald-400 transition-colors">Workspace Preview</a>
             <a href="#pricing" className="hover:text-emerald-400 transition-colors">Pricing</a>
-            <Link href="/docs" className="hover:text-emerald-400 transition-colors">User Documentation</Link>
           </nav>
 
           <div className="flex items-center gap-4">

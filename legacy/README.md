@@ -25,6 +25,7 @@ decide what to keep. Nothing in this folder is type-checked, linted, tested, bun
 | `components/SettingsView.tsx` | "Compiler Policies" page (token budget, cache TTL, output format) | Save did nothing; no setting was read anywhere | Nothing yet (run limits live in `organizations.agent_limits`) |
 | `components/SourcesView.tsx` | "Sources" page with config / test-ping dialogs | UI only: no API stored or tested sources | Context profiles' own source steps (Profile builder) |
 | `lib/compiler-sample-data.ts` | Context compiler that filled memory, RAG, conversation, live-data, tenant and user steps with invented sample data (a timeshare customer "Sarah", contract CTR-9281…) | Returned fake context to real callers through `/api/v1/context/resolve`, which also served demo profiles without auth | `lib/compiler.ts` (only profile text, the organization, and caller input; unconnected sources reported as `not_connected`) and an authenticated, database-backed resolve route |
+| `app-routes/docs/page.tsx`, `components/docs/McpToolsReference.tsx` | The public `/docs` page (feature guides, screenshots, generated MCP tool reference) | Out of date: most features it described have changed; the owner retired it on 2026-10-22 | Nothing yet (the MCP tool list is still served live by `tools/list` on `/api/mcp/platform`) |
 
 ## AWS resources from the old backend (not touched)
 Moving these files does not delete anything in AWS. Earlier experiments left resources such as a

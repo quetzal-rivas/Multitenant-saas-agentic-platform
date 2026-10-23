@@ -1,6 +1,7 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
+import { createClient } from '@/utils/supabase/client';
 import {
   FileCode2,
   Globe2,
@@ -19,6 +20,7 @@ import {
   UserCircle,
   Mic,
   PhoneCall,
+  LogOut,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -326,6 +328,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <UserCircle className={`w-4 h-4 ${activeTab === 'account' ? 'text-emerald-400' : 'text-zinc-400'}`} />
               <span>Account & Billing</span>
             </button>
+
+            <SignOutButton />
           </nav>
         </div>
       </div>
@@ -346,5 +350,26 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
       </div>
     </aside>
+  );
+};
+
+/** Ends the session on this device (the auth cookies) and goes to the login page. */
+const SignOutButton: React.FC = () => {
+  const [busy, setBusy] = useState(false);
+  const signOut = async () => {
+    setBusy(true);
+    await createClient().auth.signOut({ scope: 'local' }).catch(() => {});
+    // A full load so no cached page of the signed-in session is reused.
+    window.location.assign('/login');
+  };
+  return (
+    <button
+      onClick={signOut}
+      disabled={busy}
+      className="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-xs font-medium transition-all text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40 disabled:opacity-50"
+    >
+      <LogOut className="w-4 h-4 text-zinc-400" />
+      <span>{busy ? 'Signing out…' : 'Sign out'}</span>
+    </button>
   );
 };

@@ -10,6 +10,7 @@ import {
   grantTrial,
   initializeEntitlement,
   resolvePlan,
+  SCHEDULE_SLOT_STATUSES,
   usageSummary,
 } from '../lib/services/plan-limits';
 import { PLANS } from '../lib/billing/plans';
@@ -214,4 +215,17 @@ describe('Plans: resolution, trials, limits and quotas', () => {
     assert.equal(u.used.api_ops_month, 1);
     assert.equal(u.limits.agents, PLANS.developer.limits.agents);
   });
+});
+
+// The fake database does not check enums; this keeps the counter's filter valid for Postgres.
+test('the schedules counter only filters on real task_status values', () => {
+  const fs = require('fs') as typeof import('fs');
+  const path = require('path') as typeof import('path');
+  const dir = path.join(__dirname, '..', 'supabase', 'migrations');
+  const sql = fs.readdirSync(dir).map((f) => fs.readFileSync(path.join(dir, f), 'utf8')).join('\n');
+  const values = new Set<string>();
+  for (const m of sql.matchAll(/CREATE TYPE task_status AS ENUM \(([^)]*)\)/g)) for (const v of m[1].matchAll(/'([^']+)'/g)) values.add(v[1]);
+  for (const m of sql.matchAll(/ALTER TYPE task_status ADD VALUE IF NOT EXISTS '([^']+)'/g)) values.add(m[1]);
+  assert.ok(values.size > 0, 'task_status enum not found in migrations');
+  for (const s of SCHEDULE_SLOT_STATUSES) assert.ok(values.has(s), `"${s}" is not a task_status value`);
 });

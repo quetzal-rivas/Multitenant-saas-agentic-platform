@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Bot, Building2, Key, Phone, ArrowRight, CheckCircle2, ShieldAlert, Sparkles, Layers } from 'lucide-react';
@@ -21,16 +21,23 @@ export default function OnboardingPage() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [joining, setJoining] = useState(true);
 
+  // Membership just changed on the server: drop the router cache, which still holds the
+  // redirect to /onboarding from before, so the next page is fetched fresh.
+  const leave = useCallback((path: string) => {
+    router.refresh();
+    router.replace(path);
+  }, [router]);
+
   // Someone invited to an organization joins it instead of creating a new one.
   useEffect(() => {
     fetch('/api/v1/account/invites/accept', { method: 'POST' })
       .then((res) => (res.ok ? res.json() : { joined: null }))
       .then((data: { joined: { name: string } | null }) => {
-        if (data.joined) router.replace('/dashboard');
+        if (data.joined) leave('/dashboard');
         else setJoining(false);
       })
       .catch(() => setJoining(false));
-  }, [router]);
+  }, [leave]);
 
   const handleCompleteOnboarding = async () => {
     setSubmitting(true);
@@ -59,7 +66,7 @@ export default function OnboardingPage() {
           if (!tel.ok) {
             const t = await tel.json().catch(() => ({}));
             setErrorMsg(`Workspace created, but Twilio was not connected: ${t.error || tel.status}. Connect it later in Live Calls. Continuing in 8 seconds…`);
-            setTimeout(() => router.push('/organizations'), 8000);
+            setTimeout(() => leave('/organizations'), 8000);
             return;
           }
         }
@@ -67,7 +74,7 @@ export default function OnboardingPage() {
           // The workspace exists; tell the user which keys were rejected before moving on.
           const rejected = data.secretsFailed.map((f: { field: string; reason: string }) => `${f.field}: ${f.reason}`).join('\n');
           setErrorMsg(`Workspace created, but these keys were rejected and not saved:\n${rejected}\nAdd them later in Account & Billing → LLM providers. Continuing in 8 seconds…`);
-          setTimeout(() => router.push('/organizations'), 8000);
+          setTimeout(() => leave('/organizations'), 8000);
           return;
         }
         // Save tenant session to localStorage and navigate to dashboard
@@ -75,7 +82,7 @@ export default function OnboardingPage() {
           if (data.tenantId) localStorage.setItem('ctx_tenant_id', data.tenantId);
           localStorage.setItem('ctx_onboarded', 'true');
         }
-        router.push('/organizations');
+        leave('/organizations');
       }
     } catch (err: any) {
       setErrorMsg(err?.message || 'Network error occurred during onboarding');

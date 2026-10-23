@@ -282,6 +282,10 @@ export class ContextControlStack extends Stack {
       });
       // The three DKIM CNAMEs to publish in Cloudflare (name -> value).
       identity.dkimRecords.forEach((r, i) => new CfnOutput(this, `DkimRecord${i + 1}`, { value: `${r.name} CNAME ${r.value}` }));
+      // Billing notices (trial ending, quotas) are sent by the web app from this domain only.
+      computeRole.addToPolicy(
+        new iam.PolicyStatement({ actions: ['ses:SendEmail'], resources: [`arn:aws:ses:${region}:${account}:identity/${props.emailDomain}`] })
+      );
     }
 
     new CfnOutput(this, 'AmplifyComputeRoleArn', { value: computeRole.roleArn });

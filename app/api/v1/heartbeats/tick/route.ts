@@ -9,6 +9,8 @@ import { processDueTasks } from '@/lib/services/scheduled-tasks';
 import { sweepInbound } from '@/lib/services/inbound';
 import { sweepRooms } from '@/lib/services/rooms';
 import { resyncOutdatedVoiceAgents } from '@/lib/services/voice-agents';
+import { sendBillingNotices } from '@/lib/services/billing-notices';
+import { publicOrigin } from '@/lib/http/public-origin';
 
 /**
  * Called every minute by Supabase pg_cron (public.trigger_heartbeat_tick) with the
@@ -45,7 +47,15 @@ export async function POST(req: NextRequest) {
       console.error('[heartbeats:tick] voice agent resync failed', err);
       return null;
     });
-    return NextResponse.json({ processed: outcomes.length, outcomes, tasks, runs, inbound, rooms, voice });
+    // Trial and quota emails, every 10 minutes (each notice is sent once).
+    const notices =
+      new Date().getUTCMinutes() % 10 === 7
+        ? await sendBillingNotices(publicOrigin(req)).catch((err) => {
+            console.error('[heartbeats:tick] billing notices failed', err);
+            return null;
+          })
+        : undefined;
+    return NextResponse.json({ processed: outcomes.length, outcomes, tasks, runs, inbound, rooms, voice, notices });
   } catch (err) {
     return errorResponse(err, 'heartbeats:tick');
   }

@@ -205,8 +205,78 @@ const UsageBar: React.FC<{ label: string; used: number; limit: number }> = ({ la
   );
 };
 
+interface PausedKind {
+  kind: 'agents' | 'teams' | 'schedules';
+  label: string;
+  limit: number;
+  total: number;
+  active: Array<{ id: string; name: string; pinned: boolean }>;
+  paused: Array<{ id: string; name: string }>;
+}
+
+/** After a downgrade: what the plan pauses (kept, not deleted) and the choice of what stays active. */
+const PausedResourcesPanel: React.FC<{ canManage: boolean }> = ({ canManage }) => {
+  const [kinds, setKinds] = useState<PausedKind[] | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [notice, setNotice] = useState<Notice>(null);
+
+  useEffect(() => {
+    api<{ kinds: PausedKind[] }>('/api/v1/account/paused-resources')
+      .then((r) => setKinds(r.kinds))
+      .catch((err) => setNotice({ ok: false, text: err.message }));
+  }, []);
+
+  const keep = async (kind: PausedKind['kind'], id: string) => {
+    setBusy(id);
+    setNotice(null);
+    try {
+      const r = await api<{ kinds: PausedKind[] }>('/api/v1/account/paused-resources', { method: 'POST', body: JSON.stringify({ kind, id }) });
+      setKinds(r.kinds);
+    } catch (err) {
+      setNotice({ ok: false, text: (err as Error).message });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  if (!kinds?.length) return notice ? <NoticeLine notice={notice} /> : null;
+  return (
+    <div className="space-y-3">
+      <h2 className="text-lg font-semibold text-white">Paused by your plan</h2>
+      <p className="text-sm text-zinc-400">
+        You have more than your plan allows. Nothing was deleted: the items below are kept but can&apos;t run. Upgrade to resume them all
+        {canManage ? ', or choose which ones stay active (another one pauses in its place).' : '. Owners and admins choose which stay active.'}
+      </p>
+      {kinds.map((k) => (
+        <div key={k.kind} className="p-4 rounded-xl border border-amber-900/50 bg-amber-950/10 space-y-2">
+          <div className="text-sm text-zinc-200 font-medium">
+            {k.label}: {k.active.length} of {k.total} active (plan limit {k.limit})
+          </div>
+          <ul className="space-y-1.5">
+            {k.paused.map((it) => (
+              <li key={it.id} className="flex items-center justify-between gap-3 text-sm">
+                <span className="text-zinc-400 truncate">{it.name}</span>
+                {canManage && (
+                  <button
+                    onClick={() => keep(k.kind, it.id)}
+                    disabled={busy !== null}
+                    className="shrink-0 px-3 py-1 rounded-md bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-xs text-white flex items-center gap-1.5"
+                  >
+                    {busy === it.id && <Loader2 className="w-3 h-3 animate-spin" />} Keep active
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+      <NoticeLine notice={notice} />
+    </div>
+  );
+};
+
 /** Plan, trial and usage from the server; the plan cards come from the same catalog the server enforces. */
-const BillingPanel: React.FC<{ orgId: string | null; email: string | null; checkout?: 'success' | 'cancelled' }> = ({ checkout }) => {
+const BillingPanel: React.FC<{ orgId: string | null; email: string | null; checkout?: 'success' | 'cancelled' | 'open' }> = ({ checkout }) => {
   const [info, setInfo] = useState<BillingInfo | null>(null);
   const [usage, setUsage] = useState<UsageInfo | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
@@ -326,6 +396,8 @@ const BillingPanel: React.FC<{ orgId: string | null; email: string | null; check
           ))}
         </div>
       </div>
+
+      <PausedResourcesPanel canManage={info.can_manage} />
 
       <div className="space-y-4">
         <h2 className="text-lg font-semibold text-white">Plans</h2>
@@ -568,7 +640,7 @@ const DangerPanel: React.FC<{ org: { id: string; name: string } | null; role: st
 type Tab = 'profile' | 'team' | 'keys' | 'billing' | 'danger';
 
 /** `checkout` is set when Stripe Checkout returns to the dashboard; Billing opens and confirms it. */
-export const AccountSettingsView: React.FC<{ checkout?: 'success' | 'cancelled' }> = ({ checkout }) => {
+export const AccountSettingsView: React.FC<{ checkout?: 'success' | 'cancelled' | 'open' }> = ({ checkout }) => {
   const [activeTab, setActiveTab] = useState<Tab>(checkout ? 'billing' : 'profile');
   const [org, setOrg] = useState<{ id: string; name: string } | null>(null);
   const [role, setRole] = useState<string | null>(null);

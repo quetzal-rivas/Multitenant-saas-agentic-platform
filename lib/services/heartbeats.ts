@@ -4,6 +4,7 @@ import { localParts, nextRun, type HeartbeatSchedule } from '@/lib/agent/heartbe
 import type { RunnerDeps } from '@/lib/agent/session-runner';
 import { ensureHeartbeatSession, getTeam, type AgentTeam } from './teams';
 import { ServiceError } from './errors';
+import { isActive } from './plan-activation';
 import { teamHasBoardWork } from './board';
 import { dispatchRun, driveInline, startRun, workerConfigured } from './agent-runs';
 
@@ -55,8 +56,11 @@ export async function runTeamHeartbeat(
   const next = team.heartbeat_enabled && schedule ? nextRun(schedule, now, now).toISOString() : null;
   const db = getSupabaseAdminClient();
 
-  if (runsToday >= team.heartbeat_max_runs_per_day) {
-    const detail = `Daily cap of ${team.heartbeat_max_runs_per_day} runs reached.`;
+  const pausedByPlan = !opts.manual && !(await isActive(ctx.tenantId, 'schedules', `heartbeat:${team.id}`));
+  if (pausedByPlan || runsToday >= team.heartbeat_max_runs_per_day) {
+    const detail = pausedByPlan
+      ? 'Paused by your plan (more scheduled tasks and heartbeats than it allows). Choose which stay active in Account & Billing, or upgrade.'
+      : `Daily cap of ${team.heartbeat_max_runs_per_day} runs reached.`;
     await db.from('agent_teams').update({
       heartbeat_last_status: 'skipped',
       heartbeat_last_error: detail,

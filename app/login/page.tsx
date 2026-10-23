@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Bot, Github, Mail, ArrowRight, ShieldCheck, CheckCircle2 } from 'lucide-react';
@@ -16,6 +16,18 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const supabase = createClient();
+  // Only the sign-in providers enabled for this environment's Supabase project get a button.
+  const [providers, setProviders] = useState<{ github: boolean; google: boolean }>({ github: false, google: false });
+
+  useEffect(() => {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    if (!url || !key) return;
+    fetch(`${url}/auth/v1/settings`, { headers: { apikey: key } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((s) => s && setProviders({ github: !!s.external?.github, google: !!s.external?.google }))
+      .catch(() => {});
+  }, []);
 
   const handleOAuthLogin = async (provider: 'github' | 'google') => {
     setLoading(true);
@@ -124,7 +136,9 @@ export default function LoginPage() {
         )}
 
         {/* OAuth Provider Buttons */}
+        {(providers.github || providers.google) && (<>
         <div className="space-y-3 mb-6">
+          {providers.github && (
           <button
             onClick={() => handleOAuthLogin('github')}
             disabled={loading}
@@ -133,7 +147,9 @@ export default function LoginPage() {
             <Github className="w-5 h-5 text-white" />
             Continue with GitHub
           </button>
+          )}
 
+          {providers.google && (
           <button
             onClick={() => handleOAuthLogin('google')}
             disabled={loading}
@@ -159,6 +175,7 @@ export default function LoginPage() {
             </svg>
             Continue with Google
           </button>
+          )}
         </div>
 
         <div className="relative my-6 text-center">
@@ -169,6 +186,7 @@ export default function LoginPage() {
             or email & password
           </span>
         </div>
+        </>)}
 
         {/* Email Auth Form */}
         <form onSubmit={handleEmailAuth} className="space-y-4">

@@ -155,13 +155,16 @@ async function countRows(build: (db: Db) => any): Promise<number> {
 
 const exact = { count: 'exact' as const };
 
+/** supervisor_tasks statuses that hold a schedule slot (task_status enum: waiting or in progress). */
+export const SCHEDULE_SLOT_STATUSES = ['scheduled', 'active'] as const;
+
 /** Active items of a resource. Monthly quotas are counted where they are consumed. */
 export const RESOURCE_COUNTERS: Partial<Record<LimitKey, (tenantId: string) => Promise<number>>> = {
   agents: (t) => countRows((db) => db.from('agent_sessions').select('id', exact).eq('tenant_id', t).eq('agent_type', 'single').is('archived_at', null).limit(1)),
   teams: (t) => countRows((db) => db.from('agent_teams').select('id', exact).eq('tenant_id', t).is('archived_at', null).limit(1)),
   schedules: async (t) => {
     const [tasks, heartbeats] = await Promise.all([
-      countRows((db) => db.from('supervisor_tasks').select('id', exact).eq('tenant_id', t).in('status', ['scheduled', 'running']).eq('paused', false).limit(1)),
+      countRows((db) => db.from('supervisor_tasks').select('id', exact).eq('tenant_id', t).in('status', [...SCHEDULE_SLOT_STATUSES]).eq('paused', false).limit(1)),
       countRows((db) => db.from('agent_teams').select('id', exact).eq('tenant_id', t).eq('heartbeat_enabled', true).is('archived_at', null).limit(1)),
     ]);
     return tasks + heartbeats;

@@ -45,7 +45,7 @@ export async function noticesFor(tenantId: string, appUrl: string, now = new Dat
   const billing = `${appUrl}/dashboard?billing=open`;
   const [{ data: ent }, plan] = await Promise.all([
     db().from('entitlements').select('trial_tier, trial_ends_at').eq('tenant_id', tenantId).maybeSingle(),
-    effectivePlan(tenantId, now),
+    effectivePlan(tenantId, now, { fresh: true }),
   ]);
 
   const trialTier = (ent as { trial_tier?: PlanId | null } | null)?.trial_tier;

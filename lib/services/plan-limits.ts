@@ -84,7 +84,10 @@ export function resolvePlan(tenantId: string, row: EntitlementRow | null, now = 
   };
 }
 
-// Short per-instance cache: plan lookups happen on every create and API request.
+// Short per-instance cache: plan lookups happen on every create and API request. Only the
+// instance that handles the Stripe webhook forgets its copy, so a cached plan may be up to
+// CACHE_MS old: it may allow, but every refusal and everything shown to the customer is
+// checked against a fresh read (a customer who just paid is never refused by the old plan).
 const CACHE_MS = 15_000;
 const cache = new Map<string, { at: number; plan: EffectivePlan }>();
 export function forgetPlan(tenantId?: string) {
@@ -92,8 +95,8 @@ export function forgetPlan(tenantId?: string) {
   else cache.clear();
 }
 
-export async function effectivePlan(tenantId: string, now = new Date()): Promise<EffectivePlan> {
-  const hit = cache.get(tenantId);
+export async function effectivePlan(tenantId: string, now = new Date(), opts: { fresh?: boolean } = {}): Promise<EffectivePlan> {
+  const hit = opts.fresh ? undefined : cache.get(tenantId);
   if (hit && now.getTime() - hit.at < CACHE_MS && (!hit.plan.trial || new Date(hit.plan.trial.endsAt) > now)) return hit.plan;
   const { data } = await getSupabaseAdminClient().from('entitlements').select(ENTITLEMENT_COLUMNS).eq('tenant_id', tenantId).maybeSingle();
   const plan = resolvePlan(tenantId, (data as EntitlementRow | null) ?? null, now);
@@ -129,7 +132,8 @@ const FEATURE_TEXT: Record<keyof PlanFeatures, { what: string; from: PlanId }> =
 };
 
 export async function assertFeature(tenantId: string, feature: keyof PlanFeatures): Promise<EffectivePlan> {
-  const p = await effectivePlan(tenantId);
+  let p = await effectivePlan(tenantId);
+  if (!p.features[feature]) p = await effectivePlan(tenantId, new Date(), { fresh: true });
   if (!p.features[feature]) {
     const f = FEATURE_TEXT[feature];
     throw new LimitError(`${f.what} is included from the ${PLANS[f.from].name} plan; you are on the ${planLabel(p)}. Upgrade in Account & Billing.`, 'FEATURE_NOT_INCLUDED', {
@@ -197,10 +201,11 @@ export const isLlmSecretName = (name: string) => BUILT_IN_IDS.includes(name) || 
  * room for several at once. Throws LimitError (402).
  */
 export async function assertCanCreate(tenantId: string, key: LimitKey, adding = 1): Promise<EffectivePlan> {
-  const p = await effectivePlan(tenantId);
+  let p = await effectivePlan(tenantId);
   const counter = RESOURCE_COUNTERS[key];
   if (!counter) throw new Error(`No counter for ${key}`);
   const used = await counter(tenantId);
+  if (used + adding > p.limits[key]) p = await effectivePlan(tenantId, new Date(), { fresh: true });
   if (used + adding > p.limits[key]) {
     await recordUsageEvent(tenantId, 'limit_reached', { key, used, limit: p.limits[key], plan: p.plan });
     throw limitReached(p, key, used);
@@ -217,14 +222,24 @@ export const minutePeriod = (now = new Date()) => now.toISOString().slice(0, 16)
 
 /** Count one external request (API key or client token). Throws LimitError when over quota or rate. */
 export async function consumeApiRequest(tenantId: string, now = new Date()): Promise<void> {
-  const p = await effectivePlan(tenantId, now);
-  const { data, error } = await getSupabaseAdminClient().rpc('consume_api_request', {
-    p_tenant: tenantId,
-    p_month: monthPeriod(now),
-    p_minute: minutePeriod(now),
-    p_ops_limit: p.limits.api_ops_month,
-    p_rpm_limit: p.limits.api_rpm,
-  });
+  let p = await effectivePlan(tenantId, now);
+  const consume = (plan: EffectivePlan) =>
+    getSupabaseAdminClient().rpc('consume_api_request', {
+      p_tenant: tenantId,
+      p_month: monthPeriod(now),
+      p_minute: minutePeriod(now),
+      p_ops_limit: plan.limits.api_ops_month,
+      p_rpm_limit: plan.limits.api_rpm,
+    });
+  let { data, error } = await consume(p);
+  if (!error && (data as { outcome?: string } | null)?.outcome !== 'ok') {
+    // Refused (nothing counted): confirm with the current plan, which may have just been upgraded.
+    const current = await effectivePlan(tenantId, now, { fresh: true });
+    if (current.limits.api_ops_month > p.limits.api_ops_month || current.limits.api_rpm > p.limits.api_rpm) {
+      p = current;
+      ({ data, error } = await consume(p));
+    }
+  }
   if (error) {
     // Metering must not take the API down; the per-key in-memory limiter still applies.
     console.error('[plan-limits] consume_api_request failed', error.message);
@@ -248,7 +263,7 @@ export async function consumeApiRequest(tenantId: string, now = new Date()): Pro
 // ---------------------------------------------------------------------------------------------
 
 export async function usageSummary(tenantId: string, now = new Date()) {
-  const p = await effectivePlan(tenantId, now);
+  const p = await effectivePlan(tenantId, now, { fresh: true });
   const db = getSupabaseAdminClient();
   const monthStart = `${monthPeriod(now)}-01T00:00:00.000Z`;
   const entries = await Promise.all(
@@ -426,7 +441,8 @@ export async function assertCanStoreSecret(tenantId: string, name: string): Prom
 
 /** A size limit on one item (e.g. workers in a team), not a count of items. */
 export async function assertWithinLimit(tenantId: string, key: LimitKey, value: number): Promise<void> {
-  const p = await effectivePlan(tenantId);
+  let p = await effectivePlan(tenantId);
+  if (value > p.limits[key]) p = await effectivePlan(tenantId, new Date(), { fresh: true });
   if (value > p.limits[key]) throw limitReached(p, key, value);
 }
 

@@ -109,6 +109,17 @@ describe('Plans: resolution, trials, limits and quotas', () => {
     assert.deepEqual(tables.trial_grants.map((g) => g.tier).sort(), ['pro', 'unlimited']);
   });
 
+  test('a plan cached by another instance never refuses or shows an old plan after an upgrade', async () => {
+    setPlan(TENANT, 'free');
+    for (let i = 0; i < PLANS.free.limits.agents; i++) await createSession(ctx, { name: `Agent ${i}`, allowed_tools: [] });
+    assert.equal((await effectivePlan(TENANT)).plan, 'free'); // cached here
+    // The webhook ran on another instance: the database says Developer, this cache still says Free.
+    tables.entitlements.find((e) => e.tenant_id === TENANT)!.plan_tier = 'developer';
+    assert.equal((await effectivePlan(TENANT)).plan, 'free', 'the cache is still old');
+    await createSession(ctx, { name: 'Allowed by the current plan', allowed_tools: [] });
+    assert.equal((await usageSummary(TENANT)).plan, 'developer', 'Billing always shows the current plan');
+  });
+
   test('creation limits: the item after the limit is refused with 402 and the plan in the message', async () => {
     setPlan(TENANT, 'free');
     for (let i = 0; i < PLANS.free.limits.agents; i++) await createSession(ctx, { name: `Agent ${i}`, allowed_tools: [] });

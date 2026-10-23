@@ -343,7 +343,7 @@ async function loadEntitlement(tenantId: string): Promise<EntitlementRow | null>
 export async function applyPaidPlan(
   tenantId: string,
   plan: PlanId,
-  opts: { now?: Date; stripeCustomerId?: string | null; stripeSubscriptionId?: string | null; periodEndsAt?: string | null } = {}
+  opts: { now?: Date; stripeCustomerId?: string | null; stripeSubscriptionId?: string | null; periodEndsAt?: string | null; cancelAt?: string | null } = {}
 ) {
   if (plan === 'free') throw new Error('Free is not a paid plan; use endPaidPlan.');
   const now = opts.now ?? new Date();
@@ -356,6 +356,8 @@ export async function applyPaidPlan(
     ...(opts.stripeCustomerId ? { stripe_customer_id: opts.stripeCustomerId } : {}),
     ...(opts.stripeSubscriptionId ? { stripe_subscription_id: opts.stripeSubscriptionId } : {}),
     ...(opts.periodEndsAt ? { current_period_ends_at: opts.periodEndsAt } : {}),
+    // Every subscription event says whether it is set to end; a resumed one clears it.
+    ...(opts.cancelAt !== undefined ? { cancel_at: opts.cancelAt } : {}),
     updated_at: now.toISOString(),
   };
   const before = await loadEntitlement(tenantId);
@@ -386,7 +388,7 @@ export async function markPastDue(tenantId: string, graceDays = 7, now = new Dat
 export async function endPaidPlan(tenantId: string, now = new Date()) {
   await getSupabaseAdminClient()
     .from('entitlements')
-    .update({ plan_tier: 'free', billing_status: 'canceled', grace_ends_at: null, updated_at: now.toISOString() })
+    .update({ plan_tier: 'free', billing_status: 'canceled', grace_ends_at: null, cancel_at: null, updated_at: now.toISOString() })
     .eq('tenant_id', tenantId);
   forgetPlan(tenantId);
   await reconcileTrial(tenantId, now);

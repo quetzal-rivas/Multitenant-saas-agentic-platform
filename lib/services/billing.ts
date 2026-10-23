@@ -36,7 +36,7 @@ function stripeClient(): Pick<Stripe, 'invoices' | 'billingPortal' | 'checkout'>
 export async function billingSummary(ctx: Ctx, deps: BillingDeps = {}) {
   const { data: ent } = await getSupabaseAdminClient()
     .from('entitlements')
-    .select('plan_tier, status, stripe_customer_id, stripe_subscription_id, current_period_ends_at')
+    .select('plan_tier, status, stripe_customer_id, stripe_subscription_id, current_period_ends_at, cancel_at')
     .eq('tenant_id', ctx.tenantId)
     .maybeSingle();
   const subscription = ent?.stripe_subscription_id
@@ -45,6 +45,7 @@ export async function billingSummary(ctx: Ctx, deps: BillingDeps = {}) {
         plan_tier: ent.plan_tier as string,
         status: ent.status as string,
         current_period_ends_at: (ent.current_period_ends_at as string | null) ?? null,
+        cancel_at: (ent.cancel_at as string | null) ?? null,
       }
     : null;
 

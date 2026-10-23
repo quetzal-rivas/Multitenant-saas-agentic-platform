@@ -43,10 +43,13 @@ async function onSubscription(sub: Stripe.Subscription): Promise<string> {
     case 'active':
     case 'trialing': {
       if (!plan) return `ignored: price ${item?.price?.id ?? 'none'} is not a Context Control plan here`;
+      // Cancelling in the portal keeps the subscription active until cancel_at (or the period end).
+      const cancelAt = sub.cancel_at ?? (sub.cancel_at_period_end ? periodEnd : null);
       const res = await applyPaidPlan(tenantId, plan, {
         stripeCustomerId: customerId,
         stripeSubscriptionId: sub.id,
         periodEndsAt: periodEnd ? new Date(periodEnd * 1000).toISOString() : null,
+        cancelAt: cancelAt ? new Date(cancelAt * 1000).toISOString() : null,
       });
       return `plan ${plan}${res.trial ? ` + ${res.trial} trial` : ''}`;
     }

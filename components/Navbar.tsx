@@ -33,7 +33,9 @@ export const Navbar: React.FC<NavbarProps> = ({
           if (data.organizations && data.organizations.length > 0) {
             setActiveOrgName(data.organizations[0].name);
           } else {
-            setActiveOrgName('No Organization');
+            // The middleware sends accounts without an organization to onboarding; this covers
+            // a request where it could not check (it lets the request through on errors).
+            window.location.replace('/onboarding');
           }
         }
       } catch (err) {

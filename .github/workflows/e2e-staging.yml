@@ -1,0 +1,48 @@
+name: End-to-end (staging)
+
+# The paths a new customer takes, in a real browser against deployed staging: sign in,
+# onboarding, opening the organization, the trial in Billing, buying Developer with Stripe's
+# test card. Runs after every staging deploy (production waits for it) and on demand.
+# It creates a throwaway account and removes it, its organization and its Stripe test data.
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-staging
+  cancel-in-progress: false
+
+jobs:
+  e2e:
+    name: e2e (staging)
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 15
+    env:
+      E2E_BASE_URL: ${{ vars.APP_URL }}
+      E2E_SUPABASE_URL: ${{ vars.NEXT_PUBLIC_SUPABASE_URL }}
+      E2E_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      E2E_STRIPE_SECRET_KEY: ${{ secrets.STRIPE_TEST_SECRET_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Run against ${{ vars.APP_URL }}
+        run: npx playwright test
+      - name: Report (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report
+            test-results
+          retention-days: 14

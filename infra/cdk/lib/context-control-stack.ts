@@ -21,7 +21,7 @@ export interface ContextControlStackProps extends StackProps {
   /** GitHub Actions environment allowed to assume the deploy role. */
   githubEnvironment: string;
   alertEmail: string;
-  /** Domain the sign-in emails are sent from (SES, DKIM-signed); production only. */
+  /** Domain the emails are sent from (SES, DKIM-signed): production's sign-in emails and both environments' billing notices. */
   emailDomain?: string;
   /**
    * Agent runs that may execute at once in this account. With workerReservedConcurrency the
@@ -294,7 +294,7 @@ export class ContextControlStack extends Stack {
     );
     alarm('DeployerErrors', deployer.metricErrors({ period: Duration.minutes(5) }), 1, 'AI Function Studio could not create a function');
 
-    // --- Sign-in email (Supabase Auth sends through SES SMTP) ---------------------------------
+    // --- Email (SES): sign-in emails through SMTP (production), billing notices from the app ----
     if (props.emailDomain) {
       const identity = new ses.EmailIdentity(this, 'EmailDomain', {
         identity: ses.Identity.domain(props.emailDomain),
@@ -302,7 +302,8 @@ export class ContextControlStack extends Stack {
       });
       // The three DKIM CNAMEs to publish in Cloudflare (name -> value).
       identity.dkimRecords.forEach((r, i) => new CfnOutput(this, `DkimRecord${i + 1}`, { value: `${r.name} CNAME ${r.value}` }));
-      // Billing notices (trial ending, quotas) are sent by the web app from this domain only.
+      // Billing notices (trial ending, quotas) are sent by the web app from this domain only. In the
+      // SES sandbox (staging) the recipients must be this domain too, which the same ARN covers.
       computeRole.addToPolicy(
         new iam.PolicyStatement({ actions: ['ses:SendEmail'], resources: [`arn:aws:ses:${region}:${account}:identity/${props.emailDomain}`] })
       );

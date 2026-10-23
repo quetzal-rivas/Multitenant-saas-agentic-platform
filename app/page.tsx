@@ -269,7 +269,11 @@ export default async function LandingPage() {
 
       {/* Footer */}
       <footer className="py-8 border-t border-zinc-800/80 text-center text-xs text-zinc-500">
-        <p>© 2026 Context Control SaaS Platform. All rights reserved.</p>
+        <p>© 2026 Context Control. All rights reserved.</p>
+        <p className="mt-2 space-x-4">
+          <Link href="/privacy" className="hover:text-zinc-300">Aviso de privacidad</Link>
+          <Link href="/terms" className="hover:text-zinc-300">Términos</Link>
+        </p>
       </footer>
     </div>
   );

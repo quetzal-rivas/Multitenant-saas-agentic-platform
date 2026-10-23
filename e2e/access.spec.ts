@@ -36,3 +36,12 @@ test('APIs refuse requests without credentials, before looking at the request', 
   expect((await request.post('/api/webhooks/stripe', { data: {} })).status()).toBe(400);
   expect((await request.post('/api/v1/heartbeats/tick')).status()).toBe(401);
 });
+
+test('the privacy notice and the terms are public and linked from the landing page', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('link', { name: 'Aviso de privacidad' }).click();
+  await expect(page.getByRole('heading', { name: 'Aviso de privacidad' })).toBeVisible();
+  await expect(page.getByText(/Derechos ARCO/)).toBeVisible();
+  await page.goto('/terms');
+  await expect(page.getByRole('heading', { name: 'Términos del servicio' })).toBeVisible();
+});

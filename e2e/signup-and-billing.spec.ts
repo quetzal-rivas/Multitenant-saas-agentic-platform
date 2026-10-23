@@ -76,7 +76,41 @@ test('a new customer signs in, creates the organization, starts on the Developer
   const usage = await (await page.request.get('/api/v1/account/usage')).json();
   expect(usage).toMatchObject({ base_plan: 'developer', billing_status: 'active', plan: 'pro', trial: { tier: 'pro' } });
 
-  // Deleting the organization works for the owner (cleanup through the product itself).
+  // Deleting the organization works for the owner (cleanup through the product itself) and
+  // cancels the subscription in Stripe first.
   const del = await page.request.post('/api/v1/account/delete', { data: { confirm: user.org } });
   expect(del.ok()).toBeTruthy();
+
+  // Without an organization the dashboard sends back to onboarding.
+  await page.goto('/dashboard');
+  await expect(page).toHaveURL(/\/onboarding/, { timeout: 15_000 });
+});
+
+test('sign out ends the session', async ({ page }) => {
+  const other = newTestUser();
+  const id = await createUser(other.email, other.password);
+  try {
+    await page.goto('/login');
+    await page.getByPlaceholder('name@company.com').fill(other.email);
+    await page.locator('input[type="password"]').first().fill(other.password);
+    await page.getByRole('button', { name: 'Sign In' }).click();
+    await expect(page).toHaveURL(/\/onboarding/);
+    await page.getByPlaceholder('e.g. Acme Global Logistics').fill(other.org);
+    await page.getByRole('button', { name: /Continue to BYOK Keys/ }).click();
+    await page.getByRole('button', { name: /Continue to Telephony/ }).click();
+    await page.getByRole('button', { name: /Complete Setup/ }).click();
+    await expect(page).toHaveURL(/\/organizations/);
+    await page.getByText(other.org).click();
+    await expect(page).toHaveURL(/\/dashboard/);
+    // Remove the organization now (the session is needed); the page stays open.
+    expect((await page.request.post('/api/v1/account/delete', { data: { confirm: other.org } })).ok()).toBeTruthy();
+
+    await page.getByRole('button', { name: 'Sign out' }).click();
+    await expect(page).toHaveURL(/\/login/);
+    await page.goto('/dashboard');
+    await expect(page).toHaveURL(/\/login$/);
+    expect((await page.request.get('/api/v1/account/usage')).status()).toBe(401);
+  } finally {
+    await deleteUser(id).catch((err) => console.error('cleanup (user):', err));
+  }
 });

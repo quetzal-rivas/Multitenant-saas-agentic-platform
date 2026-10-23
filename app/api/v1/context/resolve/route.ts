@@ -17,9 +17,14 @@ const resolveBody = z.object({
     .optional(),
 });
 
-async function resolve(req: NextRequest, body: ResolveRequest) {
+/** Credentials first: callers without them learn nothing about the request format. */
+async function authenticate(req: NextRequest) {
   const auth = await requireAuth(req, ['session', 'api_key', 'client_token']);
   if (auth.authMode === 'api_key') requireScope(auth, 'mcp:profiles:read');
+  return auth;
+}
+
+async function resolve(auth: Awaited<ReturnType<typeof authenticate>>, body: ResolveRequest) {
   const { profile, organization } = await profileForResolve(auth, body.profile);
   // The organization comes from the credentials, never from the request body.
   const compiled = compileContext(profile, { ...body, identity: { ...(body.identity || {}), tenant_id: auth.tenantId } }, { organization });
@@ -35,7 +40,8 @@ async function resolve(req: NextRequest, body: ResolveRequest) {
 /** Compile one of the organization's context profiles (session, API key with mcp:profiles:read, or client token). */
 export async function POST(req: NextRequest) {
   try {
-    return await resolve(req, resolveBody.parse(await req.json()) as ResolveRequest);
+    const auth = await authenticate(req);
+    return await resolve(auth, resolveBody.parse(await req.json()) as ResolveRequest);
   } catch (err) {
     return errorResponse(err, 'context:resolve');
   }
@@ -44,6 +50,7 @@ export async function POST(req: NextRequest) {
 /** Same as POST with query parameters: ?profile=…&query=…&user_id=…&conversation_id=…&format=… */
 export async function GET(req: NextRequest) {
   try {
+    const auth = await authenticate(req);
     const p = new URL(req.url).searchParams;
     const body = resolveBody.parse({
       profile: p.get('profile') ?? '',
@@ -51,7 +58,7 @@ export async function GET(req: NextRequest) {
       input: p.get('query') ? { query: p.get('query') } : {},
       options: p.get('format') ? { format: p.get('format') } : undefined,
     });
-    return await resolve(req, body as ResolveRequest);
+    return await resolve(auth, body as ResolveRequest);
   } catch (err) {
     return errorResponse(err, 'context:resolve');
   }

@@ -66,6 +66,8 @@ export async function updateSession(request: NextRequest) {
 
     return supabaseResponse
   } catch (error) {
+    // Let the request through (pages and APIs check auth themselves) but leave a trace.
+    console.error('[middleware] session check failed', request.nextUrl.pathname, error)
     return supabaseResponse
   }
 }

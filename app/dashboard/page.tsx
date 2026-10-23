@@ -25,6 +25,7 @@ import { LiveCallsView } from '@/components/LiveCallsView';
 import { LiveCallBanner } from '@/components/LiveCallBanner';
 import { FunctionStudio } from '@/components/FunctionStudio';
 import { DemoBanner } from '@/components/DemoBanner';
+import { PlanBanner } from '@/components/PlanBanner';
 import { INITIAL_PROFILES, isDemoMode } from '@/lib/demo';
 import { ContextProfile } from '@/lib/types';
 
@@ -151,6 +152,14 @@ export default function DashboardPage() {
       />
 
       <LiveCallBanner onOpen={() => setActiveTab('calls')} hidden={activeTab === 'calls'} />
+      {!DEMO && (
+        <PlanBanner
+          onOpenBilling={() => {
+            setCheckoutReturn('open');
+            setActiveTab('account');
+          }}
+        />
+      )}
 
       {/* Main Layout Body */}
       <div className="flex-1 flex overflow-hidden">

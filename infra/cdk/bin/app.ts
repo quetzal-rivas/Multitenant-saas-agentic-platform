@@ -6,9 +6,11 @@
 import { App } from 'aws-cdk-lib';
 import { ContextControlStack } from '../lib/context-control-stack.ts';
 
+// maxConcurrentRuns must match the platform's max_concurrent_runs (Platform control workflow).
+// Staging's account allows 10 Lambdas at once (increase requested), so nothing is reserved there.
 const STAGES = {
-  staging: { account: '832554215040', githubEnvironment: 'staging' },
-  production: { account: '975970277865', githubEnvironment: 'production' },
+  staging: { account: '832554215040', githubEnvironment: 'staging', maxConcurrentRuns: 8, workerReservedConcurrency: undefined },
+  production: { account: '975970277865', githubEnvironment: 'production', maxConcurrentRuns: 50, workerReservedConcurrency: 50 },
 } as const;
 
 const app = new App();
@@ -25,5 +27,7 @@ new ContextControlStack(app, `ContextControl-${stage}`, {
   githubEnvironment: STAGES[stage].githubEnvironment,
   alertEmail: 'aws@contextcontrol.com.mx',
   emailDomain: stage === 'production' ? 'contextcontrol.com.mx' : undefined,
+  maxConcurrentRuns: STAGES[stage].maxConcurrentRuns,
+  workerReservedConcurrency: STAGES[stage].workerReservedConcurrency,
   tags: { app: 'context-control', stage },
 });

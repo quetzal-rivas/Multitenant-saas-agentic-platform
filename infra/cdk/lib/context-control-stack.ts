@@ -23,6 +23,13 @@ export interface ContextControlStackProps extends StackProps {
   alertEmail: string;
   /** Domain the sign-in emails are sent from (SES, DKIM-signed); production only. */
   emailDomain?: string;
+  /**
+   * Agent runs that may execute at once in this account. With workerReservedConcurrency the
+   * worker gets exactly that many (guaranteed, and a hard AWS ceiling whatever the code does);
+   * reserving needs the account's Lambda limit to leave 10 unreserved.
+   */
+  maxConcurrentRuns: number;
+  workerReservedConcurrency?: number;
 }
 
 /** Repository root (this file is infra/cdk/lib/). */
@@ -195,6 +202,7 @@ export class ContextControlStack extends Stack {
       memorySize: 512,
       // Failed async invocations are recovered by the minute tick; Lambda must not replay them.
       retryAttempts: 0,
+      ...(props.workerReservedConcurrency ? { reservedConcurrentExecutions: props.workerReservedConcurrency } : {}),
       logGroup: new logs.LogGroup(this, 'AgentWorkerLogs', { logGroupName: `/aws/lambda/${NAMES.worker}`, retention: logs.RetentionDays.ONE_MONTH, removalPolicy: retain }),
       environment: {
         NODE_ENV: 'production',
@@ -272,6 +280,18 @@ export class ContextControlStack extends Stack {
       }).addAlarmAction(new cwActions.SnsAction(alerts));
     alarm('WorkerErrors', worker.metricErrors({ period: Duration.minutes(5) }), 3, 'Agent worker failed 3+ times in 5 minutes');
     alarm('WorkerThrottles', worker.metricThrottles({ period: Duration.minutes(5) }), 1, 'Agent worker was throttled');
+    alarm(
+      'WorkerNearCapacity',
+      worker.metric('ConcurrentExecutions', { statistic: 'Maximum', period: Duration.minutes(5) }),
+      Math.max(1, Math.floor(props.maxConcurrentRuns * 0.8)),
+      `Agent runs at 80% of the platform capacity (${props.maxConcurrentRuns}): raise it (Platform control workflow) or look for a runaway organization`
+    );
+    alarm(
+      'AccountLambdaNearLimit',
+      new cloudwatch.Metric({ namespace: 'AWS/Lambda', metricName: 'ClaimedAccountConcurrency', statistic: 'Maximum', period: Duration.minutes(5) }),
+      Math.max(1, Math.floor(props.maxConcurrentRuns * 1.25)),
+      'Lambda concurrency in this account is close to what the platform is sized for (worker + AI functions)'
+    );
     alarm('DeployerErrors', deployer.metricErrors({ period: Duration.minutes(5) }), 1, 'AI Function Studio could not create a function');
 
     // --- Sign-in email (Supabase Auth sends through SES SMTP) ---------------------------------

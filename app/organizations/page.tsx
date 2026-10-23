@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Building2, Plus, ArrowRight, Settings } from 'lucide-react';
 import { TeamMembersPanel } from '@/components/TeamMembersPanel';
@@ -14,7 +13,6 @@ interface Organization {
 }
 
 export default function OrganizationsPage() {
-  const router = useRouter();
   const [orgs, setOrgs] = useState<Organization[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -41,8 +39,9 @@ export default function OrganizationsPage() {
 
   // Every organization is usable; its plan only sets limits (Account & Billing).
   const selectOrg = () => {
-    // An account belongs to one organization; the dashboard always opens it.
-    router.push('/dashboard');
+    // An account belongs to one organization; the dashboard always opens it. A full load, so a
+    // redirect cached by the client router before the organization existed is never reused.
+    window.location.assign('/dashboard');
   };
 
   return (

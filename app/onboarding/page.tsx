@@ -2,11 +2,9 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { Bot, Building2, Key, Phone, ArrowRight, CheckCircle2, ShieldAlert, Sparkles, Layers } from 'lucide-react';
 
 export default function OnboardingPage() {
-  const router = useRouter();
   const [step, setStep] = useState<number>(1);
   const [orgName, setOrgName] = useState<string>('');
   const [apiKeys, setApiKeys] = useState<{ name: string; value: string }[]>([
@@ -21,12 +19,11 @@ export default function OnboardingPage() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [joining, setJoining] = useState(true);
 
-  // Membership just changed on the server: drop the router cache, which still holds the
-  // redirect to /onboarding from before, so the next page is fetched fresh.
+  // Membership just changed on the server. A full load, because the client router cache can
+  // still hold the /dashboard -> /onboarding redirect from before the organization existed.
   const leave = useCallback((path: string) => {
-    router.refresh();
-    router.replace(path);
-  }, [router]);
+    window.location.replace(path);
+  }, []);
 
   // Someone invited to an organization joins it instead of creating a new one.
   useEffect(() => {

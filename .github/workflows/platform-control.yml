@@ -1,0 +1,67 @@
+name: Platform control
+
+# The platform's emergency switch and capacity, without a deploy:
+#   pause-runs    refuse every new agent run (all organizations; data and running runs untouched)
+#   resume-runs   accept runs again
+#   set-capacity  maximum agent runs at the same time across the platform
+#   status        show the current values
+# Production runs need the production environment's approval, like a deploy.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment
+        type: choice
+        options: [staging, production]
+        required: true
+      action:
+        description: Action
+        type: choice
+        options: [status, pause-runs, resume-runs, set-capacity]
+        required: true
+      capacity:
+        description: For set-capacity — max simultaneous agent runs (keep below the AWS Lambda concurrency limit)
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: platform-control-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  control:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    env:
+      SUPABASE_PROJECT_ID: ${{ vars.SUPABASE_PROJECT_ID }}
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      ACTION: ${{ inputs.action }}
+      CAPACITY: ${{ inputs.capacity }}
+    steps:
+      - name: Apply
+        run: |
+          set -euo pipefail
+          sql() {
+            curl -sf -X POST "https://api.supabase.com/v1/projects/$SUPABASE_PROJECT_ID/database/query" \
+              -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" -H 'Content-Type: application/json' \
+              -d "$(jq -n --arg q "$1" '{query: $q}')"
+          }
+          set_key() {
+            sql "INSERT INTO public.platform_settings (key, value, updated_at) VALUES ('$1', '$2', now())
+                 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()" >/dev/null
+          }
+          case "$ACTION" in
+            pause-runs) set_key runs_paused true ;;
+            resume-runs) set_key runs_paused false ;;
+            set-capacity)
+              [[ "$CAPACITY" =~ ^[0-9]+$ ]] && [ "$CAPACITY" -ge 1 ] && [ "$CAPACITY" -le 2000 ] || { echo "capacity must be a number from 1 to 2000"; exit 1; }
+              set_key max_concurrent_runs "$CAPACITY" ;;
+            status) ;;
+          esac
+          echo "## Platform settings ($ACTION)" >> "$GITHUB_STEP_SUMMARY"
+          sql "SELECT key, value, updated_at FROM public.platform_settings WHERE key IN ('runs_paused', 'max_concurrent_runs') ORDER BY key" \
+            | jq -r '.[] | "- \(.key) = \(.value) (since \(.updated_at))"' | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "Apps pick up the change within 30 seconds." >> "$GITHUB_STEP_SUMMARY"

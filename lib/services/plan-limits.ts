@@ -435,7 +435,8 @@ export async function assertWithinLimit(tenantId: string, key: LimitKey, value: 
 // ---------------------------------------------------------------------------------------------
 
 /** Default platform-wide cap on simultaneous agent runs; override with platform_settings 'max_concurrent_runs'. */
-export const DEFAULT_PLATFORM_MAX_CONCURRENT_RUNS = Number(process.env.PLATFORM_MAX_CONCURRENT_RUNS || 50);
+// New AWS accounts run at most 10 Lambdas at once (worker + AI functions): stay below until the quota is raised.
+export const DEFAULT_PLATFORM_MAX_CONCURRENT_RUNS = Number(process.env.PLATFORM_MAX_CONCURRENT_RUNS || 8);
 
 let capacityCache: { at: number; maxConcurrentRuns: number } | null = null;
 export function forgetPlatformCapacity() {

@@ -11,6 +11,7 @@ import { getContextProfile } from './context-profiles';
 import { getProfile } from './profiles';
 import { getVoiceProfile } from './voice-profiles';
 import { ServiceError } from './errors';
+import { assertFeature } from './plan-limits';
 
 /**
  * Voice agents ("Voice Front"): who answers or places calls. Mode 'elevenlabs' puts a
@@ -114,6 +115,7 @@ function rowFields(v: VoiceAgentInput) {
 }
 
 export async function createVoiceAgent(ctx: Ctx, raw: unknown, publicOrigin: string) {
+  await assertFeature(ctx.tenantId, 'voice_telephony');
   const v = voiceAgentSchema.parse(raw);
   await assertReferences(ctx, v);
   const now = new Date().toISOString();
@@ -128,6 +130,7 @@ export async function createVoiceAgent(ctx: Ctx, raw: unknown, publicOrigin: str
 }
 
 export async function updateVoiceAgent(ctx: Ctx, id: string, raw: unknown, publicOrigin: string) {
+  await assertFeature(ctx.tenantId, 'voice_telephony');
   const existing = await loadVoiceAgent(ctx.tenantId, id);
   const v = voiceAgentSchema.parse(raw);
   await assertReferences(ctx, v);
@@ -179,6 +182,7 @@ export async function resyncOutdatedVoiceAgents(limit = 3): Promise<{ resynced: 
  * flip the setting with the saved key, then sync every ElevenLabs voice agent again.
  */
 export async function enableElevenLabsMcp(ctx: Ctx, publicOrigin: string) {
+  await assertFeature(ctx.tenantId, 'voice_telephony');
   const elKey = await getTenantSecret(ctx.tenantId, 'elevenlabs');
   if (!elKey) throw new ServiceError('Add an ElevenLabs key first.', 'CONFLICT');
   await enableElevenLabsMcpServers(elKey);

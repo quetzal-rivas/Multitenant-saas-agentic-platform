@@ -3,6 +3,7 @@ import { getSupabaseAdminClient } from '@/lib/supabase';
 import { getMembership, type MemberRole } from '@/lib/auth/membership';
 import { setTenantSecret, testProviderConnection, type BYOKProvider } from '@/lib/secrets/secrets-service';
 import { ServiceError } from './errors';
+import { assertCanStoreSecret, initializeEntitlement } from './plan-limits';
 
 export interface OrganizationSummary {
   id: string;
@@ -75,6 +76,9 @@ export async function createOrganizationWithOwner(userId: string, name: string):
     throw new Error(`Failed to assign organization owner: ${memberError.message}`);
   }
 
+  // Free, plus the one-time 7-day Developer trial.
+  await initializeEntitlement(organization.id);
+
   return { ...organization, role: 'owner', created: true };
 }
 
@@ -100,6 +104,12 @@ export async function storeOnboardingSecrets(
     const value = typeof entry?.value === 'string' ? entry.value.trim() : '';
     const provider = BYOK_PROVIDER_BY_FIELD[field];
     if (!provider || !value) continue;
+    try {
+      await assertCanStoreSecret(tenantId, provider);
+    } catch (err) {
+      result.failed.push({ field, reason: (err as Error).message });
+      continue;
+    }
     try {
       if (verify) {
         const check = await testProviderConnection(provider, value);

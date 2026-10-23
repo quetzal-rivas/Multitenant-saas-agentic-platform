@@ -1,4 +1,5 @@
 import { getSupabaseAdminClient } from '@/lib/supabase';
+import { effectivePlan } from './plan-limits';
 
 /**
  * Per-organization limits for agent runs (organizations.agent_limits, merged with these
@@ -36,6 +37,9 @@ export async function orgAgentState(tenantId: string): Promise<OrgAgentState> {
   const custom = (data?.agent_limits ?? {}) as Partial<AgentLimits>;
   const limits = { ...DEFAULT_AGENT_LIMITS };
   for (const [k, v] of Object.entries(custom)) if (typeof v === 'number' && v > 0 && k in limits) (limits as any)[k] = v;
+  // Simultaneous runs come from the plan; an organization's own setting can only lower it.
+  const planConcurrency = (await effectivePlan(tenantId)).limits.concurrent_runs;
+  limits.max_concurrent_runs = typeof custom.max_concurrent_runs === 'number' && custom.max_concurrent_runs > 0 ? Math.min(custom.max_concurrent_runs, planConcurrency) : planConcurrency;
   return { limits, paused_at: data?.agents_paused_at ?? null, paused_by: data?.agents_paused_by ?? null };
 }
 

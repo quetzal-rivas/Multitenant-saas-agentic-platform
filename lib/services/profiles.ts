@@ -9,6 +9,7 @@ import type {
   updateProfileArgs,
 } from '@/lib/mcp/tool-catalog';
 import { ServiceError, pageInfo } from './errors';
+import { assertCanCreate } from './plan-limits';
 
 const PROFILE_COLUMNS = 'id, name, description, token_budget, settings, is_active, created_at, updated_at';
 
@@ -58,6 +59,7 @@ export async function assertActiveProfile(ctx: Ctx, profileId: string): Promise<
 }
 
 export async function createProfile(ctx: Ctx, args: z.infer<typeof createProfileArgs>) {
+  await assertCanCreate(ctx.tenantId, 'mcp_profiles');
   const { data, error } = await getSupabaseAdminClient()
     .from('mcp_profiles')
     .insert({

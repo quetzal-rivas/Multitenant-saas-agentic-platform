@@ -17,6 +17,7 @@ import { FETCH_URL_TOOL, fetchUrl, fetchUrlArgs } from '@/lib/connectors/fetch-u
 import { PLATFORM_TOOL_DEFINITIONS } from '@/lib/mcp/tool-catalog';
 import { z } from 'zod';
 import { ServiceError } from './errors';
+import { assertCanCreate } from './plan-limits';
 
 /**
  * MCP Hub connections: one Google connection per organization (tokens KMS-encrypted),
@@ -72,6 +73,8 @@ export async function googleAccessToken(tenantId: string): Promise<{ token: stri
 // ---------------------------------------------------------------------------
 
 export async function startGoogleConnect(ctx: Ctx, origin: string) {
+  const { data: current } = await getSupabaseAdminClient().from('connections').select('id').eq('tenant_id', ctx.tenantId).eq('auth_provider', 'google').eq('status', 'active').limit(1);
+  if (!current?.length) await assertCanCreate(ctx.tenantId, 'connections');
   return { url: await buildGoogleAuthUrl(ctx.tenantId, ctx.userId, origin) };
 }
 

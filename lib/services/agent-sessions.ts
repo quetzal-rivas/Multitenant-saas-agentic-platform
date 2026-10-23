@@ -13,6 +13,7 @@ import { getContextProfile } from './context-profiles';
 import { getProfile } from './profiles';
 import { getVoiceProfile } from './voice-profiles';
 import { ServiceError } from './errors';
+import { assertCanCreate } from './plan-limits';
 
 type Ctx = Pick<AuthContext, 'tenantId' | 'userId' | 'authMode' | 'apiKeyId'>;
 
@@ -132,6 +133,8 @@ export async function getSession(ctx: Ctx, id: string): Promise<AgentSession> {
 
 export async function createSession(ctx: Ctx, raw: unknown, extra: { forkedFrom?: string } = {}) {
   const body = createSessionBody.parse(raw);
+  // Team instances are conversations of a team (limited by teams); single agents count.
+  if (!body.team_id) await assertCanCreate(ctx.tenantId, 'agents');
   // A team's instance runs on the team's providers; a single agent on its own.
   const llm = body.team_id
     ? { provider: body.provider || 'anthropic', model: body.model || 'team', provider_mode: body.provider_mode ?? ('preferred' as ProviderMode) }

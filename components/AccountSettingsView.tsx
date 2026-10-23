@@ -22,7 +22,7 @@ import {
 import { LlmKeysPanel } from '@/components/LlmKeysPanel';
 import { TeamMembersPanel } from '@/components/TeamMembersPanel';
 import { createClient } from '@/utils/supabase/client';
-import { PLANS, checkoutUrl } from '@/lib/billing/plans';
+import { LIMIT_LABELS, PLANS, planHighlights, type LimitKey, type PlanId } from '@/lib/billing/plans';
 
 async function api<T = any>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, { cache: 'no-store', ...init, headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) } });
@@ -174,13 +174,48 @@ interface BillingInfo {
 const money = (cents: number, currency: string) => new Intl.NumberFormat('en-US', { style: 'currency', currency: currency.toUpperCase() }).format(cents / 100);
 
 /** The plan and invoices Stripe reports; nothing is shown that Stripe did not record. */
-const BillingPanel: React.FC<{ orgId: string | null; email: string | null }> = ({ orgId, email }) => {
+interface UsageInfo {
+  plan: PlanId;
+  base_plan: PlanId;
+  billing_status: string;
+  trial: { tier: PlanId; started_at: string; ends_at: string } | null;
+  period: string;
+  resets_at: string;
+  limits: Record<LimitKey, number>;
+  used: Partial<Record<LimitKey, number>>;
+}
+
+/** Limits shown as usage bars, most relevant first. */
+const USAGE_KEYS: LimitKey[] = ['runs_month', 'api_ops_month', 'agents', 'teams', 'functions', 'schedules', 'context_profiles', 'mcp_profiles', 'api_keys', 'connections', 'inbound_endpoints', 'phone_numbers', 'llm_keys', 'members'];
+
+const daysLeft = (iso: string) => Math.max(0, Math.ceil((new Date(iso).getTime() - Date.now()) / 86_400_000));
+
+const UsageBar: React.FC<{ label: string; used: number; limit: number }> = ({ label, used, limit }) => {
+  const pct = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : used > 0 ? 100 : 0;
+  const color = pct >= 100 ? 'bg-rose-500' : pct >= 80 ? 'bg-amber-500' : 'bg-emerald-500';
+  return (
+    <div className="space-y-1">
+      <div className="flex justify-between gap-2 text-xs">
+        <span className="text-zinc-400 first-letter:uppercase">{label}</span>
+        <span className="text-zinc-300 font-mono">{used.toLocaleString()} / {limit.toLocaleString()}</span>
+      </div>
+      <div className="h-1.5 rounded-full bg-zinc-800 overflow-hidden">
+        <div className={`h-full ${color}`} style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+};
+
+/** Plan, trial and usage from the server; the plan cards come from the same catalog the server enforces. */
+const BillingPanel: React.FC<{ orgId: string | null; email: string | null }> = () => {
   const [info, setInfo] = useState<BillingInfo | null>(null);
+  const [usage, setUsage] = useState<UsageInfo | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
   const [opening, setOpening] = useState(false);
 
   useEffect(() => {
     api<BillingInfo>('/api/v1/account/billing').then(setInfo).catch((err) => setNotice({ ok: false, text: err.message }));
+    api<UsageInfo>('/api/v1/account/usage').then(setUsage).catch((err) => setNotice({ ok: false, text: err.message }));
   }, []);
 
   const openPortal = async () => {
@@ -194,52 +229,78 @@ const BillingPanel: React.FC<{ orgId: string | null; email: string | null }> = (
     }
   };
 
-  if (!info) return notice ? <NoticeLine notice={notice} /> : <div className="text-sm text-zinc-500 flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading billing…</div>;
-  const sub = info.subscription;
+  if (!info || !usage) return notice ? <NoticeLine notice={notice} /> : <div className="text-sm text-zinc-500 flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading billing…</div>;
+  const listed = (Object.values(PLANS) as Array<(typeof PLANS)[PlanId]>).filter((p) => p.listed);
 
   return (
     <div className="space-y-10">
       <div className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-lg font-semibold text-white">Subscription</h2>
+          <h2 className="text-lg font-semibold text-white">Plan</h2>
           {info.has_customer && info.can_manage && (
             <button onClick={openPortal} disabled={opening} className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium flex items-center gap-2">
               {opening ? <Loader2 className="w-4 h-4 animate-spin" /> : <ExternalLink className="w-4 h-4" />} Manage billing (Stripe)
             </button>
           )}
         </div>
-        <p className="text-sm text-zinc-400">
-          {sub
-            ? `Current plan: ${PLANS.find((p) => p.id === sub.plan)?.name ?? sub.plan_tier} · ${sub.status}${sub.current_period_ends_at ? ` · current period ends ${new Date(sub.current_period_ends_at).toLocaleDateString()}` : ''}`
-            : 'This organization has no subscription yet.'}
-        </p>
+        <div className="p-4 rounded-xl border border-zinc-800 bg-zinc-900/50 space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xl font-semibold text-white">{PLANS[usage.plan].name}</span>
+            {usage.trial && (
+              <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-800/60">
+                Trial · {daysLeft(usage.trial.ends_at)} {daysLeft(usage.trial.ends_at) === 1 ? 'day' : 'days'} left
+              </span>
+            )}
+            {usage.billing_status === 'past_due' && <span className="text-xs px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-800/60">Payment failed — update your card</span>}
+          </div>
+          <p className="text-sm text-zinc-400">
+            {usage.trial
+              ? `Trying ${PLANS[usage.trial.tier].name} until ${new Date(usage.trial.ends_at).toLocaleString()}. Afterwards you return to ${PLANS[usage.base_plan].name}; nothing is deleted.`
+              : usage.base_plan === 'free'
+              ? 'Free forever. Bring your own AI provider key; upgrade when you need more.'
+              : `Subscribed to ${PLANS[usage.base_plan].name}.`}
+          </p>
+          <p className="text-xs text-zinc-500">Monthly quotas reset on {new Date(usage.resets_at).toLocaleDateString()} (UTC).</p>
+        </div>
         <NoticeLine notice={notice} />
+      </div>
+
+      <div className="space-y-3">
+        <h2 className="text-lg font-semibold text-white">Usage</h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-3">
+          {USAGE_KEYS.map((k) => (
+            <UsageBar key={k} label={LIMIT_LABELS[k]} used={usage.used[k] ?? 0} limit={usage.limits[k]} />
+          ))}
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        <h2 className="text-lg font-semibold text-white">Plans</h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {PLANS.map((plan) => {
-            const current = sub?.plan === plan.id;
+          {listed.map((plan) => {
+            const current = usage.base_plan === plan.id;
             return (
               <div key={plan.id} className={`p-5 rounded-xl border flex flex-col ${current ? 'border-emerald-500/60 bg-emerald-950/10' : 'border-zinc-800 bg-zinc-900/50'}`}>
                 <h3 className="text-base font-semibold text-zinc-200">{plan.name}</h3>
-                <div className="mt-2 text-2xl font-bold text-white">${plan.monthlyUsd}<span className="text-sm text-zinc-500 font-normal">/mo</span></div>
-                {plan.setupFeeUsd && <div className="text-xs text-amber-500/80 mt-1">+ ${plan.setupFeeUsd} setup fee</div>}
+                <div className="mt-2 text-2xl font-bold text-white">${plan.priceUsd}<span className="text-sm text-zinc-500 font-normal">/mo</span></div>
+                <p className="mt-1 text-xs text-zinc-500">{plan.tagline}</p>
                 <ul className="mt-4 space-y-2 flex-1 text-sm text-zinc-400">
-                  {plan.features.map((f) => (
+                  {planHighlights(plan).map((f) => (
                     <li key={f} className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0 text-emerald-500" /> {f}</li>
                   ))}
                 </ul>
                 {current ? (
                   <div className="mt-6 w-full py-2 text-center text-sm text-emerald-400 border border-emerald-800/50 rounded-lg">Current plan</div>
-                ) : sub && info.can_manage ? (
-                  <button onClick={openPortal} className="mt-6 w-full py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg text-sm font-medium">Change plan</button>
-                ) : info.can_manage && orgId ? (
-                  <a href={checkoutUrl(plan, orgId, email)} target="_blank" rel="noopener noreferrer" className="mt-6 w-full py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm font-medium text-center block">
-                    Subscribe
-                  </a>
+                ) : plan.priceUsd ? (
+                  <div className="mt-6 w-full py-2 text-center text-xs text-zinc-500 border border-zinc-800 rounded-lg">Online upgrade is being connected</div>
                 ) : null}
               </div>
             );
           })}
         </div>
+        <p className="text-xs text-zinc-500">
+          Buying Developer includes 7 days of Pro; buying Pro includes 7 days of Unlimited. Enterprise: custom limits and support by contract — contact us.
+        </p>
       </div>
 
       <div className="space-y-4">

@@ -1,4 +1,8 @@
 import crypto from 'crypto';
+import { setPlanWithoutEntitlementForTests } from '../../lib/services/plan-limits';
+
+// Suites written before plans existed run without limits; plan tests seed entitlements explicitly.
+setPlanWithoutEntitlementForTests('unlimited');
 
 /**
  * In-memory PostgREST stand-in for end-to-end tests through the real supabase-js
@@ -59,29 +63,60 @@ function respond(rows: Row[], accept: string | null, status = 200, total?: numbe
 
 let clock = 0;
 
+/** Unique constraints the services rely on (a duplicate insert returns Postgres error 23505). */
+const UNIQUE_KEYS: Record<string, string[]> = {
+  trial_grants: ['tenant_id', 'tier'],
+  entitlements: ['tenant_id'],
+};
+
 /**
  * Database functions emulated in JS (single-threaded, so as atomic as the real ones).
  * Keep in sync with supabase/migrations (scripts/ci/sql-tests checks the real SQL).
  */
 const RPC: Record<string, (args: Row) => unknown> = {
-  start_agent_run({ p_run, p_max_concurrent, p_max_tokens_day }: Row) {
+  start_agent_run({ p_run, p_max_concurrent, p_max_tokens_day, p_max_runs_month, p_global_max_concurrent }: Row) {
     const runs = (tables.agent_runs ||= []);
     const tenant = p_run.tenant_id;
     if (p_run.client_ref) {
       const existing = runs.find((r) => r.tenant_id === tenant && r.client_ref === p_run.client_ref);
       if (existing) return { outcome: 'reused', run_id: existing.id };
     }
+    if ((tables.platform_settings ||= []).some((s) => s.key === 'runs_paused' && s.value === 'true')) return { outcome: 'platform_paused' };
     const org = (tables.organizations ||= []).find((o) => o.id === tenant);
     if (org?.agents_paused_at) return { outcome: 'paused', paused_at: org.agents_paused_at };
-    const active = runs.filter((r) => r.tenant_id === tenant && (r.status === 'queued' || r.status === 'running'));
+    const isActive = (r: Row) => r.status === 'queued' || r.status === 'running';
+    const active = runs.filter((r) => r.tenant_id === tenant && isActive(r));
     if (active.length >= p_max_concurrent) return { outcome: 'concurrency', active: active.length, limit: p_max_concurrent };
+    if (p_global_max_concurrent != null) {
+      const all = runs.filter(isActive).length;
+      if (all >= p_global_max_concurrent) return { outcome: 'platform_capacity', active: all, limit: p_global_max_concurrent };
+    }
     const now = new Date();
+    if (p_max_runs_month != null) {
+      const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
+      const month = runs.filter((r) => r.tenant_id === tenant && String(r.created_at) >= monthStart).length;
+      if (month >= p_max_runs_month) return { outcome: 'monthly_quota', used: month, limit: p_max_runs_month };
+    }
     const dayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
     const used = runs.filter((r) => r.tenant_id === tenant && String(r.created_at) >= dayStart).reduce((n, r) => n + (r.tokens_used ?? 0), 0);
     if (used >= p_max_tokens_day) return { outcome: 'daily_cap', used, limit: p_max_tokens_day };
     if (active.some((r) => r.session_id === p_run.session_id)) return { outcome: 'busy' };
     runs.push({ ...p_run });
     return { outcome: 'created', run_id: p_run.id };
+  },
+  consume_api_request({ p_tenant, p_month, p_minute, p_ops_limit, p_rpm_limit }: Row) {
+    const counters = (tables.usage_counters ||= []);
+    const get = (metric: string, period: string) => counters.find((c) => c.tenant_id === p_tenant && c.metric === metric && c.period === period);
+    const ops = get('api_ops', p_month)?.used ?? 0;
+    if (ops >= p_ops_limit) return { outcome: 'monthly_quota', used: ops, limit: p_ops_limit };
+    const rpm = get('api_rpm', p_minute)?.used ?? 0;
+    if (rpm >= p_rpm_limit) return { outcome: 'rate_limited', used: rpm, limit: p_rpm_limit };
+    for (const [metric, period] of [['api_ops', p_month], ['api_rpm', p_minute]]) {
+      const row = get(metric, period);
+      if (row) row.used += 1;
+      else counters.push({ tenant_id: p_tenant, metric, period, used: 1 });
+    }
+    return { outcome: 'ok', used: ops + 1, limit: p_ops_limit };
   },
   /** auth.users is emulated as tables.auth_users ({ id, email }). */
   user_id_by_email({ p_email }: Row) {
@@ -118,6 +153,11 @@ export async function fakePostgrest(input: RequestInfo | URL, init?: RequestInit
   }
   if (method === 'POST') {
     const body = JSON.parse(String(init?.body));
+    const unique = UNIQUE_KEYS[table];
+    if (unique) {
+      const clash = (Array.isArray(body) ? body : [body]).some((r: Row) => rows.some((x) => unique.every((k) => String(x[k]) === String(r[k]))));
+      if (clash) return new Response(JSON.stringify({ code: '23505', message: `duplicate key value violates unique constraint on ${table}` }), { status: 409 });
+    }
     const inserted = (Array.isArray(body) ? body : [body]).map((r: Row) => ({
       id: crypto.randomUUID(),
       created_at: new Date(Date.UTC(2026, 0, 1) + clock * 1000).toISOString(),

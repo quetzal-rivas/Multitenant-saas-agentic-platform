@@ -10,6 +10,7 @@ import { getContextProfile } from './context-profiles';
 import { getProfile } from './profiles';
 import { getVoiceProfile } from './voice-profiles';
 import { ServiceError } from './errors';
+import { assertCanCreate, assertWithinLimit } from './plan-limits';
 
 type Ctx = Pick<AuthContext, 'tenantId' | 'userId' | 'authMode' | 'apiKeyId'>;
 
@@ -96,6 +97,12 @@ export function toTeamSpec(team: AgentTeam): TeamSpec {
     },
     voice: { profile_id: team.voice_profile_id ?? null },
   };
+}
+
+/** Plan limits a team spec must fit: workers per team, and an enabled heartbeat is an active schedule. */
+async function assertTeamPlan(ctx: Ctx, spec: TeamSpec, existing: AgentTeam | null) {
+  await assertWithinLimit(ctx.tenantId, 'workers_per_team', spec.workers.length);
+  if (spec.heartbeat.enabled && !existing?.heartbeat_enabled) await assertCanCreate(ctx.tenantId, 'schedules');
 }
 
 async function assertSpecReferences(ctx: Ctx, spec: TeamSpec) {
@@ -213,6 +220,8 @@ export async function getTeam(ctx: Ctx, id: string): Promise<AgentTeam> {
 
 export async function createTeam(ctx: Ctx, raw: unknown): Promise<AgentTeam> {
   const spec = teamSpecSchema.parse(raw);
+  await assertCanCreate(ctx.tenantId, 'teams');
+  await assertTeamPlan(ctx, spec, null);
   await assertSpecReferences(ctx, spec);
   const llm = await resolveAgentLlm(ctx.tenantId, { provider: spec.llm.provider, model: spec.llm.model, provider_mode: spec.llm.mode });
   const { data, error } = await getSupabaseAdminClient()
@@ -229,6 +238,7 @@ export async function createTeam(ctx: Ctx, raw: unknown): Promise<AgentTeam> {
 export async function updateTeam(ctx: Ctx, id: string, raw: unknown): Promise<AgentTeam> {
   const spec = teamSpecSchema.parse(raw);
   const existing = await getTeam(ctx, id);
+  await assertTeamPlan(ctx, spec, existing);
   await assertSpecReferences(ctx, spec);
   const llm = await resolveAgentLlm(ctx.tenantId, { provider: spec.llm.provider, model: spec.llm.model, provider_mode: spec.llm.mode });
   const { error } = await getSupabaseAdminClient()

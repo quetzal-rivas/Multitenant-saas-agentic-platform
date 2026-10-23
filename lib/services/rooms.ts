@@ -18,6 +18,7 @@ import { credsFor, friendly, hasCallCompliance, requireConnection, twilioHookUrl
 import { loadVoiceAgent, voiceAgentSecrets, withinCallingHours } from './voice-agents';
 import { ServiceError, isServiceError } from './errors';
 import { contactBrief, contactHistory, contactHistoryText } from './contact-history';
+import { assertFeature, effectivePlan } from './plan-limits';
 
 /**
  * Live Rooms: one room per live conversation on the org's own Twilio account.
@@ -290,6 +291,8 @@ export async function handleIncoming(conn: Row, p: Record<string, string>): Prom
   const { data: number } = await db().from('phone_numbers').select('id, e164, voice_agent_id').eq('tenant_id', conn.tenant_id).eq('e164', p.To).maybeSingle();
   const agent = number?.voice_agent_id ? await loadVoiceAgent(conn.tenant_id, number.voice_agent_id).catch(() => null) : null;
   if (!agent) return hangupTwiml('This number is not available right now.', 'en');
+  // Phone calls run agents on our compute; a plan without voice (e.g. after a trial) answers nothing.
+  if (!(await effectivePlan(conn.tenant_id)).features.voice_telephony) return hangupTwiml('This number is not available right now.', agent.language || 'en');
   const { data: blocked } = await db().from('call_blocklist').select('e164').eq('tenant_id', conn.tenant_id).eq('e164', p.From).maybeSingle();
   if (blocked) return response('<Reject reason="rejected"/>');
   if (!withinCallingHours(agent.calling_hours)) {
@@ -578,6 +581,7 @@ export async function handleTurn(conn: Row, roomId: string, p: Record<string, st
 // ---------------------------------------------------------------------------
 
 export async function placeCall(ctx: Ctx, args: { to: string; voice_agent_id?: string; purpose?: string }) {
+  await assertFeature(ctx.tenantId, 'voice_telephony');
   if (!isE164(args.to)) throw new ServiceError('Use an E.164 number, e.g. +5215512345678.', 'INVALID');
   if (!(await hasCallCompliance(ctx.tenantId))) {
     throw new ServiceError('An owner must first confirm call consent and recording compliance (Voice → Calls).', 'CONFLICT');

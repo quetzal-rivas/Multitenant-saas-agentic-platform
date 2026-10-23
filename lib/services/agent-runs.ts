@@ -8,8 +8,9 @@ import { parkRunClaims } from './board';
 import { getSession } from './agent-sessions';
 import { resolveVoiceProfile } from './voice-profiles';
 import { DEFAULT_REPLY_STYLE } from '@/lib/voice/profile-spec';
-import { ServiceError } from './errors';
+import { LimitError, ServiceError } from './errors';
 import { capped, orgAgentState, tokensUsedToday } from './agent-limits';
+import { effectivePlan, limitReached, platformCapacity, platformCapacityError } from './plan-limits';
 
 /**
  * Durable agent runs. A turn is stored as a run and executed in time-boxed slices by a
@@ -166,7 +167,14 @@ export async function startRun(ctx: RunCaller, sessionId: string, message: strin
     created_at: now,
     updated_at: now,
   };
-  const { data: res, error } = await db.rpc('start_agent_run', { p_run: row, p_max_concurrent: limits.max_concurrent_runs, p_max_tokens_day: limits.max_tokens_per_day });
+  const [plan, capacity] = await Promise.all([effectivePlan(ctx.tenantId), platformCapacity()]);
+  const { data: res, error } = await db.rpc('start_agent_run', {
+    p_run: row,
+    p_max_concurrent: limits.max_concurrent_runs,
+    p_max_tokens_day: limits.max_tokens_per_day,
+    p_max_runs_month: plan.limits.runs_month,
+    p_global_max_concurrent: capacity.maxConcurrentRuns,
+  });
   if (error) throw new Error(`Could not start the run: ${error.message}`);
   const outcome = res as { outcome: string; run_id?: string; active?: number; limit?: number; used?: number; paused_at?: string };
   switch (outcome?.outcome) {
@@ -179,7 +187,18 @@ export async function startRun(ctx: RunCaller, sessionId: string, message: strin
     case 'paused':
       throw new ServiceError('Agent runs are paused for this organization. A person must resume them (Agent Studio → Resume runs).', 'CONFLICT');
     case 'concurrency':
-      throw new ServiceError(`Concurrency limit reached: ${outcome.active} runs are active (limit ${outcome.limit}). Wait for one to finish and try again.`, 'CONFLICT');
+      throw new LimitError(`Concurrency limit reached: ${outcome.active} runs are active (limit ${outcome.limit}). Wait for one to finish and try again.`, 'CONCURRENCY_LIMIT_REACHED', {
+        limit_key: 'concurrent_runs',
+        limit: outcome.limit,
+        used: outcome.active,
+        plan: plan.plan,
+        upgrade: plan.plan !== 'enterprise',
+      });
+    case 'monthly_quota':
+      throw limitReached(plan, 'runs_month', outcome.used ?? plan.limits.runs_month);
+    case 'platform_paused':
+    case 'platform_capacity':
+      throw platformCapacityError(outcome.outcome);
     case 'daily_cap':
       throw new ServiceError(`Daily token cap reached for this organization (${outcome.used} of ${outcome.limit} tokens today, UTC).`, 'CONFLICT');
     case 'busy':

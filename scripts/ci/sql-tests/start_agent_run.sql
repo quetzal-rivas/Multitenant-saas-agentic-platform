@@ -35,5 +35,16 @@ BEGIN
   UPDATE public.organizations SET agents_paused_at = now() WHERE id = org;
   r := public.start_agent_run(base || jsonb_build_object('id', gen_random_uuid(), 'session_id', s3), 2, 1000000);
   ASSERT r->>'outcome' = 'paused', 'paused org refuses runs: ' || r::text;
+
+  -- Monthly run quota (2 runs created this month so far) and the platform switch.
+  UPDATE public.organizations SET agents_paused_at = NULL WHERE id = org;
+  r := public.start_agent_run(base || jsonb_build_object('id', gen_random_uuid(), 'session_id', s3), 5, 1000000, 2);
+  ASSERT r->>'outcome' = 'monthly_quota', 'monthly run quota: ' || r::text;
+  r := public.start_agent_run(base || jsonb_build_object('id', gen_random_uuid(), 'session_id', s3), 5, 1000000, 100, 0);
+  ASSERT r->>'outcome' = 'platform_capacity', 'platform-wide cap: ' || r::text;
+  INSERT INTO public.platform_settings (key, value) VALUES ('runs_paused', 'true')
+    ON CONFLICT (key) DO UPDATE SET value = 'true';
+  r := public.start_agent_run(base || jsonb_build_object('id', gen_random_uuid(), 'session_id', s3), 5, 1000000);
+  ASSERT r->>'outcome' = 'platform_paused', 'platform emergency switch: ' || r::text;
 END $$;
 ROLLBACK;

@@ -6,6 +6,7 @@ import { heartbeatScheduleSchema, nextRun, previewRuns, type HeartbeatSchedule }
 import { assertActiveProfile } from './profiles';
 import { getTeam } from './teams';
 import { ServiceError, pageInfo } from './errors';
+import { assertCanCreate } from './plan-limits';
 
 /**
  * Scheduled tasks: work a team runs at a time (one-off) or on a schedule (repeating).
@@ -70,6 +71,7 @@ export async function scheduleTask(ctx: Ctx, args: z.infer<typeof scheduleTaskAr
   const teamId = args.team_id ?? ctx.teamId ?? null;
   if (!teamId) throw new ServiceError('team_id is required: pick the team that should run this task (contextcontrol tools inside a team run default to that team).', 'INVALID');
   await getTeam(ctx, teamId); // must exist in this organization
+  await assertCanCreate(ctx.tenantId, 'schedules');
   if (args.profile_id) await assertActiveProfile(ctx, args.profile_id);
   const schedule = args.schedule ? heartbeatScheduleSchema.parse(args.schedule) : undefined;
   const next = firstRun(args.target_time, schedule);
@@ -172,6 +174,7 @@ export async function updateTask(ctx: Ctx, id: string, patch: TaskPatch) {
 export async function setTaskPaused(ctx: Ctx, id: string, paused: boolean) {
   const task = await loadTask(ctx, id);
   if (task.status !== 'scheduled') throw new ServiceError(`Only scheduled tasks can be ${paused ? 'paused' : 'resumed'} (this one is ${task.status}).`, 'CONFLICT');
+  if (!paused && task.paused) await assertCanCreate(ctx.tenantId, 'schedules');
   let next: string | null = null;
   if (!paused) {
     next = (task.schedule ? nextRun(task.schedule, new Date()) : new Date(Math.max(Date.now() + 60_000, new Date(task.target_time).getTime()))).toISOString();

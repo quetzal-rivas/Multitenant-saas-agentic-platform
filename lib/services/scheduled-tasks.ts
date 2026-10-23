@@ -6,6 +6,7 @@ import { createTeamSession, getTeam } from './teams';
 import { postBoardTask } from './board';
 import { dispatchRun, executeRun, claimRun, startRun, workerConfigured } from './agent-runs';
 import { ServiceError, isServiceError } from './errors';
+import { effectivePlan } from './plan-limits';
 
 /**
  * Executes scheduled tasks. The minute tick claims due tasks with compare-and-set on
@@ -120,7 +121,9 @@ export async function runTaskNow(ctx: Pick<AuthContext, 'tenantId'>, taskId: str
 async function handleFailure(task: Row, error: string) {
   const attempt = (task.attempt ?? 0) + 1;
   const now = Date.now();
-  if (attempt <= (task.max_retries ?? 2)) {
+  // Automatic retries are a Developer feature; Free tasks fail (and escalate) on the first error.
+  const retries = (await effectivePlan(task.tenant_id)).features.task_retries ? task.max_retries ?? 2 : 0;
+  if (attempt <= retries) {
     const retryAt = new Date(now + (task.retry_delay_minutes ?? 5) * 60_000);
     const next = task.schedule && task.next_run_at && new Date(task.next_run_at) < retryAt ? task.next_run_at : retryAt.toISOString();
     await updateTask(task.id, { attempt, status: 'scheduled', next_run_at: next, last_status: 'error', last_error: error.slice(0, 2000) });

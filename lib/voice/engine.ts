@@ -5,6 +5,7 @@ import { DEFAULT_VOICE, VOICE_PROVIDER_KEY, VOICE_PROVIDER_LABEL, type VoiceProf
 import { VOICE_PROVIDER_IMPLS } from './providers';
 import { VoiceProviderError, type SpeechAudio, type SynthesizeOptions, type VoiceInfo } from './types';
 import { audioCacheKey, getCachedAudio, putCachedAudio } from './audio-cache';
+import { effectivePlan } from '@/lib/services/plan-limits';
 
 /**
  * Provider-neutral speech engine. Each call walks a chain: the profile's provider, then
@@ -95,6 +96,8 @@ function describe(err: unknown): string {
 
 async function keyFor(tenantId: string, provider: VoiceProviderId): Promise<string | null> {
   const name = VOICE_PROVIDER_KEY[provider];
+  // ElevenLabs credentials stay stored but inactive on plans without voice (e.g. after a trial).
+  if (name === 'elevenlabs' && !(await effectivePlan(tenantId)).features.voice_telephony) return null;
   return name ? secretGetter(tenantId, name as BYOKProvider) : null;
 }
 

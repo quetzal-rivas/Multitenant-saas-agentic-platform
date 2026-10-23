@@ -5,6 +5,7 @@ import { twilio, TwilioError, voiceAccessToken, type TwilioCreds } from '@/lib/r
 import { explainTwilioError, twilioErrorText } from '@/lib/rooms/twilio-errors';
 import { createEndpoint, setEndpointSecret } from './inbound';
 import { ServiceError } from './errors';
+import { assertCanCreate, assertFeature } from './plan-limits';
 
 /**
  * The organization's own telephony account (Twilio first). Connecting verifies the
@@ -79,6 +80,7 @@ export function friendly(err: unknown): string {
 
 /** Connect (or reconnect) the org's Twilio account. */
 export async function connectTwilio(ctx: Ctx, input: { account_sid: string; auth_token: string }, publicOrigin: string) {
+  await assertFeature(ctx.tenantId, 'voice_telephony');
   const accountSid = input.account_sid.trim();
   const authToken = input.auth_token.trim();
   if (!/^AC[0-9a-f]{32}$/i.test(accountSid)) throw new ServiceError('The Account SID starts with AC followed by 32 characters.', 'INVALID');
@@ -231,6 +233,10 @@ export async function configureNumber(ctx: Ctx, numberId: string, input: { voice
   const db = getSupabaseAdminClient();
   const { data: number } = await db.from('phone_numbers').select(NUMBER_COLUMNS).eq('id', numberId).eq('tenant_id', ctx.tenantId).maybeSingle();
   if (!number) throw new ServiceError('Number not found in this organization.', 'NOT_FOUND');
+  if (input.voice_agent_id || input.sms_to_webhooks) {
+    await assertFeature(ctx.tenantId, 'voice_telephony');
+    if (!number.configured) await assertCanCreate(ctx.tenantId, 'phone_numbers');
+  }
   if (input.voice_agent_id) {
     const { data: agent } = await db.from('voice_agents').select('id').eq('id', input.voice_agent_id).eq('tenant_id', ctx.tenantId).is('archived_at', null).maybeSingle();
     if (!agent) throw new ServiceError('Voice agent not found in this organization.', 'NOT_FOUND');

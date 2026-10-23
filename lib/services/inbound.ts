@@ -18,6 +18,7 @@ import { createTeamSession, getTeam } from './teams';
 import { dispatchRun, invokeWorker, startRun, workerConfigured, claimRun, executeRun } from './agent-runs';
 import { getFunction, invokeFunction } from './functions';
 import { ServiceError, isServiceError } from './errors';
+import { assertCanCreate } from './plan-limits';
 
 /**
  * Inbound Gateway: public webhook endpoints → verified, stored events → routed (rules or
@@ -191,6 +192,7 @@ export async function getEndpoint(ctx: Pick<Ctx, 'tenantId'>, id: string) {
 
 export async function createEndpoint(ctx: Ctx, raw: unknown) {
   const spec = endpointSchema.parse(raw);
+  await assertCanCreate(ctx.tenantId, 'inbound_endpoints');
   await assertReferences(ctx, spec);
   const now = new Date().toISOString();
   const { data, error } = await getSupabaseAdminClient()

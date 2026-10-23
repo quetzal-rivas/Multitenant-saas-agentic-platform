@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { getSupabaseAdminClient } from '@/lib/supabase';
+import { assertCanCreate } from '@/lib/services/plan-limits';
 
 export type ApiKeyEnvironment = 'live' | 'test';
 
@@ -152,6 +153,7 @@ export async function createPlatformApiKey(
   tenantId: string,
   input: CreateApiKeyInput
 ): Promise<CreatedPlatformApiKey> {
+  await assertCanCreate(tenantId, 'api_keys');
   const environment = input.environment === 'test' ? 'test' : 'live';
   const rawKey = generateRawApiKey(environment);
   const scopes = input.scopes && input.scopes.length > 0 ? input.scopes : DEFAULT_API_KEY_SCOPES;

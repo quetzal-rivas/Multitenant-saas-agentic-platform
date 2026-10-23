@@ -137,7 +137,7 @@ export default function OnboardingPage() {
               </div>
               <h2 className="text-2xl font-bold text-white">Create Your Organization</h2>
               <p className="text-zinc-400 text-sm mt-1">
-                Name your workspace. Its data is kept separate from every other organization by row-level security.
+                Name your workspace. It starts on the Free plan with a 7-day Developer trial — no card needed. Its data is kept separate from every other organization.
               </p>
             </div>
 
@@ -171,7 +171,7 @@ export default function OnboardingPage() {
               </div>
               <h2 className="text-2xl font-bold text-white">Bring Your Own Key (BYOK)</h2>
               <p className="text-zinc-400 text-sm mt-1">
-                Paste your secret API keys. Credentials are encrypted via AES-256 into your tenant vault and never exposed to client bundles.
+                Optional. Add a key from your AI provider so agents can run; it is encrypted and never shown again. Using Context Control only as an MCP gateway from your own AI client? Skip this step.
               </p>
             </div>
 

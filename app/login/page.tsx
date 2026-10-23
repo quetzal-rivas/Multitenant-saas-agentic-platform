@@ -110,12 +110,12 @@ export default function LoginPage() {
           </div>
           <span className="font-bold text-2xl tracking-tight text-white">Context Control</span>
         </Link>
-        <p className="text-zinc-400 text-sm mt-2">Sign in to manage your multi-tenant agent teams</p>
+        <p className="text-zinc-400 text-sm mt-2">{isSignUp ? "Start free. Bring your own AI provider key whenever you're ready." : 'Sign in to manage your agent teams'}</p>
       </div>
 
       {/* Auth Card */}
       <div className="w-full max-w-md p-8 rounded-2xl bg-zinc-900/70 border border-zinc-800 shadow-2xl backdrop-blur-md relative z-10">
-        <h2 className="text-xl font-bold text-white mb-6 text-center">Authentication Gateway</h2>
+        <h2 className="text-xl font-bold text-white mb-6 text-center">{isSignUp ? 'Create your free account' : 'Sign in'}</h2>
 
         {message && (
           <div className="mb-6 p-3.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs text-center font-mono">

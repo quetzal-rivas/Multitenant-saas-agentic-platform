@@ -30,7 +30,7 @@ describe('Account: members, invitations, ownership, deletion', () => {
   });
   beforeEach(() => {
     sent.length = 0;
-    resetTables(['organizations', 'organization_members', 'organization_invites', 'auth_users', 'api_keys', 'agent_runs', 'run_events', 'board_tasks', 'entitlements']);
+    resetTables(['organizations', 'organization_members', 'organization_invites', 'auth_users', 'mcp_api_keys', 'agent_runs', 'run_events', 'board_tasks', 'entitlements']);
     tables.organizations.push({ id: ORG, name: 'Acme', subscription_status: 'active' }, { id: OTHER_ORG, name: 'Other', subscription_status: 'active' });
     tables.auth_users.push(
       { id: OWNER, email: 'owner@acme.test' },
@@ -98,7 +98,7 @@ describe('Account: members, invitations, ownership, deletion', () => {
   });
 
   test('deleting removes access, revokes keys, pauses agents and keeps the data', async () => {
-    tables.api_keys.push({ id: 'k1', tenant_id: ORG, revoked_at: null }, { id: 'k2', tenant_id: OTHER_ORG, revoked_at: null });
+    tables.mcp_api_keys.push({ id: 'k1', tenant_id: ORG, revoked_at: null }, { id: 'k2', tenant_id: OTHER_ORG, revoked_at: null });
     await assert.rejects(deleteOrganization(admin, 'Acme'), /Only the organization owner/);
     await assert.rejects(deleteOrganization(owner, 'acme'), /Type the organization name exactly/);
     await deleteOrganization(owner, 'Acme');
@@ -106,8 +106,8 @@ describe('Account: members, invitations, ownership, deletion', () => {
     assert.ok(org.deleted_at && org.agents_paused_at);
     assert.equal(org.deleted_members.length, 3);
     assert.ok(!tables.organization_members.some((m) => m.organization_id === ORG));
-    assert.ok(tables.api_keys.find((k) => k.id === 'k1')!.revoked_at);
-    assert.equal(tables.api_keys.find((k) => k.id === 'k2')!.revoked_at, null, 'other organizations untouched');
+    assert.ok(tables.mcp_api_keys.find((k) => k.id === 'k1')!.revoked_at);
+    assert.equal(tables.mcp_api_keys.find((k) => k.id === 'k2')!.revoked_at, null, 'other organizations untouched');
   });
 });
 
@@ -135,7 +135,7 @@ describe('Billing: only what Stripe reports', () => {
       billingPortal: { sessions: { create: async () => ({ url: 'https://portal' }) } },
     } as any;
     const res = await billingSummary(owner, { stripe });
-    assert.equal(res.subscription?.plan, 'tier2');
+    assert.equal(res.subscription?.plan, 'pro');
     assert.equal(res.invoices[0].number, 'A-1');
     assert.equal((await billingPortalUrl(owner, 'https://app', { stripe })).url, 'https://portal');
     await assert.rejects(billingPortalUrl(member, 'https://app', { stripe }), /owner or an admin/);

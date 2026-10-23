@@ -163,7 +163,7 @@ const ProfilePanel: React.FC = () => {
 };
 
 interface BillingInfo {
-  subscription: { plan: string | null; plan_tier: string; status: string; current_period_ends_at: string | null } | null;
+  subscription: { plan: string | null; plan_tier: string; status: string; current_period_ends_at: string | null; cancel_at: string | null } | null;
   has_customer: boolean;
   stripe_configured: boolean;
   invoices: Array<{ id: string; number: string | null; created: string; amount_due: number; amount_paid: number; currency: string; status: string | null; hosted_invoice_url: string | null; invoice_pdf: string | null }>;
@@ -207,7 +207,7 @@ const UsageBar: React.FC<{ label: string; used: number; limit: number }> = ({ la
 };
 
 /** Plan, trial and usage from the server; the plan cards come from the same catalog the server enforces. */
-const BillingPanel: React.FC<{ orgId: string | null; email: string | null }> = () => {
+const BillingPanel: React.FC<{ orgId: string | null; email: string | null; checkout?: 'success' | 'cancelled' }> = ({ checkout }) => {
   const [info, setInfo] = useState<BillingInfo | null>(null);
   const [usage, setUsage] = useState<UsageInfo | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
@@ -227,9 +227,40 @@ const BillingPanel: React.FC<{ orgId: string | null; email: string | null }> = (
   };
 
   useEffect(() => {
-    api<BillingInfo>('/api/v1/account/billing').then(setInfo).catch((err) => setNotice({ ok: false, text: err.message }));
-    api<UsageInfo>('/api/v1/account/usage').then(setUsage).catch((err) => setNotice({ ok: false, text: err.message }));
-  }, []);
+    let stop = false;
+    const load = async () => {
+      const [b, u] = await Promise.all([api<BillingInfo>('/api/v1/account/billing'), api<UsageInfo>('/api/v1/account/usage')]);
+      if (!stop) {
+        setInfo(b);
+        setUsage(u);
+      }
+      return u;
+    };
+    (async () => {
+      try {
+        let u = await load();
+        if (checkout === 'cancelled') setNotice({ ok: false, text: 'Checkout cancelled. Nothing was charged.' });
+        if (checkout !== 'success') return;
+        // Stripe confirms the purchase by webhook, usually within seconds of the redirect.
+        for (let i = 0; i < 6 && !stop && u.billing_status !== 'active'; i++) {
+          await new Promise((r) => setTimeout(r, 2000));
+          u = await load();
+        }
+        if (stop) return;
+        const trial = u.trial ? ` and ${daysLeft(u.trial.ends_at)} days of ${PLANS[u.trial.tier].name}` : '';
+        setNotice(
+          u.billing_status === 'active'
+            ? { ok: true, text: `Payment confirmed: you're on ${PLANS[u.base_plan].name}${trial}.` }
+            : { ok: true, text: 'Payment received. Your plan updates as soon as Stripe confirms it; refresh in a minute.' }
+        );
+      } catch (err) {
+        if (!stop) setNotice({ ok: false, text: (err as Error).message });
+      }
+    })();
+    return () => {
+      stop = true;
+    };
+  }, [checkout]);
 
   const openPortal = async () => {
     setOpening(true);
@@ -264,6 +295,11 @@ const BillingPanel: React.FC<{ orgId: string | null; email: string | null }> = (
                 Trial · {daysLeft(usage.trial.ends_at)} {daysLeft(usage.trial.ends_at) === 1 ? 'day' : 'days'} left
               </span>
             )}
+            {info.subscription?.cancel_at && usage.base_plan !== 'free' && (
+              <span className="text-xs px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-800/60">
+                Ends {new Date(info.subscription.cancel_at).toLocaleDateString()}
+              </span>
+            )}
             {usage.billing_status === 'past_due' && <span className="text-xs px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-800/60">Payment failed — update your card</span>}
           </div>
           <p className="text-sm text-zinc-400">
@@ -273,6 +309,11 @@ const BillingPanel: React.FC<{ orgId: string | null; email: string | null }> = (
               ? 'Free forever. Bring your own AI provider key; upgrade when you need more.'
               : `Subscribed to ${PLANS[usage.base_plan].name}.`}
           </p>
+          {info.subscription?.cancel_at && usage.base_plan !== 'free' && (
+            <p className="text-sm text-amber-300">
+              Your {PLANS[usage.base_plan].name} subscription is cancelled: you keep it until {new Date(info.subscription.cancel_at).toLocaleDateString()}, then move to Free with your data intact. To keep it, choose Don&apos;t cancel in Manage billing.
+            </p>
+          )}
           <p className="text-xs text-zinc-500">Monthly quotas reset on {new Date(usage.resets_at).toLocaleDateString(undefined, { timeZone: 'UTC' })} (UTC).</p>
         </div>
         <NoticeLine notice={notice} />
@@ -528,8 +569,9 @@ const DangerPanel: React.FC<{ org: { id: string; name: string } | null; role: st
 
 type Tab = 'profile' | 'team' | 'keys' | 'billing' | 'danger';
 
-export const AccountSettingsView: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<Tab>('profile');
+/** `checkout` is set when Stripe Checkout returns to the dashboard; Billing opens and confirms it. */
+export const AccountSettingsView: React.FC<{ checkout?: 'success' | 'cancelled' }> = ({ checkout }) => {
+  const [activeTab, setActiveTab] = useState<Tab>(checkout ? 'billing' : 'profile');
   const [org, setOrg] = useState<{ id: string; name: string } | null>(null);
   const [role, setRole] = useState<string | null>(null);
   const [email, setEmail] = useState<string | null>(null);
@@ -590,7 +632,7 @@ export const AccountSettingsView: React.FC = () => {
           {activeTab === 'profile' && <ProfilePanel />}
           {activeTab === 'team' && <TeamMembersPanel />}
           {activeTab === 'keys' && <LlmKeysPanel />}
-          {activeTab === 'billing' && <BillingPanel orgId={org?.id ?? null} email={email} />}
+          {activeTab === 'billing' && <BillingPanel orgId={org?.id ?? null} email={email} checkout={checkout} />}
           {activeTab === 'danger' && <DangerPanel org={org} role={role} />}
         </div>
       </div>

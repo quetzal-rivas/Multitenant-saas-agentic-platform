@@ -118,6 +118,26 @@ describe('Trial chain: Free → Developer trial; Developer → Pro trial; Pro �
     assert.equal(planAt(0), 'free');
   });
 
+  test('cancelling in the portal keeps the plan until cancel_at; resuming clears it; the end clears it', async () => {
+    const end = Math.floor(Date.now() / 1000) + 30 * 86400;
+    await handleStripeEvent(subEvent('customer.subscription.created', 'active', 'price_dev_test'));
+    assert.equal(entitlement().cancel_at, null);
+
+    await handleStripeEvent(subEvent('customer.subscription.updated', 'active', 'price_dev_test', { cancel_at: end }));
+    assert.equal(entitlement().cancel_at, new Date(end * 1000).toISOString());
+    assert.equal(entitlement().plan_tier, 'developer', 'still paid until then');
+
+    await handleStripeEvent(subEvent('customer.subscription.updated', 'active', 'price_dev_test', { cancel_at: null }));
+    assert.equal(entitlement().cancel_at, null, "Don't cancel");
+
+    await handleStripeEvent(subEvent('customer.subscription.updated', 'active', 'price_dev_test', { cancel_at_period_end: true }));
+    assert.ok(entitlement().cancel_at, 'cancel at period end uses the period end');
+
+    await handleStripeEvent(subEvent('customer.subscription.deleted', 'canceled', 'price_dev_test'));
+    assert.equal(entitlement().plan_tier, 'free');
+    assert.equal(entitlement().cancel_at, null);
+  });
+
   test('a failed payment keeps the plan for a 7-day grace period, then Free; repeated events do not extend it', async () => {
     await handleStripeEvent(subEvent('customer.subscription.created', 'active', 'price_pro_test'));
     await handleStripeEvent({ id: `evt_${++seq}`, type: 'invoice.payment_failed', data: { object: { customer: 'cus_1' } } } as any);

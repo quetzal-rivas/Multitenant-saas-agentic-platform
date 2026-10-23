@@ -2,7 +2,8 @@ name: Deploy Multitenant SaaS Stack
 
 # Every push to main deploys staging (AWS account 832554215040, Supabase context-control-staging).
 # Production (account 975970277865, Supabase context-control-prod) follows only after staging
-# passes and the owner approves the "production" environment in GitHub.
+# deploys, the end-to-end tests pass against it, and the owner approves the "production"
+# environment in GitHub.
 # The pipeline for the previous single account is kept in legacy/snippets/deploy-stack-old-account.yml.txt.
 
 on:
@@ -22,8 +23,13 @@ jobs:
       stage: staging
     secrets: inherit
 
-  production:
+  e2e:
     needs: staging
+    uses: ./.github/workflows/e2e-staging.yml
+    secrets: inherit
+
+  production:
+    needs: [staging, e2e]
     uses: ./.github/workflows/deploy-environment.yml
     with:
       stage: production

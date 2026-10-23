@@ -26,7 +26,9 @@ new ContextControlStack(app, `ContextControl-${stage}`, {
   githubRepositoryId: '1389238528',
   githubEnvironment: STAGES[stage].githubEnvironment,
   alertEmail: 'aws@contextcontrol.com.mx',
-  emailDomain: stage === 'production' ? 'contextcontrol.com.mx' : undefined,
+  // Both accounts verify the domain (each with its own DKIM keys). Staging's SES stays in the
+  // sandbox, so it can only email addresses at this domain (the test accounts), never customers.
+  emailDomain: 'contextcontrol.com.mx',
   maxConcurrentRuns: STAGES[stage].maxConcurrentRuns,
   workerReservedConcurrency: STAGES[stage].workerReservedConcurrency,
   tags: { app: 'context-control', stage },

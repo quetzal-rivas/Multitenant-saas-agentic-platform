@@ -15,3 +15,7 @@ amplify_deploy.zip
 # Supabase CLI local state
 supabase/.temp/
 dist/
+
+# Playwright (end-to-end)
+playwright-report/
+test-results/

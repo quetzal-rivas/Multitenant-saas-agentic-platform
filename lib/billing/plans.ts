@@ -52,6 +52,10 @@ export interface PlanDefinition {
   listed: boolean;
   /** Buying this plan grants a one-time 7-day trial of this tier. */
   trialOnPurchase: PlanId | null;
+  /** The trial this plan comes with, in one line (landing page and Billing). */
+  trialLine: string;
+  /** Publish the numeric limits. Unlimited's stay internal until capacity is load-tested. */
+  limitsPublic: boolean;
   limits: Record<LimitKey, number>;
   features: PlanFeatures;
 }
@@ -90,6 +94,8 @@ export const PLANS: Record<PlanId, PlanDefinition> = {
     priceUsd: 0,
     listed: true,
     trialOnPurchase: null,
+    trialLine: 'Includes a 7-day Developer trial. No card needed.',
+    limitsPublic: true,
     limits: {
       agents: 3,
       teams: 1,
@@ -118,6 +124,8 @@ export const PLANS: Record<PlanId, PlanDefinition> = {
     priceUsd: 19,
     listed: true,
     trialOnPurchase: 'pro',
+    trialLine: 'Includes a 7-day Pro trial when you subscribe.',
+    limitsPublic: true,
     limits: {
       agents: 15,
       teams: 5,
@@ -146,6 +154,8 @@ export const PLANS: Record<PlanId, PlanDefinition> = {
     priceUsd: 49,
     listed: true,
     trialOnPurchase: 'unlimited',
+    trialLine: 'Includes a 7-day Unlimited trial when you subscribe.',
+    limitsPublic: true,
     limits: {
       agents: 50,
       teams: 25,
@@ -170,10 +180,12 @@ export const PLANS: Record<PlanId, PlanDefinition> = {
   unlimited: {
     id: 'unlimited',
     name: 'Unlimited',
-    tagline: 'Every feature and very high quotas. Available as a 7-day trial for Pro customers.',
+    tagline: 'Every feature and the highest limits, for teams running agents at scale.',
     priceUsd: null,
-    listed: false,
+    listed: true,
     trialOnPurchase: null,
+    trialLine: 'Try it for 7 days when you subscribe to Pro. Price to be announced.',
+    limitsPublic: false,
     limits: unlimitedLimits,
     features: allFeatures,
   },
@@ -184,6 +196,8 @@ export const PLANS: Record<PlanId, PlanDefinition> = {
     priceUsd: null,
     listed: false,
     trialOnPurchase: null,
+    trialLine: 'Contact us.',
+    limitsPublic: false,
     // Starting point; each contract sets entitlements.custom_limits.
     limits: unlimitedLimits,
     features: allFeatures,
@@ -220,6 +234,14 @@ export const LIMIT_LABELS: Record<LimitKey, string> = {
 
 /** Marketing lines for a plan card, generated from the real limits so they never drift. */
 export function planHighlights(plan: PlanDefinition): string[] {
+  if (!plan.limitsPublic) {
+    return [
+      'Bring your own AI key (BYOK)',
+      'Every feature, including provider fallback and phone calls',
+      'The highest agent, run and API limits',
+      'Still protected by platform capacity and abuse limits',
+    ];
+  }
   const l = plan.limits;
   const n = (v: number) => v.toLocaleString('en-US');
   const lines = [

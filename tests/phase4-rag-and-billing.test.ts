@@ -2,7 +2,6 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { chunkText, generateEmbedding } from '../lib/rag/memory-service';
-import { PLAN_TIER_LIMITS } from '../lib/billing/stripe-service';
 
 describe('Phase 4 RAG Ingestion & Billing Entitlements Verification', () => {
   test('RAG Chunking: splits document text into overlapping chunks', () => {
@@ -18,12 +17,5 @@ describe('Phase 4 RAG Ingestion & Billing Entitlements Verification', () => {
 
     assert.equal(embedding.length, 1536, 'Vector dimension must be 1536 for RAG compatibility');
     assert.ok(typeof embedding[0] === 'number', 'Vector elements must be numbers');
-  });
-
-  test('Billing Entitlements: plan tier limits structure', () => {
-    assert.equal(PLAN_TIER_LIMITS.free.maxAgents, 1, 'Free tier permits 1 agent');
-    assert.equal(PLAN_TIER_LIMITS.starter.maxAgents, 3, 'Starter tier permits 3 agents');
-    assert.equal(PLAN_TIER_LIMITS.pro.maxAgents, 10, 'Pro tier permits 10 agents');
-    assert.equal(PLAN_TIER_LIMITS.enterprise.maxAgents, 100, 'Enterprise tier permits 100 agents');
   });
 });

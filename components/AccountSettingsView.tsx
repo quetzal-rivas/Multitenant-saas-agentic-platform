@@ -212,6 +212,19 @@ const BillingPanel: React.FC<{ orgId: string | null; email: string | null }> = (
   const [usage, setUsage] = useState<UsageInfo | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
   const [opening, setOpening] = useState(false);
+  const [buying, setBuying] = useState<PlanId | null>(null);
+
+  const subscribe = async (plan: PlanId) => {
+    setBuying(plan);
+    setNotice(null);
+    try {
+      const { url } = await api<{ url: string }>('/api/v1/account/billing/checkout', { method: 'POST', body: JSON.stringify({ plan }) });
+      window.location.href = url;
+    } catch (err) {
+      setNotice({ ok: false, text: (err as Error).message });
+      setBuying(null);
+    }
+  };
 
   useEffect(() => {
     api<BillingInfo>('/api/v1/account/billing').then(setInfo).catch((err) => setNotice({ ok: false, text: err.message }));
@@ -276,30 +289,46 @@ const BillingPanel: React.FC<{ orgId: string | null; email: string | null }> = (
 
       <div className="space-y-4">
         <h2 className="text-lg font-semibold text-white">Plans</h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
           {listed.map((plan) => {
             const current = usage.base_plan === plan.id;
+            const trying = usage.trial?.tier === plan.id;
             return (
               <div key={plan.id} className={`p-5 rounded-xl border flex flex-col ${current ? 'border-emerald-500/60 bg-emerald-950/10' : 'border-zinc-800 bg-zinc-900/50'}`}>
                 <h3 className="text-base font-semibold text-zinc-200">{plan.name}</h3>
-                <div className="mt-2 text-2xl font-bold text-white">${plan.priceUsd}<span className="text-sm text-zinc-500 font-normal">/mo</span></div>
+                <div className="mt-2 text-2xl font-bold text-white">
+                  {plan.priceUsd === null ? <span className="text-base">Price to be announced</span> : <>${plan.priceUsd}<span className="text-sm text-zinc-500 font-normal">/mo</span></>}
+                </div>
                 <p className="mt-1 text-xs text-zinc-500">{plan.tagline}</p>
+                <p className="mt-2 text-xs text-emerald-300">{plan.trialLine}</p>
                 <ul className="mt-4 space-y-2 flex-1 text-sm text-zinc-400">
                   {planHighlights(plan).map((f) => (
                     <li key={f} className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0 text-emerald-500" /> {f}</li>
                   ))}
                 </ul>
                 {current ? (
-                  <div className="mt-6 w-full py-2 text-center text-sm text-emerald-400 border border-emerald-800/50 rounded-lg">Current plan</div>
-                ) : plan.priceUsd ? (
-                  <div className="mt-6 w-full py-2 text-center text-xs text-zinc-500 border border-zinc-800 rounded-lg">Online upgrade is being connected</div>
+                  <div className="mt-6 w-full py-2 text-center text-sm text-emerald-400 border border-emerald-800/50 rounded-lg">Your plan</div>
+                ) : trying ? (
+                  <div className="mt-6 w-full py-2 text-center text-sm text-emerald-300 border border-emerald-800/50 rounded-lg">Trying it now</div>
+                ) : plan.id === 'unlimited' ? (
+                  <div className="mt-6 w-full py-2 text-center text-xs text-zinc-500 border border-zinc-800 rounded-lg">Included as a trial with Pro</div>
+                ) : plan.priceUsd && (plan.id === 'developer' || plan.id === 'pro') && !info.has_customer ? (
+                  <button
+                    onClick={() => subscribe(plan.id)}
+                    disabled={buying !== null}
+                    className="mt-6 w-full py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium flex items-center justify-center gap-2"
+                  >
+                    {buying === plan.id && <Loader2 className="w-4 h-4 animate-spin" />} Subscribe
+                  </button>
+                ) : plan.priceUsd && info.has_customer ? (
+                  <button onClick={openPortal} className="mt-6 w-full py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg text-sm font-medium">Change plan</button>
                 ) : null}
               </div>
             );
           })}
         </div>
         <p className="text-xs text-zinc-500">
-          Buying Developer includes 7 days of Pro; buying Pro includes 7 days of Unlimited. Enterprise: custom limits and support by contract — contact us.
+          Each trial is offered once per workspace and never charges you. When it ends you return to the plan you pay for, and your data is kept. Enterprise: custom limits and support by contract — contact us.
         </p>
       </div>
 

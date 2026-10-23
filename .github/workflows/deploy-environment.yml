@@ -9,7 +9,9 @@ name: Deploy one environment
 #   optional:  SMTP_USER + SMTP_PASSWORD (secrets; SES sign-in emails), SMTP_FROM (variable),
 #              GITHUB_LOGIN_CLIENT_ID (variable) + GITHUB_LOGIN_SECRET (secret),
 #              GOOGLE_LOGIN_CLIENT_ID (variable) + GOOGLE_LOGIN_SECRET (secret)
-# Production also uses the repository secrets STRIPE_* and GOOGLE_OAUTH_* (staging never does).
+# Stripe: production uses STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET (live); staging uses
+# STRIPE_TEST_SECRET_KEY / STRIPE_TEST_WEBHOOK_SECRET (test mode). Each environment sets the
+# variables STRIPE_PRICE_DEVELOPER and STRIPE_PRICE_PRO. Production also uses GOOGLE_OAUTH_*.
 
 on:
   workflow_call:
@@ -139,8 +141,11 @@ jobs:
           AMPLIFY_APP_ID: ${{ vars.AMPLIFY_APP_ID }}
           CLIENT_TOKEN_SIGNING_KEY: ${{ secrets.CLIENT_TOKEN_SIGNING_KEY }}
           ENABLE_VOICE_CALLS: ${{ vars.ENABLE_VOICE_CALLS || 'false' }}
-          STRIPE_SECRET_KEY: ${{ inputs.stage == 'production' && secrets.STRIPE_SECRET_KEY || '' }}
-          STRIPE_WEBHOOK_SECRET: ${{ inputs.stage == 'production' && secrets.STRIPE_WEBHOOK_SECRET || '' }}
+          # Live keys only in production; staging uses its own test-mode keys (different names, so it can never inherit live ones).
+          STRIPE_SECRET_KEY: ${{ inputs.stage == 'production' && secrets.STRIPE_SECRET_KEY || secrets.STRIPE_TEST_SECRET_KEY }}
+          STRIPE_WEBHOOK_SECRET: ${{ inputs.stage == 'production' && secrets.STRIPE_WEBHOOK_SECRET || secrets.STRIPE_TEST_WEBHOOK_SECRET }}
+          STRIPE_PRICE_DEVELOPER: ${{ vars.STRIPE_PRICE_DEVELOPER }}
+          STRIPE_PRICE_PRO: ${{ vars.STRIPE_PRICE_PRO }}
         run: |
           OUT="$RUNNER_TEMP/outputs.json"
           out() { jq -r --arg s "ContextControl-$STAGE" --arg k "$1" '.[$s][$k]' "$OUT"; }
@@ -149,6 +154,7 @@ jobs:
           ENV="$ENV,FUNCTION_DEPLOYER_NAME=cc-function-deployer,AGENT_WORKER_FUNCTION=cc-agent-worker"
           ENV="$ENV,CLIENT_TOKEN_SIGNING_KEY=$CLIENT_TOKEN_SIGNING_KEY,ENABLE_VOICE_CALLS=$ENABLE_VOICE_CALLS,DEMO_MODE=false,NEXT_PUBLIC_DEMO_MODE=false"
           [ -n "$STRIPE_SECRET_KEY" ] && ENV="$ENV,STRIPE_SECRET_KEY=$STRIPE_SECRET_KEY,STRIPE_WEBHOOK_SECRET=$STRIPE_WEBHOOK_SECRET"
+          [ -n "$STRIPE_PRICE_DEVELOPER" ] && ENV="$ENV,STRIPE_PRICE_DEVELOPER=$STRIPE_PRICE_DEVELOPER,STRIPE_PRICE_PRO=$STRIPE_PRICE_PRO"
           [ -n "$GOOGLE_OAUTH_CLIENT_ID" ] && ENV="$ENV,GOOGLE_OAUTH_CLIENT_ID=$GOOGLE_OAUTH_CLIENT_ID,GOOGLE_OAUTH_CLIENT_SECRET=$GOOGLE_OAUTH_CLIENT_SECRET"
           AMPLIFY_ENV="$ENV" scripts/ci/amplify-release.sh
 

@@ -1,7 +1,7 @@
 import Stripe from 'stripe';
 import { getSupabaseAdminClient } from '@/lib/supabase';
 import type { AuthContext } from '@/lib/auth/require-auth';
-import { PLANS, type PlanId } from '@/lib/billing/plans';
+import { PLANS, stripePriceId, type PlanId } from '@/lib/billing/plans';
 import { ServiceError } from './errors';
 
 type Ctx = Pick<AuthContext, 'tenantId' | 'role' | 'authMode'>;
@@ -20,10 +20,10 @@ export interface InvoiceSummary {
 
 /** Stripe calls, replaceable in tests. Null when no Stripe secret key is configured. */
 export interface BillingDeps {
-  stripe?: Pick<Stripe, 'invoices' | 'billingPortal'> | null;
+  stripe?: Pick<Stripe, 'invoices' | 'billingPortal' | 'checkout'> | null;
 }
 
-function stripeClient(): Pick<Stripe, 'invoices' | 'billingPortal'> | null {
+function stripeClient(): Pick<Stripe, 'invoices' | 'billingPortal' | 'checkout'> | null {
   const key = process.env.STRIPE_SECRET_KEY;
   if (!key || key.includes('placeholder')) return null;
   return new Stripe(key);
@@ -94,4 +94,47 @@ export async function billingPortalUrl(ctx: Ctx, returnUrl: string, deps: Billin
   } catch (err) {
     throw new ServiceError(`Stripe could not open the billing portal: ${(err as Error).message}`, 'CONFLICT', 502);
   }
+}
+
+/**
+ * Start a subscription to a paid plan: a Stripe Checkout session created here, tied to the
+ * organization (client_reference_id + subscription metadata). The plan changes only when
+ * Stripe confirms the subscription (webhook), which also starts the next tier's trial.
+ */
+export async function createCheckout(
+  ctx: Ctx & { userId?: string },
+  plan: unknown,
+  urls: { success: string; cancel: string },
+  email: string | null,
+  deps: BillingDeps = {}
+) {
+  if (ctx.authMode !== 'session' || !['owner', 'admin'].includes(ctx.role)) {
+    throw new ServiceError('Only the owner or an admin can change the plan.', 'FORBIDDEN');
+  }
+  if (plan !== 'developer' && plan !== 'pro') throw new ServiceError('Choose Developer or Pro. Unlimited is offered as a trial with Pro; Enterprise by contract.', 'INVALID');
+  const price = stripePriceId(plan);
+  const stripe = deps.stripe === undefined ? stripeClient() : deps.stripe;
+  if (!price || !stripe) throw new ServiceError('Online checkout is not configured on this server yet.', 'CONFLICT', 503);
+
+  const { data: ent } = await getSupabaseAdminClient()
+    .from('entitlements')
+    .select('stripe_customer_id, stripe_subscription_id, plan_tier, billing_status')
+    .eq('tenant_id', ctx.tenantId)
+    .maybeSingle();
+  // An existing subscription changes plan in the customer portal (proration handled by Stripe).
+  if (ent?.stripe_subscription_id && ent.billing_status !== 'canceled') {
+    throw new ServiceError('You already have a subscription. Change plans from "Manage billing".', 'CONFLICT');
+  }
+  const session = await stripe.checkout.sessions.create({
+    mode: 'subscription',
+    line_items: [{ price, quantity: 1 }],
+    client_reference_id: ctx.tenantId,
+    ...(ent?.stripe_customer_id ? { customer: ent.stripe_customer_id } : email ? { customer_email: email } : {}),
+    metadata: { tenant_id: ctx.tenantId, plan },
+    subscription_data: { metadata: { tenant_id: ctx.tenantId, plan } },
+    success_url: urls.success,
+    cancel_url: urls.cancel,
+  });
+  if (!session.url) throw new ServiceError('Stripe did not return a checkout page.', 'CONFLICT', 502);
+  return { url: session.url };
 }

@@ -28,6 +28,11 @@ export const Navbar: React.FC<NavbarProps> = ({
     const fetchOrg = async () => {
       try {
         const res = await fetch('/api/v1/organizations/me');
+        // The session ended (signed out elsewhere, expired): back to the login page.
+        if (res.status === 401) {
+          window.location.replace('/login');
+          return;
+        }
         if (res.ok) {
           const data = await res.json();
           if (data.organizations && data.organizations.length > 0) {

@@ -301,16 +301,33 @@ export async function grantTrial(tenantId: string, tier: PlanId, reason: string,
     if (error.code === '23505') return false;
     throw new Error(`Could not record the trial: ${error.message}`);
   }
-  const current = resolvePlan(tenantId, await loadEntitlement(tenantId), now);
-  if (!current.trial || planRank(tier) > planRank(current.trial.tier)) {
-    await db
-      .from('entitlements')
-      .update({ trial_tier: tier, trial_started_at: now.toISOString(), trial_ends_at: endsAt, updated_at: now.toISOString() })
-      .eq('tenant_id', tenantId);
-  }
-  forgetPlan(tenantId);
+  await reconcileTrial(tenantId, now);
   await recordUsageEvent(tenantId, 'trial_granted', { tier, reason, ends_at: endsAt });
   return true;
+}
+
+/**
+ * Set the running trial from the grants: the highest unexpired one above the base plan. A trial
+ * earned by a purchase ("purchase:pro") only counts while that plan, or a higher one, is paid;
+ * so cancelling or downgrading ends it, and an earlier trial still in its 7 days (the sign-up
+ * one) applies again. Grants are never deleted, so no trial is ever granted twice.
+ */
+async function reconcileTrial(tenantId: string, now: Date) {
+  const db = getSupabaseAdminClient();
+  const ent = await loadEntitlement(tenantId);
+  const base = (ent?.plan_tier ?? 'free') as PlanId;
+  const paid = ent?.billing_status === 'active' || ent?.billing_status === 'past_due';
+  const { data } = await db.from('trial_grants').select('tier, granted_at, expires_at, reason').eq('tenant_id', tenantId);
+  const best = ((data || []) as Array<{ tier: PlanId; granted_at: string; expires_at: string; reason: string }>)
+    .filter((g) => new Date(g.expires_at) > now && planRank(g.tier) > planRank(base))
+    .filter((g) => !g.reason.startsWith('purchase:') || (paid && planRank(base) >= planRank(g.reason.slice('purchase:'.length) as PlanId)))
+    .sort((a, b) => planRank(b.tier) - planRank(a.tier))[0];
+  const trial = best
+    ? { trial_tier: best.tier, trial_started_at: best.granted_at, trial_ends_at: best.expires_at }
+    : { trial_tier: null, trial_started_at: null, trial_ends_at: null };
+  if (ent && ent.trial_tier === trial.trial_tier && ent.trial_ends_at === trial.trial_ends_at) return;
+  await db.from('entitlements').update({ ...trial, updated_at: now.toISOString() }).eq('tenant_id', tenantId);
+  forgetPlan(tenantId);
 }
 
 async function loadEntitlement(tenantId: string): Promise<EntitlementRow | null> {
@@ -349,6 +366,8 @@ export async function applyPaidPlan(
   if (before?.plan_tier !== plan || before?.billing_status !== 'active') await recordUsageEvent(tenantId, 'plan_changed', { plan, billing_status: 'active' });
   const next = PLANS[plan].trialOnPurchase;
   const trialGranted = next ? await grantTrial(tenantId, next, `purchase:${plan}`, now) : false;
+  // A downgrade (Pro → Developer) ends the trial that came with the higher plan.
+  if (!trialGranted) await reconcileTrial(tenantId, now);
   return { plan, trial: trialGranted ? next : null };
 }
 
@@ -360,13 +379,17 @@ export async function markPastDue(tenantId: string, graceDays = 7, now = new Dat
   await recordUsageEvent(tenantId, 'payment_failed', { grace_ends_at: graceEnds });
 }
 
-/** The subscription ended: back to Free. Data is kept; a running trial keeps its own end date. */
+/**
+ * The subscription ended: back to Free. Data is kept. Trials earned by the purchase end with it;
+ * the sign-up trial keeps its own end date.
+ */
 export async function endPaidPlan(tenantId: string, now = new Date()) {
   await getSupabaseAdminClient()
     .from('entitlements')
     .update({ plan_tier: 'free', billing_status: 'canceled', grace_ends_at: null, updated_at: now.toISOString() })
     .eq('tenant_id', tenantId);
   forgetPlan(tenantId);
+  await reconcileTrial(tenantId, now);
   await recordUsageEvent(tenantId, 'plan_changed', { plan: 'free', billing_status: 'canceled' });
 }
 

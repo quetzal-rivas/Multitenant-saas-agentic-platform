@@ -109,6 +109,20 @@ describe('Account: members, invitations, ownership, deletion', () => {
     assert.ok(tables.mcp_api_keys.find((k) => k.id === 'k1')!.revoked_at);
     assert.equal(tables.mcp_api_keys.find((k) => k.id === 'k2')!.revoked_at, null, 'other organizations untouched');
   });
+
+  test('deleting an organization with a paid subscription cancels it in Stripe first; if Stripe fails nothing is deleted', async () => {
+    tables.entitlements.push({ tenant_id: ORG, plan_tier: 'pro', billing_status: 'active', stripe_subscription_id: 'sub_123', status: 'active' });
+    const failing = { subscriptions: { cancel: async () => Promise.reject(new Error('Stripe down')) } } as any;
+    await assert.rejects(deleteOrganization(owner, 'Acme', { stripe: failing }), /could not be cancelled, so the organization was not deleted/);
+    assert.equal(tables.organizations.find((o) => o.id === ORG)!.deleted_at ?? null, null);
+
+    const cancelled: string[] = [];
+    const ok = { subscriptions: { cancel: async (id: string) => void cancelled.push(id) } } as any;
+    await deleteOrganization(owner, 'Acme', { stripe: ok });
+    assert.deepEqual(cancelled, ['sub_123']);
+    assert.equal(tables.entitlements.find((e) => e.tenant_id === ORG)!.plan_tier, 'free');
+    assert.ok(tables.organizations.find((o) => o.id === ORG)!.deleted_at);
+  });
 });
 
 describe('Billing: only what Stripe reports', () => {

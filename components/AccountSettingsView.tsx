@@ -610,7 +610,7 @@ const DangerPanel: React.FC<{ org: { id: string; name: string } | null; role: st
             <h3 className="text-base font-semibold text-rose-500">Delete organization</h3>
             <p className="text-sm text-zinc-400 max-w-xl">
               Everyone loses access right away, its API keys are revoked, pending invitations are cancelled and its agents stop. Its data is kept so support can restore it if you ask; ask support to
-              erase it permanently. Cancel your subscription in Billing first if you have one.
+              erase it permanently. A paid subscription is cancelled at the same time, with no further charges.
             </p>
           </div>
           <div className="space-y-3 max-w-md">

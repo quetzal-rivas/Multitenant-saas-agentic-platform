@@ -23,6 +23,30 @@ export interface BillingDeps {
   stripe?: Pick<Stripe, 'invoices' | 'billingPortal' | 'checkout'> | null;
 }
 
+/**
+ * Stop billing an organization that is being deleted: its subscription is cancelled now (no
+ * further invoices). Throws when Stripe can't be reached, so the deletion stops instead of
+ * leaving a customer charged for a deleted workspace.
+ */
+export async function cancelSubscriptionNow(tenantId: string, deps: { stripe?: Pick<Stripe, 'subscriptions'> | null } = {}) {
+  const { data: ent } = await getSupabaseAdminClient().from('entitlements').select('stripe_subscription_id, billing_status').eq('tenant_id', tenantId).maybeSingle();
+  const subId = (ent as { stripe_subscription_id?: string | null } | null)?.stripe_subscription_id;
+  const status = (ent as { billing_status?: string | null } | null)?.billing_status;
+  if (!subId || (status !== 'active' && status !== 'past_due')) return { cancelled: false };
+  const key = process.env.STRIPE_SECRET_KEY;
+  const stripe = deps.stripe === undefined ? (key && !key.includes('placeholder') ? new Stripe(key) : null) : deps.stripe;
+  if (!stripe) throw new ServiceError('Billing is not available right now, so the subscription could not be cancelled. Try again later.', 'CONFLICT');
+  try {
+    await stripe.subscriptions.cancel(subId);
+  } catch (err) {
+    // Already cancelled in Stripe: nothing left to bill.
+    if ((err as { code?: string })?.code !== 'resource_missing') {
+      throw new ServiceError('The subscription could not be cancelled, so the organization was not deleted. Try again in a minute.', 'CONFLICT');
+    }
+  }
+  return { cancelled: true };
+}
+
 function stripeClient(): Pick<Stripe, 'invoices' | 'billingPortal' | 'checkout'> | null {
   const key = process.env.STRIPE_SECRET_KEY;
   if (!key || key.includes('placeholder')) return null;

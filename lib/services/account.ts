@@ -4,7 +4,8 @@ import type { AuthContext } from '@/lib/auth/require-auth';
 import type { MemberRole } from '@/lib/auth/membership';
 import { stopRuns } from './agent-runs';
 import { ServiceError } from './errors';
-import { assertCanCreate } from './plan-limits';
+import { assertCanCreate, endPaidPlan } from './plan-limits';
+import { cancelSubscriptionNow } from './billing';
 
 type Ctx = Pick<AuthContext, 'tenantId' | 'userId' | 'role' | 'authMode'> & { apiKeyId?: string };
 
@@ -155,7 +156,7 @@ export async function transferOwnership(ctx: Ctx, rawEmail: unknown) {
  * every member loses access. The data is kept (organizations.deleted_at) so it can be
  * restored on request.
  */
-export async function deleteOrganization(ctx: Ctx, confirmName: unknown) {
+export async function deleteOrganization(ctx: Ctx, confirmName: unknown, deps: Parameters<typeof cancelSubscriptionNow>[1] = {}) {
   requireOwner(ctx, 'delete the organization');
   const db = getSupabaseAdminClient();
   const { data: org } = await db.from('organizations').select('id, name, deleted_at').eq('id', ctx.tenantId).maybeSingle();
@@ -163,6 +164,8 @@ export async function deleteOrganization(ctx: Ctx, confirmName: unknown) {
   if (typeof confirmName !== 'string' || confirmName.trim() !== org.name) {
     throw new ServiceError('Type the organization name exactly to confirm.', 'INVALID');
   }
+  // First stop billing; if Stripe can't confirm, nothing is deleted.
+  if ((await cancelSubscriptionNow(ctx.tenantId, deps)).cancelled) await endPaidPlan(ctx.tenantId);
   const now = new Date().toISOString();
   await stopRuns({ tenantId: ctx.tenantId, userId: ctx.userId, authMode: ctx.authMode }, 'org');
   await db.from('mcp_api_keys').update({ revoked_at: now }).eq('tenant_id', ctx.tenantId).is('revoked_at', null);

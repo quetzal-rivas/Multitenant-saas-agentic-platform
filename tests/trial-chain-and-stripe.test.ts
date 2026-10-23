@@ -90,6 +90,34 @@ describe('Trial chain: Free → Developer trial; Developer → Pro trial; Pro �
     assert.deepEqual(grants(), ['developer', 'pro']);
   });
 
+  test('a trial earned by a purchase ends with that plan; the sign-up trial resumes if still running', async () => {
+    await handleStripeEvent(subEvent('customer.subscription.created', 'active', 'price_dev_test'));
+    await handleStripeEvent(subEvent('customer.subscription.updated', 'active', 'price_pro_test'));
+    assert.equal(planAt(0), 'unlimited');
+
+    // Downgrade to Developer: the Unlimited trial (from buying Pro) ends; the Pro trial (from buying Developer) still runs.
+    await handleStripeEvent(subEvent('customer.subscription.updated', 'active', 'price_dev_test'));
+    assert.equal(entitlement().trial_tier, 'pro');
+    assert.equal(planAt(0), 'pro');
+
+    // Cancelled now: purchase trials end; the sign-up Developer trial keeps its own end date.
+    await handleStripeEvent(subEvent('customer.subscription.deleted', 'canceled', 'price_dev_test'));
+    assert.equal(entitlement().plan_tier, 'free');
+    assert.equal(entitlement().trial_tier, 'developer');
+    assert.equal(planAt(0), 'developer');
+    assert.equal(planAt(8), 'free');
+    assert.deepEqual(grants(), ['developer', 'pro', 'unlimited'], 'grants are kept, so none is granted twice');
+  });
+
+  test('cancelling after the sign-up trial ended leaves no trial at all', async () => {
+    tables.trial_grants.find((g) => g.tenant_id === ORG && g.tier === 'developer')!.expires_at = new Date(Date.now() - 1).toISOString();
+    await handleStripeEvent(subEvent('customer.subscription.created', 'active', 'price_pro_test'));
+    assert.equal(planAt(0), 'unlimited');
+    await handleStripeEvent(subEvent('customer.subscription.deleted', 'canceled', 'price_pro_test'));
+    assert.equal(entitlement().trial_tier, null);
+    assert.equal(planAt(0), 'free');
+  });
+
   test('a failed payment keeps the plan for a 7-day grace period, then Free; repeated events do not extend it', async () => {
     await handleStripeEvent(subEvent('customer.subscription.created', 'active', 'price_pro_test'));
     await handleStripeEvent({ id: `evt_${++seq}`, type: 'invoice.payment_failed', data: { object: { customer: 'cus_1' } } } as any);

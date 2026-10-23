@@ -11,6 +11,7 @@ import { DEFAULT_REPLY_STYLE } from '@/lib/voice/profile-spec';
 import { LimitError, ServiceError } from './errors';
 import { capped, orgAgentState, tokensUsedToday } from './agent-limits';
 import { effectivePlan, limitReached, platformCapacity, platformCapacityError } from './plan-limits';
+import { assertActive } from './plan-activation';
 
 /**
  * Durable agent runs. A turn is stored as a run and executed in time-boxed slices by a
@@ -119,6 +120,10 @@ function nextTimestamp(): string {
  */
 export async function startRun(ctx: RunCaller, sessionId: string, message: string, opts: StartRunOptions = {}): Promise<Row> {
   const session = await getSession(ctx, sessionId);
+  // Agents and teams beyond the plan's limit after a downgrade are kept but cannot run.
+  const teamId = opts.teamId ?? session.team_id;
+  if (teamId) await assertActive(ctx.tenantId, 'teams', teamId);
+  else if (session.agent_type === 'single') await assertActive(ctx.tenantId, 'agents', session.id);
   const db = getSupabaseAdminClient();
   // Runs abandoned long ago must not block the instance forever.
   const { data: existing } = await db.from('agent_runs').select('id, status, created_at').eq('session_id', session.id).eq('tenant_id', ctx.tenantId).in('status', ['queued', 'running']);

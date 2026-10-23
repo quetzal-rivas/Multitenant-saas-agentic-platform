@@ -68,6 +68,8 @@ const UNIQUE_KEYS: Record<string, string[]> = {
   trial_grants: ['tenant_id', 'tier'],
   entitlements: ['tenant_id'],
   processed_stripe_events: ['event_id'],
+  resource_activation: ['tenant_id', 'kind', 'resource_id'],
+  billing_notices: ['tenant_id', 'notice_key'],
 };
 
 /**
@@ -155,6 +157,19 @@ export async function fakePostgrest(input: RequestInfo | URL, init?: RequestInit
   if (method === 'POST') {
     const body = JSON.parse(String(init?.body));
     const unique = UNIQUE_KEYS[table];
+    const onConflict = url.searchParams.get('on_conflict');
+    if (onConflict && (headers.get('Prefer') || '').includes('merge-duplicates')) {
+      // Upsert: update the row with the same conflict key, or insert.
+      const keys = onConflict.split(',');
+      const out = (Array.isArray(body) ? body : [body]).map((r: Row) => {
+        const existing = rows.find((x) => keys.every((k) => String(x[k]) === String(r[k])));
+        if (existing) return Object.assign(existing, r);
+        const row = { created_at: new Date(Date.UTC(2026, 0, 1) + clock++ * 1000).toISOString(), ...r };
+        rows.push(row);
+        return row;
+      });
+      return respond(out.map((r: Row) => project(r, select)), accept, 201);
+    }
     if (unique) {
       const clash = (Array.isArray(body) ? body : [body]).some((r: Row) => rows.some((x) => unique.every((k) => String(x[k]) === String(r[k]))));
       if (clash) return new Response(JSON.stringify({ code: '23505', message: `duplicate key value violates unique constraint on ${table}` }), { status: 409 });

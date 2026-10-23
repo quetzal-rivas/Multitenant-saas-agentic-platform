@@ -5,8 +5,9 @@ import { TASK_COLUMNS } from './tasks';
 import { createTeamSession, getTeam } from './teams';
 import { postBoardTask } from './board';
 import { dispatchRun, executeRun, claimRun, startRun, workerConfigured } from './agent-runs';
-import { ServiceError, isServiceError } from './errors';
+import { ServiceError, isLimitError, isServiceError } from './errors';
 import { effectivePlan } from './plan-limits';
+import { isActive } from './plan-activation';
 
 /**
  * Executes scheduled tasks. The minute tick claims due tasks with compare-and-set on
@@ -19,6 +20,8 @@ import { effectivePlan } from './plan-limits';
 type Row = Record<string, any>;
 const MAX_TASKS_PER_TICK = 5;
 const SKIP_RETRY_MS = 5 * 60_000;
+/** A one-off task the plan refuses (paused, monthly quota) tries again an hour later. */
+const PLAN_RETRY_MS = 60 * 60_000;
 
 /** Runs execute as the organization's scheduler (full platform scopes, no member). */
 function schedulerCtx(tenantId: string): AuthContext {
@@ -33,6 +36,10 @@ async function updateTask(id: string, fields: Row) {
 export async function startTaskRun(task: Row, opts: { manual?: boolean } = {}): Promise<string | null> {
   const ctx = schedulerCtx(task.tenant_id);
   try {
+    if (!opts.manual && !(await isActive(task.tenant_id, 'schedules', `task:${task.id}`))) {
+      await skipForPlan(task, 'Skipped: paused by your plan (more scheduled tasks than it allows). Choose which stay active in Account & Billing, or upgrade.');
+      return null;
+    }
     if (!task.team_id) throw new ServiceError('This task has no team. Edit it and pick the team that should run it.', 'INVALID');
     const team = await getTeam(ctx, task.team_id);
     let sessionId: string = task.session_id;
@@ -71,10 +78,23 @@ export async function startTaskRun(task: Row, opts: { manual?: boolean } = {}): 
       });
       return null;
     }
+    if (isLimitError(err) && !opts.manual) {
+      // A plan limit (paused team, monthly quota): retrying now would fail the same way.
+      await skipForPlan(task, `Skipped: ${message}`);
+      return null;
+    }
     if (!isServiceError(err)) console.error('[scheduled-tasks] could not start', task.id, err);
     await handleFailure(task, message);
     return null;
   }
+}
+
+async function skipForPlan(task: Row, message: string) {
+  await updateTask(task.id, {
+    last_status: 'skipped_plan',
+    last_error: message.slice(0, 2000),
+    ...(task.schedule ? {} : { status: 'scheduled', next_run_at: new Date(Date.now() + PLAN_RETRY_MS).toISOString() }),
+  });
 }
 
 /** Called by the minute tick. */

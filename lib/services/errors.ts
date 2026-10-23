@@ -14,6 +14,8 @@ export class ServiceError extends Error {
 export type LimitReason =
   | 'FEATURE_NOT_INCLUDED'
   | 'RESOURCE_LIMIT_REACHED'
+  /** Over the plan's limit after a downgrade: kept, but cannot run until chosen or upgraded. */
+  | 'RESOURCE_PAUSED'
   | 'MONTHLY_QUOTA_EXCEEDED'
   | 'CONCURRENCY_LIMIT_REACHED'
   | 'RATE_LIMITED'
@@ -31,6 +33,7 @@ export interface LimitDetails {
 const LIMIT_STATUS: Record<LimitReason, number> = {
   FEATURE_NOT_INCLUDED: 402,
   RESOURCE_LIMIT_REACHED: 402,
+  RESOURCE_PAUSED: 402,
   MONTHLY_QUOTA_EXCEEDED: 402,
   CONCURRENCY_LIMIT_REACHED: 429,
   RATE_LIMITED: 429,

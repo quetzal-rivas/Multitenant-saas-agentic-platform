@@ -35,7 +35,7 @@ export default function DashboardPage() {
   const [profiles, setProfiles] = useState<ContextProfile[]>(DEMO ? INITIAL_PROFILES : []);
   const [skillsCount, setSkillsCount] = useState<number>(5);
   const [activeTab, setActiveTab] = useState<string>('profiles');
-  const [checkoutReturn, setCheckoutReturn] = useState<'success' | 'cancelled' | undefined>(undefined);
+  const [checkoutReturn, setCheckoutReturn] = useState<'success' | 'cancelled' | 'open' | undefined>(undefined);
   /** Phones: the sidebar opens as a drawer from the navbar menu button. */
   const [menuOpen, setMenuOpen] = useState(false);
   const [selectedProfile, setSelectedProfile] = useState<ContextProfile | null>(profiles[0] ?? null);
@@ -56,11 +56,12 @@ export default function DashboardPage() {
   const [profileSaveError, setProfileSaveError] = useState<string | null>(null);
   const saveTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
-  // Back from Stripe Checkout (?billing=success|cancelled): open Account & Billing to confirm it.
+  // Back from Stripe Checkout (?billing=success|cancelled), or a billing email link (?billing=open):
+  // open Account & Billing.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const billing = params.get('billing');
-    if (billing !== 'success' && billing !== 'cancelled') return;
+    if (billing !== 'success' && billing !== 'cancelled' && billing !== 'open') return;
     setCheckoutReturn(billing);
     setActiveTab('account');
     params.delete('billing');

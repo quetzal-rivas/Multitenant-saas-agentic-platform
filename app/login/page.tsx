@@ -2,12 +2,10 @@
 
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { Bot, Github, Mail, ArrowRight, ShieldCheck, CheckCircle2 } from 'lucide-react';
 import { createClient } from '@/utils/supabase/client';
 
 export default function LoginPage() {
-  const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -85,7 +83,8 @@ export default function LoginPage() {
         });
         if (error) throw error;
         if (data.session) {
-          router.push('/onboarding');
+          // Full loads after the session changes, so no page cached while signed out is reused.
+          window.location.assign('/onboarding');
           return;
         }
         setMessage(`Account created. Open the confirmation link sent to ${email}, then sign in.`);
@@ -97,7 +96,7 @@ export default function LoginPage() {
         });
         if (error) throw error;
         // Middleware sends accounts without an organization to /onboarding.
-        router.push('/dashboard');
+        window.location.assign('/dashboard');
       }
     } catch (err: any) {
       setMessage(`Auth Error: ${err?.message || 'Unknown error'}`);

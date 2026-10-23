@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import {
   CreditCard,
   User,
@@ -417,7 +416,6 @@ const BillingPanel: React.FC<{ orgId: string | null; email: string | null; check
 
 /** Pause agents, hand the organization to another member, or delete it. */
 const DangerPanel: React.FC<{ org: { id: string; name: string } | null; role: string | null }> = ({ org, role }) => {
-  const router = useRouter();
   const [pausedAt, setPausedAt] = useState<string | null>(null);
   const [pausedBy, setPausedBy] = useState<string | null>(null);
   const [transferEmail, setTransferEmail] = useState('');
@@ -472,7 +470,7 @@ const DangerPanel: React.FC<{ org: { id: string; name: string } | null; role: st
     setNotice(null);
     try {
       await api('/api/v1/account/delete', { method: 'POST', body: JSON.stringify({ confirm: deleteConfirm }) });
-      router.push('/onboarding');
+      window.location.assign('/onboarding'); // full load: membership is gone
     } catch (err) {
       setNotice({ ok: false, text: (err as Error).message });
       setBusy(null);

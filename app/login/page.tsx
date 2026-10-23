@@ -274,6 +274,12 @@ export default function LoginPage() {
           >
             {isSignUp ? 'Already have an account? Sign In' : 'Need an account? Sign Up'}
           </button>
+          {isSignUp && (
+            <p className="mt-3 text-[11px] text-zinc-500">
+              By creating an account you accept the <Link href="/terms" className="underline">terms</Link> and the{' '}
+              <Link href="/privacy" className="underline">privacy notice</Link>.
+            </p>
+          )}
         </div>
 
 

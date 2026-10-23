@@ -273,7 +273,7 @@ const BillingPanel: React.FC<{ orgId: string | null; email: string | null }> = (
               ? 'Free forever. Bring your own AI provider key; upgrade when you need more.'
               : `Subscribed to ${PLANS[usage.base_plan].name}.`}
           </p>
-          <p className="text-xs text-zinc-500">Monthly quotas reset on {new Date(usage.resets_at).toLocaleDateString()} (UTC).</p>
+          <p className="text-xs text-zinc-500">Monthly quotas reset on {new Date(usage.resets_at).toLocaleDateString(undefined, { timeZone: 'UTC' })} (UTC).</p>
         </div>
         <NoticeLine notice={notice} />
       </div>
@@ -306,22 +306,22 @@ const BillingPanel: React.FC<{ orgId: string | null; email: string | null }> = (
                     <li key={f} className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0 text-emerald-500" /> {f}</li>
                   ))}
                 </ul>
+                {trying && <p className="mt-6 text-center text-xs text-emerald-300">Trying it now</p>}
                 {current ? (
                   <div className="mt-6 w-full py-2 text-center text-sm text-emerald-400 border border-emerald-800/50 rounded-lg">Your plan</div>
-                ) : trying ? (
-                  <div className="mt-6 w-full py-2 text-center text-sm text-emerald-300 border border-emerald-800/50 rounded-lg">Trying it now</div>
                 ) : plan.id === 'unlimited' ? (
-                  <div className="mt-6 w-full py-2 text-center text-xs text-zinc-500 border border-zinc-800 rounded-lg">Included as a trial with Pro</div>
+                  !trying && <div className="mt-6 w-full py-2 text-center text-xs text-zinc-500 border border-zinc-800 rounded-lg">Included as a trial with Pro</div>
                 ) : plan.priceUsd && (plan.id === 'developer' || plan.id === 'pro') && !info.has_customer ? (
+                  // Subscribing during a trial of the same tier is how a trial converts.
                   <button
                     onClick={() => subscribe(plan.id)}
                     disabled={buying !== null}
-                    className="mt-6 w-full py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium flex items-center justify-center gap-2"
+                    className={`${trying ? 'mt-2' : 'mt-6'} w-full py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium flex items-center justify-center gap-2`}
                   >
                     {buying === plan.id && <Loader2 className="w-4 h-4 animate-spin" />} Subscribe
                   </button>
                 ) : plan.priceUsd && info.has_customer ? (
-                  <button onClick={openPortal} className="mt-6 w-full py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg text-sm font-medium">Change plan</button>
+                  <button onClick={openPortal} className={`${trying ? 'mt-2' : 'mt-6'} w-full py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg text-sm font-medium`}>Change plan</button>
                 ) : null}
               </div>
             );

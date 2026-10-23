@@ -172,7 +172,8 @@ export async function startRun(ctx: RunCaller, sessionId: string, message: strin
     created_at: now,
     updated_at: now,
   };
-  const [plan, capacity] = await Promise.all([effectivePlan(ctx.tenantId), platformCapacity()]);
+  // Fresh: the monthly run quota is enforced in the database with this plan's limit.
+  const [plan, capacity] = await Promise.all([effectivePlan(ctx.tenantId, new Date(), { fresh: true }), platformCapacity()]);
   const { data: res, error } = await db.rpc('start_agent_run', {
     p_run: row,
     p_max_concurrent: limits.max_concurrent_runs,

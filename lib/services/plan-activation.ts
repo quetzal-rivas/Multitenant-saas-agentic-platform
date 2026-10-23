@@ -48,9 +48,9 @@ async function listItems(tenantId: string, kind: PausableKind): Promise<Item[]> 
 }
 
 /** Every item of a kind with whether it is active under the current plan. */
-export async function activation(tenantId: string, kind: PausableKind): Promise<{ limit: number; items: ActivationItem[] }> {
+export async function activation(tenantId: string, kind: PausableKind, opts: { fresh?: boolean } = {}): Promise<{ limit: number; items: ActivationItem[] }> {
   const [plan, items, { data: pins }] = await Promise.all([
-    effectivePlan(tenantId),
+    effectivePlan(tenantId, new Date(), opts),
     listItems(tenantId, kind),
     db().from('resource_activation').select('resource_id, pinned_at').eq('tenant_id', tenantId).eq('kind', kind),
   ]);
@@ -70,7 +70,8 @@ export async function activation(tenantId: string, kind: PausableKind): Promise<
 export async function isActive(tenantId: string, kind: PausableKind, id: string): Promise<boolean> {
   const plan = await effectivePlan(tenantId);
   if ((await RESOURCE_COUNTERS[kind]!(tenantId)) <= plan.limits[kind]) return true;
-  const { items } = await activation(tenantId, kind);
+  // Pausing is a refusal: decide it with the current plan, never a cached one.
+  const { items } = await activation(tenantId, kind, { fresh: true });
   // An item that is not counted (archived, paused task) is not this check's business.
   return items.find((it) => it.id === id)?.active ?? true;
 }
@@ -78,7 +79,7 @@ export async function isActive(tenantId: string, kind: PausableKind, id: string)
 /** Refuse to run an item the plan has paused (402 RESOURCE_PAUSED). */
 export async function assertActive(tenantId: string, kind: PausableKind, id: string): Promise<void> {
   if (await isActive(tenantId, kind, id)) return;
-  const plan = await effectivePlan(tenantId);
+  const plan = await effectivePlan(tenantId, new Date(), { fresh: true });
   throw new LimitError(
     `Paused by your plan: ${PLANS[plan.plan].name} allows ${plan.limits[kind]} active ${LIMIT_LABELS[kind]}. Choose which stay active in Account & Billing, or upgrade.`,
     'RESOURCE_PAUSED',
@@ -90,7 +91,7 @@ export async function assertActive(tenantId: string, kind: PausableKind, id: str
 export async function pausedResources(tenantId: string) {
   const out: Array<{ kind: PausableKind; label: string; limit: number; total: number; active: ActivationItem[]; paused: ActivationItem[] }> = [];
   for (const kind of PAUSABLE_KINDS) {
-    const { limit, items } = await activation(tenantId, kind);
+    const { limit, items } = await activation(tenantId, kind, { fresh: true });
     if (items.length <= limit) continue;
     out.push({ kind, label: LIMIT_LABELS[kind], limit, total: items.length, active: items.filter((i) => i.active), paused: items.filter((i) => !i.active) });
   }

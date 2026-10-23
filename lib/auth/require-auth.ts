@@ -5,6 +5,7 @@ import crypto from 'crypto';
 import { ApiKeyError, extractRawApiKey, isPlatformApiKeyFormat, verifyApiKey } from '@/lib/auth/api-keys';
 import { verifyClientToken } from '@/lib/auth/jwks';
 import { getMembership } from '@/lib/auth/membership';
+import { consumeApiRequest } from '@/lib/services/plan-limits';
 
 export type AuthMode = 'session' | 'api_key' | 'client_token' | 'webhook_signature';
 
@@ -74,6 +75,8 @@ export async function requireAuth(
     if (!key) {
       throw new AuthError('Invalid or revoked API key', 401, 'INVALID_KEY');
     }
+    // Every external request counts toward the plan's monthly operations and per-minute rate.
+    await consumeApiRequest(key.tenantId);
     return {
       tenantId: key.tenantId,
       userId: `key_${key.id}`,
@@ -91,6 +94,7 @@ export async function requireAuth(
     if (!claims) {
       throw new AuthError('Invalid, expired, or unsigned client token', 401, 'INVALID_TOKEN');
     }
+    await consumeApiRequest(claims.tenant_id);
     return {
       tenantId: claims.tenant_id,
       userId: claims.sub,

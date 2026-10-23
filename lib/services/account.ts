@@ -4,6 +4,7 @@ import type { AuthContext } from '@/lib/auth/require-auth';
 import type { MemberRole } from '@/lib/auth/membership';
 import { stopRuns } from './agent-runs';
 import { ServiceError } from './errors';
+import { assertCanCreate } from './plan-limits';
 
 type Ctx = Pick<AuthContext, 'tenantId' | 'userId' | 'role' | 'authMode'> & { apiKeyId?: string };
 
@@ -77,6 +78,7 @@ export async function inviteMember(ctx: Ctx, raw: unknown, redirectTo: string, d
   requireOwnerOrAdmin(ctx);
   const { email, role } = inviteBody.parse(raw);
   if (role === 'admin' && ctx.role !== 'owner') throw new ServiceError('Only the owner can invite admins.', 'FORBIDDEN');
+  await assertCanCreate(ctx.tenantId, 'members');
   const db = getSupabaseAdminClient();
 
   const existingUser = await userIdByEmail(email);
@@ -163,7 +165,7 @@ export async function deleteOrganization(ctx: Ctx, confirmName: unknown) {
   }
   const now = new Date().toISOString();
   await stopRuns({ tenantId: ctx.tenantId, userId: ctx.userId, authMode: ctx.authMode }, 'org');
-  await db.from('api_keys').update({ revoked_at: now }).eq('tenant_id', ctx.tenantId).is('revoked_at', null);
+  await db.from('mcp_api_keys').update({ revoked_at: now }).eq('tenant_id', ctx.tenantId).is('revoked_at', null);
   await db.from('organization_invites').update({ revoked_at: now }).eq('organization_id', ctx.tenantId).is('accepted_at', null).is('revoked_at', null);
   const { data: members } = await db.from('organization_members').select('user_id, role, created_at').eq('organization_id', ctx.tenantId);
   await db

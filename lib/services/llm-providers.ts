@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { getSupabaseAdminClient } from '@/lib/supabase';
 import type { AuthContext } from '@/lib/auth/require-auth';
 import { deleteTenantSecret, getTenantSecret, listTenantSecrets, setTenantSecret, type BYOKProvider } from '@/lib/secrets/secrets-service';
+import { assertCanStoreSecret, assertFeature, effectivePlan } from './plan-limits';
 import {
   BUILT_IN_IDS,
   BUILT_IN_PROVIDERS,
@@ -94,6 +95,8 @@ export function providerKey(tenantId: string, id: string, getSecret: SecretGette
 
 /** An agent is valid for this organization: its provider exists and (unless auto) has a key. */
 export async function assertAgentProvider(tenantId: string, llm: { provider?: string | null; mode: ProviderMode }) {
+  // Choosing a provider per agent (preferred or locked) is a Developer feature; Free runs on the organization order.
+  if (llm.mode !== 'auto') await assertFeature(tenantId, 'per_agent_provider');
   if (llm.mode === 'auto') {
     if (!(await usableProviders(tenantId)).length) {
       throw new ServiceError('No LLM provider is on with a key. Add or turn one on in Account & Billing → LLM providers.', 'CONFLICT');
@@ -131,7 +134,23 @@ export interface ChainLink {
  */
 export async function providerChain(tenantId: string, agent: AgentLlm, opts: { fast?: boolean; getSecret?: SecretGetter } = {}): Promise<ChainLink[]> {
   const getSecret = opts.getSecret ?? getTenantSecret;
-  const [defs, settings] = await Promise.all([providerDefs(tenantId), orgLlmSettings(tenantId)]);
+  const [defs, settings, plan] = await Promise.all([providerDefs(tenantId), orgLlmSettings(tenantId), effectivePlan(tenantId)]);
+  // The plan decides how much of the agent's own choice applies: Free follows the
+  // organization order; only Pro and up fall back to the next provider.
+  if (!plan.features.per_agent_provider) agent = { provider: null, model: null, mode: 'auto' };
+  const chain = await buildChain(tenantId, agent, defs, settings, getSecret, opts.fast);
+  return plan.features.provider_fallback ? chain : chain.slice(0, 1);
+}
+
+async function buildChain(
+  tenantId: string,
+  agent: AgentLlm,
+  defs: ProviderDef[],
+  settings: OrgLlmSettings,
+  getSecret: SecretGetter,
+  fast?: boolean
+): Promise<ChainLink[]> {
+  const opts = { fast };
   const defaultModel = (d: ProviderDef) => (opts.fast ? d.fastModel : d.defaultModel) || d.defaultModel;
 
   if (agent.mode === 'locked') {
@@ -248,6 +267,7 @@ export async function createCustomProvider(ctx: Ctx, raw: unknown) {
   const body = createCustomProviderBody.parse(raw);
   if (BUILT_IN_IDS.includes(body.slug)) throw new ServiceError(`"${body.slug}" is a built-in provider. Add its key in the list instead.`, 'INVALID');
   if ((await customRows(ctx.tenantId)).some((r) => r.slug === body.slug)) throw new ServiceError(`A provider called "${body.slug}" already exists.`, 'CONFLICT');
+  await assertCanStoreSecret(ctx.tenantId, secretNameFor(body.slug));
   const row = { slug: body.slug, label: body.label, base_url: body.base_url.replace(/\/+$/, ''), default_model: body.default_model, fast_model: body.fast_model ?? null, supports_tools: true };
   const check = await testProvider(customProviderDef(row), body.api_key);
   if (!check.ok) throw new ServiceError(`The provider did not answer: ${check.message}`, 'INVALID');

@@ -72,7 +72,9 @@ export async function updateTenantEntitlements(
         tenant_id: tenantId,
         stripe_customer_id: stripeCustomerId,
         stripe_subscription_id: stripeSubscriptionId,
-        plan_tier: planTier,
+        // Legacy 'starter' is the Developer plan (lib/billing/plans.ts); replaced in the Stripe rework.
+        plan_tier: planTier === 'starter' ? 'developer' : planTier,
+        billing_status: status === 'canceled' ? 'canceled' : status === 'active' || status === 'trialing' ? 'active' : 'past_due',
         status,
         max_agents: limits.maxAgents,
         max_runs_per_month: limits.maxRunsPerMonth,

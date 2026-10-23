@@ -9,6 +9,8 @@ import {
   deleteTenantSecret,
   testProviderConnection,
 } from '@/lib/secrets/secrets-service';
+import { assertCanStoreSecret } from '@/lib/services/plan-limits';
+import { isLimitError } from '@/lib/services/errors';
 
 export async function GET(req: NextRequest) {
   try {
@@ -43,6 +45,13 @@ export async function POST(req: NextRequest) {
         { error: 'Missing required parameters: provider and secretValue', code: 'INVALID_REQUEST' },
         { status: 400 }
       );
+    }
+
+    try {
+      await assertCanStoreSecret(auth.tenantId, provider);
+    } catch (limit) {
+      if (isLimitError(limit)) return NextResponse.json({ error: limit.message, code: limit.reason, ...limit.details }, { status: limit.statusCode });
+      throw limit;
     }
 
     if (testFirst) {

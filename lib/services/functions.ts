@@ -21,6 +21,7 @@ import {
 } from '@/lib/functions/function-spec';
 import { boardActor } from './board';
 import { ServiceError } from './errors';
+import { assertCanCreate } from './plan-limits';
 
 /**
  * AI Function Studio. Each deployed function is its own AWS Lambda
@@ -162,6 +163,7 @@ export async function getFunction(ctx: FunctionCtx, id: string) {
 
 export async function createFunction(ctx: FunctionCtx, body: unknown) {
   const spec = functionSaveSchema.parse(body);
+  await assertCanCreate(ctx.tenantId, 'functions');
   const db = getSupabaseAdminClient();
   const { data: existing } = await db
     .from('custom_functions')

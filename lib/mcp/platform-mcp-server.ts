@@ -3,7 +3,8 @@ import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { ApiKeyError, extractRawApiKey, listPlatformApiKeys, verifyApiKey } from '@/lib/auth/api-keys';
 import type { AuthContext } from '@/lib/auth/require-auth';
-import { isServiceError } from '@/lib/services/errors';
+import { isLimitError, isServiceError } from '@/lib/services/errors';
+import { consumeApiRequest } from '@/lib/services/plan-limits';
 import * as profiles from '@/lib/services/profiles';
 import * as tasks from '@/lib/services/tasks';
 import * as board from '@/lib/services/board';
@@ -153,7 +154,9 @@ function toolFailure(error: unknown): CallToolResult {
   const message = isServiceError(error)
     ? error.message
     : 'The tool failed unexpectedly. Try again; if it persists, contact support.';
-  return { isError: true, content: [{ type: 'text', text: `Error: ${message}` }] };
+  // Plan and quota refusals carry a machine-readable code so agents can stop retrying.
+  const text = isLimitError(error) ? `Error [${error.reason}]: ${message}` : `Error: ${message}`;
+  return { isError: true, content: [{ type: 'text', text }] };
 }
 
 // ---------------------------------------------------------------------------
@@ -296,6 +299,13 @@ export async function handlePlatformMcpRequest(req: Request): Promise<Response> 
     throw err;
   }
   if (!key) return jsonRpcAuthError(401, 'Invalid or revoked Platform API Key');
+  // Each MCP request counts toward the plan's monthly operations and per-minute rate.
+  try {
+    await consumeApiRequest(key.tenantId);
+  } catch (err) {
+    if (isLimitError(err)) return jsonRpcAuthError(err.statusCode, `[${err.reason}] ${err.message}`);
+    throw err;
+  }
 
   const ctx: ToolCtx = { tenantId: key.tenantId, userId: `key_${key.id}`, authMode: 'api_key', apiKeyId: key.id, scopes: key.scopes, toolsWhitelist: key.toolsWhitelist };
   const server = buildPlatformMcpServer(ctx, getAuthorizedPlatformTools(key.toolsWhitelist, key.scopes));

@@ -4,6 +4,7 @@ import type { AuthContext } from '@/lib/auth/require-auth';
 import type { ContextProfile } from '@/lib/types';
 import { slugify } from './organizations';
 import { ServiceError } from './errors';
+import { assertCanCreate } from './plan-limits';
 
 type Ctx = Pick<AuthContext, 'tenantId' | 'userId' | 'authMode'>;
 
@@ -121,6 +122,7 @@ export async function profileForResolve(ctx: Ctx, ref: string) {
 
 export async function createContextProfile(ctx: Ctx, raw: unknown) {
   const body = contextProfileBody.parse(raw) as Record<string, any>;
+  await assertCanCreate(ctx.tenantId, 'context_profiles');
   const { data, error } = await getSupabaseAdminClient()
     .from('context_profiles')
     .insert({

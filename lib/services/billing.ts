@@ -1,7 +1,7 @@
 import Stripe from 'stripe';
 import { getSupabaseAdminClient } from '@/lib/supabase';
 import type { AuthContext } from '@/lib/auth/require-auth';
-import { PLANS } from '@/lib/billing/plans';
+import { PLANS, type PlanId } from '@/lib/billing/plans';
 import { ServiceError } from './errors';
 
 type Ctx = Pick<AuthContext, 'tenantId' | 'role' | 'authMode'>;
@@ -41,7 +41,7 @@ export async function billingSummary(ctx: Ctx, deps: BillingDeps = {}) {
     .maybeSingle();
   const subscription = ent?.stripe_subscription_id
     ? {
-        plan: PLANS.find((p) => p.entitlementTier === ent.plan_tier)?.id ?? null,
+        plan: ent.plan_tier === 'starter' ? 'developer' : ent.plan_tier in PLANS ? (ent.plan_tier as PlanId) : null,
         plan_tier: ent.plan_tier as string,
         status: ent.status as string,
         current_period_ends_at: (ent.current_period_ends_at as string | null) ?? null,

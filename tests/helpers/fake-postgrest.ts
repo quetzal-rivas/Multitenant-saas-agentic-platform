@@ -67,6 +67,7 @@ let clock = 0;
 const UNIQUE_KEYS: Record<string, string[]> = {
   trial_grants: ['tenant_id', 'tier'],
   entitlements: ['tenant_id'],
+  processed_stripe_events: ['event_id'],
 };
 
 /**

@@ -315,6 +315,58 @@ async function loadEntitlement(tenantId: string): Promise<EntitlementRow | null>
   return (data as EntitlementRow | null) ?? null;
 }
 
+/**
+ * A confirmed paid subscription (from the Stripe webhook). The plan becomes the base plan, and
+ * the one-time trial of the next tier starts (Developer → 7 days of Pro, Pro → 7 days of
+ * Unlimited). Trials are internal: they never create a charge or a subscription.
+ */
+export async function applyPaidPlan(
+  tenantId: string,
+  plan: PlanId,
+  opts: { now?: Date; stripeCustomerId?: string | null; stripeSubscriptionId?: string | null; periodEndsAt?: string | null } = {}
+) {
+  if (plan === 'free') throw new Error('Free is not a paid plan; use endPaidPlan.');
+  const now = opts.now ?? new Date();
+  const db = getSupabaseAdminClient();
+  const fields = {
+    plan_tier: plan,
+    billing_status: 'active',
+    grace_ends_at: null,
+    status: 'active',
+    ...(opts.stripeCustomerId ? { stripe_customer_id: opts.stripeCustomerId } : {}),
+    ...(opts.stripeSubscriptionId ? { stripe_subscription_id: opts.stripeSubscriptionId } : {}),
+    ...(opts.periodEndsAt ? { current_period_ends_at: opts.periodEndsAt } : {}),
+    updated_at: now.toISOString(),
+  };
+  const before = await loadEntitlement(tenantId);
+  const { data } = await db.from('entitlements').update(fields).eq('tenant_id', tenantId).select('tenant_id');
+  if (!data?.length) await db.from('entitlements').insert({ tenant_id: tenantId, ...fields });
+  forgetPlan(tenantId);
+  // Renewals repeat this call; only real changes are audited.
+  if (before?.plan_tier !== plan || before?.billing_status !== 'active') await recordUsageEvent(tenantId, 'plan_changed', { plan, billing_status: 'active' });
+  const next = PLANS[plan].trialOnPurchase;
+  const trialGranted = next ? await grantTrial(tenantId, next, `purchase:${plan}`, now) : false;
+  return { plan, trial: trialGranted ? next : null };
+}
+
+/** A failed renewal: the paid plan stays during a grace period, then the organization is Free. */
+export async function markPastDue(tenantId: string, graceDays = 7, now = new Date()) {
+  const graceEnds = new Date(now.getTime() + graceDays * 86_400_000).toISOString();
+  await getSupabaseAdminClient().from('entitlements').update({ billing_status: 'past_due', grace_ends_at: graceEnds, updated_at: now.toISOString() }).eq('tenant_id', tenantId);
+  forgetPlan(tenantId);
+  await recordUsageEvent(tenantId, 'payment_failed', { grace_ends_at: graceEnds });
+}
+
+/** The subscription ended: back to Free. Data is kept; a running trial keeps its own end date. */
+export async function endPaidPlan(tenantId: string, now = new Date()) {
+  await getSupabaseAdminClient()
+    .from('entitlements')
+    .update({ plan_tier: 'free', billing_status: 'canceled', grace_ends_at: null, updated_at: now.toISOString() })
+    .eq('tenant_id', tenantId);
+  forgetPlan(tenantId);
+  await recordUsageEvent(tenantId, 'plan_changed', { plan: 'free', billing_status: 'canceled' });
+}
+
 /** A new organization: Free, plus the one-time sign-up trial. Idempotent. */
 export async function initializeEntitlement(tenantId: string, now = new Date()) {
   const db = getSupabaseAdminClient();

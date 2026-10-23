@@ -60,6 +60,13 @@ test('a new customer signs in, creates the organization, starts on the Developer
   await page.locator('#cardExpiry').fill('12 / 34');
   await page.locator('#cardCvc').fill('123');
   await page.locator('#billingName').fill('E2E Test');
+  // Checkout guesses the country from the runner's IP (US asks for a ZIP); our customers are in
+  // Mexico. Link's "save my information" would also ask for a phone: leave it off.
+  await page.locator('#billingCountry').selectOption('MX');
+  const zip = page.locator('#billingPostalCode');
+  if (await zip.isVisible().catch(() => false)) await zip.fill('06600');
+  const link = page.locator('#enableStripePass');
+  if (await link.isVisible().catch(() => false)) await link.uncheck();
   await page.locator('[data-testid="hosted-payment-submit-button"]').click();
 
   // Back in the app: confirmed by the webhook, base Developer + 7 days of Pro.

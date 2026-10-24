@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { LegalPage } from '@/components/LegalPage';
-import { LEGAL } from '@/lib/legal/entity';
+import { LEGAL, RESPONSIBLE } from '@/lib/legal/entity';
 
 export const metadata: Metadata = { title: 'Aviso de privacidad — Context Control' };
 
@@ -9,7 +9,7 @@ export default function PrivacyPage() {
   return (
     <LegalPage title="Aviso de privacidad">
       <p>
-        {LEGAL.entity}, con domicilio en {LEGAL.address} (&quot;Context Control&quot;), es responsable del tratamiento de los datos personales que nos
+        {RESPONSIBLE} (&quot;Context Control&quot;), con domicilio en {LEGAL.address}, es responsable del tratamiento de los datos personales que nos
         proporcionas al usar {LEGAL.site} y sus servicios, conforme a la Ley Federal de Protección de Datos Personales en Posesión de los Particulares.
       </p>
 

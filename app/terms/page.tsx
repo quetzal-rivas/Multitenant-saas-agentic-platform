@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { LegalPage } from '@/components/LegalPage';
-import { LEGAL } from '@/lib/legal/entity';
+import { LEGAL, RESPONSIBLE } from '@/lib/legal/entity';
 
 export const metadata: Metadata = { title: 'Términos del servicio — Context Control' };
 
@@ -10,7 +10,8 @@ export default function TermsPage() {
   return (
     <LegalPage title="Términos del servicio">
       <p>
-        Estos términos regulan el uso de Context Control, ofrecido por {LEGAL.entity} (&quot;Context Control&quot;). Al crear una cuenta o usar el servicio
+        Estos términos regulan el uso de Context Control, ofrecido por {RESPONSIBLE} (&quot;Context Control&quot;), con domicilio en{' '}
+        {LEGAL.address}. Al crear una cuenta o usar el servicio
         los aceptas en nombre propio o de la organización que representas.
       </p>
 

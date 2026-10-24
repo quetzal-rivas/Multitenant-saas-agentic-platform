@@ -150,11 +150,23 @@ export async function createCheckout(
   if (ent?.stripe_subscription_id && ent.billing_status !== 'canceled') {
     throw new ServiceError('You already have a subscription. Change plans from "Manage billing".', 'CONFLICT');
   }
+  // Stripe Tax (STRIPE_AUTOMATIC_TAX=true): prices are in USD before tax; tax is added where the
+  // account is registered (Mexico: 16% IVA) from the billing address, and businesses can enter
+  // their tax ID (RFC) for their invoice. Customers elsewhere pay the listed price.
+  const tax = process.env.STRIPE_AUTOMATIC_TAX === 'true';
   const session = await stripe.checkout.sessions.create({
     mode: 'subscription',
     line_items: [{ price, quantity: 1 }],
     client_reference_id: ctx.tenantId,
     ...(ent?.stripe_customer_id ? { customer: ent.stripe_customer_id } : email ? { customer_email: email } : {}),
+    ...(tax
+      ? {
+          automatic_tax: { enabled: true },
+          billing_address_collection: 'required' as const,
+          tax_id_collection: { enabled: true },
+          ...(ent?.stripe_customer_id ? { customer_update: { address: 'auto' as const, name: 'auto' as const } } : {}),
+        }
+      : {}),
     metadata: { tenant_id: ctx.tenantId, plan },
     subscription_data: { metadata: { tenant_id: ctx.tenantId, plan } },
     success_url: urls.success,

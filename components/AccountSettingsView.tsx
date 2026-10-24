@@ -439,6 +439,7 @@ const BillingPanel: React.FC<{ orgId: string | null; email: string | null; check
             );
           })}
         </div>
+        <p className="text-xs text-zinc-500">Prices in USD per month. Customers in Mexico pay + 16% IVA, calculated at checkout from the billing address.</p>
         <p className="text-xs text-zinc-500">
           Each trial is offered once per workspace and never charges you. When it ends you return to the plan you pay for, and your data is kept. Enterprise: custom limits and support by contract — contact us.
         </p>

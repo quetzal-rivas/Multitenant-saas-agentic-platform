@@ -146,6 +146,8 @@ jobs:
           STRIPE_WEBHOOK_SECRET: ${{ inputs.stage == 'production' && secrets.STRIPE_WEBHOOK_SECRET || secrets.STRIPE_TEST_WEBHOOK_SECRET }}
           STRIPE_PRICE_DEVELOPER: ${{ vars.STRIPE_PRICE_DEVELOPER }}
           STRIPE_PRICE_PRO: ${{ vars.STRIPE_PRICE_PRO }}
+          # Stripe Tax on in this environment (tax added where the Stripe account is registered: Mexico).
+          STRIPE_AUTOMATIC_TAX: ${{ vars.STRIPE_AUTOMATIC_TAX || 'false' }}
           # Billing notices through SES. Staging's SES is in the sandbox: it can only email @contextcontrol.com.mx.
           NOTICE_EMAIL_FROM: ${{ inputs.stage == 'production' && 'no-reply@contextcontrol.com.mx' || 'staging-notices@contextcontrol.com.mx' }}
         run: |
@@ -156,7 +158,7 @@ jobs:
           ENV="$ENV,FUNCTION_DEPLOYER_NAME=cc-function-deployer,AGENT_WORKER_FUNCTION=cc-agent-worker"
           ENV="$ENV,CLIENT_TOKEN_SIGNING_KEY=$CLIENT_TOKEN_SIGNING_KEY,ENABLE_VOICE_CALLS=$ENABLE_VOICE_CALLS,DEMO_MODE=false,NEXT_PUBLIC_DEMO_MODE=false"
           [ -n "$STRIPE_SECRET_KEY" ] && ENV="$ENV,STRIPE_SECRET_KEY=$STRIPE_SECRET_KEY,STRIPE_WEBHOOK_SECRET=$STRIPE_WEBHOOK_SECRET"
-          [ -n "$STRIPE_PRICE_DEVELOPER" ] && ENV="$ENV,STRIPE_PRICE_DEVELOPER=$STRIPE_PRICE_DEVELOPER,STRIPE_PRICE_PRO=$STRIPE_PRICE_PRO"
+          [ -n "$STRIPE_PRICE_DEVELOPER" ] && ENV="$ENV,STRIPE_PRICE_DEVELOPER=$STRIPE_PRICE_DEVELOPER,STRIPE_PRICE_PRO=$STRIPE_PRICE_PRO,STRIPE_AUTOMATIC_TAX=$STRIPE_AUTOMATIC_TAX"
           # Platform capacity: keep in sync with maxConcurrentRuns in infra/cdk/bin/app.ts.
           ENV="$ENV,PLATFORM_MAX_CONCURRENT_RUNS=50"
           [ -n "$NOTICE_EMAIL_FROM" ] && ENV="$ENV,NOTICE_EMAIL_FROM=$NOTICE_EMAIL_FROM,SES_REGION=us-east-2"

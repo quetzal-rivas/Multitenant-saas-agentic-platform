@@ -170,5 +170,20 @@ describe('Trial chain: Free → Developer trial; Developer → Pro trial; Pro �
     assert.deepEqual(params.subscription_data.metadata, { tenant_id: ORG, plan: 'developer' });
     await assert.rejects(createCheckout({ ...owner, role: 'member' as const }, 'pro', { success: '', cancel: '' }, null, { stripe }), /owner or an admin/);
     await assert.rejects(createCheckout(owner, 'unlimited', { success: '', cancel: '' }, null, { stripe }), /trial with Pro/);
+    assert.equal(params.automatic_tax, undefined, 'no tax unless the environment turns Stripe Tax on');
+  });
+
+  test('with Stripe Tax on, checkout adds tax from the billing address and collects tax IDs', async () => {
+    process.env.STRIPE_AUTOMATIC_TAX = 'true';
+    try {
+      let params: any = null;
+      const stripe = { checkout: { sessions: { create: async (p: any) => ((params = p), { url: 'https://checkout.stripe.test/s' }) } } } as any;
+      await createCheckout({ tenantId: ORG, role: 'owner' as const, authMode: 'session' as const }, 'pro', { success: 'https://app/ok', cancel: 'https://app/no' }, 'me@x.test', { stripe });
+      assert.deepEqual(params.automatic_tax, { enabled: true });
+      assert.equal(params.billing_address_collection, 'required');
+      assert.deepEqual(params.tax_id_collection, { enabled: true });
+    } finally {
+      delete process.env.STRIPE_AUTOMATIC_TAX;
+    }
   });
 });

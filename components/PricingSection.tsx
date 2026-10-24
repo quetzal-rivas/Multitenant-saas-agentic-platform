@@ -28,6 +28,7 @@ export default function PricingSection(_props: PricingSectionProps) {
           <p className="text-zinc-400">
             Bring your own AI provider key on every plan: you pay your AI and telephony providers directly, and Context Control never charges you for their usage.
           </p>
+          <p className="text-zinc-500 text-sm mt-3">Prices in USD per month. Customers in Mexico pay + 16% IVA.</p>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">

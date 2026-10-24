@@ -53,3 +53,20 @@ export async function removeStripeCustomer(email: string) {
     await stripe(`customers/${c.id}`, 'DELETE');
   }
 }
+
+/** Sign in through the login page and create the organization in onboarding; ends on the dashboard. */
+export async function signInAndCreateOrg(page: import('@playwright/test').Page, user: { email: string; password: string; org: string }) {
+  const { expect } = await import('@playwright/test');
+  await page.goto('/login');
+  await page.getByPlaceholder('name@company.com').fill(user.email);
+  await page.locator('input[type="password"]').first().fill(user.password);
+  await page.getByRole('button', { name: 'Sign In' }).click();
+  await expect(page).toHaveURL(/\/onboarding/);
+  await page.getByPlaceholder('e.g. Acme Global Logistics').fill(user.org);
+  await page.getByRole('button', { name: /Continue to BYOK Keys/ }).click();
+  await page.getByRole('button', { name: /Continue to Telephony/ }).click();
+  await page.getByRole('button', { name: /Complete Setup/ }).click();
+  await expect(page).toHaveURL(/\/organizations/);
+  await page.getByText(user.org).click();
+  await expect(page).toHaveURL(/\/dashboard/);
+}

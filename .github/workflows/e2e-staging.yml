@@ -27,6 +27,8 @@ jobs:
       E2E_SUPABASE_URL: ${{ vars.NEXT_PUBLIC_SUPABASE_URL }}
       E2E_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       E2E_STRIPE_SECRET_KEY: ${{ secrets.STRIPE_TEST_SECRET_KEY }}
+      # A Gemini key on the free tier (no billing on its project): the agent test makes one real model call.
+      E2E_LLM_KEY: ${{ secrets.E2E_LLM_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

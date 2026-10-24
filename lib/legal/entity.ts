@@ -9,11 +9,11 @@ export const LEGAL = {
   reviewed: false,
   updatedAt: '24 de octubre de 2026',
   /** Nombre completo del titular (como aparece en la constancia de situación fiscal). */
-  holder: '[Nombre completo]',
+  holder: 'Quetzal Rivas',
   regime: 'persona física con actividad empresarial',
   tradeName: 'Context Control',
   /** Domicilio para oír y recibir notificaciones (puede ser una oficina o domicilio comercial). */
-  address: '[Domicilio]',
+  address: 'Playa Xcalacoco, C.P. 77727, México',
   privacyEmail: 'privacidad@contextcontrol.com.mx',
   supportEmail: 'soporte@contextcontrol.com.mx',
   site: 'https://www.contextcontrol.com.mx',
